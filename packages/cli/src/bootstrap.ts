@@ -5,7 +5,14 @@ import { StorageModule, type StorageModuleConfig } from '@jataqi/storage';
 import { VectorSearchModule, type VectorModuleConfig } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule, type KnowledgeGraphConfig } from '@jataqi/knowledge-graph';
-import { AgentRuntimeModule, EchoLLM, type AgentModuleConfig } from '@jataqi/agent-runtime';
+import {
+  AgentRuntimeModule,
+  EchoLLM,
+  OpenAILLM,
+  type AgentModuleConfig,
+  type ILLM,
+} from '@jataqi/agent-runtime';
+import { readConfig } from './config.js';
 
 export interface JataQiConfig {
   /** Kernel-level overrides. */
@@ -26,7 +33,7 @@ export interface JataQiInstance {
   shutdown: () => Promise<void>;
 }
 
-/** Build and boot a fully-wired JATA Qi kernel. */
+/** Build and boot a fully-wired JATA Qi kernel using explicit config. */
 export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstance> {
   const kernel = new Kernel(cfg.kernel);
 
@@ -36,7 +43,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
     driverInstance: cfg.storage?.driverInstance,
   };
   kernel.register(new StorageModule(storageCfg));
-  kernel.register(new VectorSearchModule(cfg.vector ?? { model: 'hash', hashDim: 128 }));
+  kernel.register(
+    new VectorSearchModule(cfg.vector ?? { model: 'hash', hashDim: 128 }),
+  );
   kernel.register(new KnowledgeService());
   kernel.register(new KnowledgeGraphModule(cfg.graph));
   kernel.register(
@@ -51,6 +60,35 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
     kernel,
     shutdown: () => kernel.shutdown(),
   };
+}
+
+/** Build JATA Qi using environment variables / .env (see .env.example). */
+export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise<JataQiInstance> {
+  const env = readConfig();
+  const llm: ILLM =
+    overrides.agent?.llm ??
+    (env.AGENT_LLM === 'openai' && env.OPENAI_API_KEY
+      ? new OpenAILLM({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_CHAT_MODEL })
+      : new EchoLLM());
+  return createJataQi({
+    storage: {
+      driver: env.STORAGE_DRIVER as any ?? 'memory',
+      fsRoot: env.STORAGE_FS_ROOT,
+      ...(overrides.storage ?? {}),
+    },
+    vector: {
+      model: (env.VECTOR_MODEL as any) ?? 'hash',
+      hashDim: env.VECTOR_HASH_DIM ?? 128,
+      metric: (env.VECTOR_METRIC as any) ?? 'cosine',
+      openai: env.OPENAI_API_KEY
+        ? { apiKey: env.OPENAI_API_KEY, model: env.OPENAI_EMBEDDING_MODEL }
+        : undefined,
+      ...(overrides.vector ?? {}),
+    },
+    agent: { llm, ...(overrides.agent ?? {}) },
+    graph: overrides.graph,
+    kernel: overrides.kernel,
+  });
 }
 
 export { Logger };

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // JATA Qi CLI — boots the OS and offers simple commands.
 
-import { createJataQi } from './bootstrap.js';
+import { createJataQiFromEnv } from './bootstrap.js';
+import { loadEnv } from './config.js';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
@@ -23,10 +24,11 @@ Commands:
 `;
 
 async function main() {
+  loadEnv();
   const args = process.argv.slice(2);
   const cmd = args[0] ?? 'repl';
 
-  const jataqi = await createJataQi();
+  const jataqi = await createJataQiFromEnv();
   const kernel = jataqi.kernel;
   const agents = kernel.getModule<AgentRuntimeModule>('agent-runtime');
   const knowledge = kernel.getModule<KnowledgeService>('knowledge');
