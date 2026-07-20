@@ -5,6 +5,8 @@ export type { AgentConfig, AgentRunOptions, AgentRunResult } from './agent.js';
 export { ToolRegistry } from './tools.js';
 export type { Tool, ToolContext, ToolInputSchema, ToolCallResult } from './tools.js';
 export { EchoLLM, ScriptedLLM } from './llm.js';
+export { OpenAILLM } from './llms/openai.js';
+export type { OpenAILLMConfig } from './llms/openai.js';
 export type { ILLM, ChatMessage, ToolCallRequest, LLMRequest, LLMResponse } from './llm.js';
 export {
   knowledgeSearchTool,
@@ -13,3 +15,5 @@ export {
   graphRetrieveTool,
   vectorSearchTool,
 } from './builtins.js';
+export { ConversationManager, InMemorySessionMemory } from './memory.js';
+export type { ISessionMemory } from './memory.js';
