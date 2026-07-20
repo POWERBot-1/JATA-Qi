@@ -1,24 +1,12 @@
 {
-  "name": "@jataqi/core-kernel",
+  "name": "@jataqi/storage",
   "version": "0.1.0",
-  "description": "JATA Qi Core Kernel — event bus, DI container, module lifecycle, config, logging",
+  "description": "JATA Qi Storage Layer — pluggable KV, blob, and collection adapters",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "exports": {
-    ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js"
-    },
-    "./testing": {
-      "types": "./dist/src/testing.d.ts",
-      "import": "./dist/src/testing.js"
-    }
-  },
-  "typesVersions": {
-    "*": {
-      "testing": ["./dist/src/testing.d.ts"]
-    }
+    ".": "./dist/src/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
@@ -28,6 +16,9 @@
   },
   "files": ["dist", "src"],
   "license": "MIT",
+  "dependencies": {
+    "@jataqi/core-kernel": "0.1.0"
+  },
   "devDependencies": {
     "typescript": "^5.4.0",
     "@types/node": "^20.11.0"
