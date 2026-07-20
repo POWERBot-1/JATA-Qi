@@ -1,0 +1,24 @@
+{
+  "name": "@jataqi/core-kernel",
+  "version": "0.1.0",
+  "description": "JATA Qi Core Kernel — event bus, DI container, module lifecycle, config, logging",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/src/index.js",
+    "./testing": "./dist/src/testing.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/test/*.test.js",
+    "pretest": "npm run build"
+  },
+  "files": ["dist", "src"],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}
