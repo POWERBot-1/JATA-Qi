@@ -93,7 +93,7 @@ export class Agent {
           tools: this.tools.list().map((t) => ({
             name: t.name,
             description: t.description,
-            inputSchema: t.inputSchema as unknown as Record<string, unknown>,
+            inputSchema: t.inputSchema,
           })),
           signal: opts.signal,
         });

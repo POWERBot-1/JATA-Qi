@@ -1,5 +1,6 @@
 // Public API for @jataqi/core-kernel
 export { Kernel } from './kernel.js';
+export type { KernelOptions } from './kernel.js';
 export { EventBus } from './event-bus.js';
 export { Container } from './container.js';
 export { Logger } from './logger.js';

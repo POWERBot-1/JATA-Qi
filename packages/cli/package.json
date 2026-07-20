@@ -1,0 +1,31 @@
+{
+  "name": "@jataqi/cli",
+  "version": "0.1.0",
+  "description": "JATA Qi CLI — entry point for booting and interacting with the OS",
+  "type": "module",
+  "bin": {
+    "jataqi": "./dist/src/index.js"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/test/*.test.js",
+    "pretest": "npm run build"
+  },
+  "files": ["dist", "src"],
+  "license": "MIT",
+  "dependencies": {
+    "@jataqi/core-kernel": "0.1.0",
+    "@jataqi/storage": "0.1.0",
+    "@jataqi/vector-search": "0.1.0",
+    "@jataqi/knowledge-service": "0.1.0",
+    "@jataqi/knowledge-graph": "0.1.0",
+    "@jataqi/agent-runtime": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}

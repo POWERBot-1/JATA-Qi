@@ -2,7 +2,7 @@
 
 export interface ToolInputSchema {
   /** JSON Schema describing parameters. Simplified to required/properties for our runtime. */
-  type: 'object';
+  type: string;
   properties: Record<string, { type: string; description?: string; enum?: string[] }>;
   required?: string[];
 }
