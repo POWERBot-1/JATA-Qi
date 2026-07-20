@@ -4,6 +4,9 @@ import { KnowledgeEvents, KnowledgeService } from '@jataqi/knowledge-service';
 import type { VectorSearchModule } from '@jataqi/vector-search';
 import { MemoryTripleStore } from './graph-store.js';
 import { createEntity, createTriple } from './factories.js';
+import { HeuristicExtractor, type Extractor, type ExtractionResult } from './extractor.js';
+import { GraphRAGRetriever } from './graph-rag.js';
+import type { GraphRAGHit, GraphRAGOptions } from './graph-rag.js';
 import { GraphEvents } from './types.js';
 import type {
   Entity,
@@ -38,6 +41,13 @@ export class KnowledgeGraphModule implements IModule {
   private triplesCol!: ICollection<PersistedTriple>;
   private vectors!: VectorSearchModule;
   private entityIndexName = 'knowledge-graph.entities';
+  private extractor: Extractor = new HeuristicExtractor();
+  private retriever!: GraphRAGRetriever;
+
+  /** Swap the extractor (e.g. for an LLM-based one). */
+  setExtractor(extractor: Extractor): void {
+    this.extractor = extractor;
+  }
 
   constructor(cfg: KnowledgeGraphConfig = {}) {
     this.cfg = { autoIndexDocuments: true, ...cfg };
@@ -72,6 +82,7 @@ export class KnowledgeGraphModule implements IModule {
       });
     }
     kernel.logger.info('knowledge graph initialized');
+    this.retriever = new GraphRAGRetriever(kernel);
   }
 
   async start(_kernel: KernelApi): Promise<void> { /* no background work */ }
@@ -163,6 +174,57 @@ export class KnowledgeGraphModule implements IModule {
     await this.vectors.embedAndAdd(this.entityIndexName, [
       { id: `entity:${e.id}`, text, metadata: { entityId: e.id, type: e.type } },
     ]);
+  }
+
+  /** Extract entities/relations from text and add them to the graph.
+   *  Returns the extraction result with ids populated. */
+  extractFromText(text: string, source?: { chunkId?: string; documentId?: string }): ExtractionResult {
+    const { entities, triples } = this.extractor.extract(text, { source });
+    const out: ExtractionResult = { entities: [], triples: [] };
+    for (const e of entities) {
+      const ent = this.addOrGetEntity({
+        id: e.id,
+        type: e.type,
+        name: e.name,
+        properties: e.properties,
+      });
+      if (e.id !== ent.id) {
+        // The addOrGetEntity returned existing; skip adding triple referencing missing.
+      }
+      out.entities.push(ent);
+    }
+    for (const t of triples) {
+      if (this.store.getEntity(t.subject) && this.store.getEntity(t.object)) {
+        const added = this.addTriple({
+          subject: t.subject,
+          predicate: t.predicate,
+          object: t.object,
+          properties: t.properties,
+          confidence: t.confidence,
+          source: t.source ?? source,
+        });
+        out.triples.push(added);
+      }
+    }
+    return out;
+  }
+
+  /** Graph-augmented retrieval combining vector search with graph traversal. */
+  async graphRetrieve(query: string, opts?: GraphRAGOptions): Promise<GraphRAGHit[]> {
+    return this.retriever.retrieve(query, opts);
+  }
+
+  /** Link a chunk id to an entity via 'mentions' triple. */
+  linkMention(chunkId: string, entityId: EntityId, confidence?: number, docId?: string): Triple {
+    const chunkEntId = `chunk:${chunkId}`;
+    this.addOrGetEntity({ id: chunkEntId, type: 'Chunk', name: chunkId, properties: { chunkId } });
+    return this.addTriple({
+      subject: chunkEntId,
+      predicate: 'mentions',
+      object: entityId,
+      confidence: confidence ?? 0.9,
+      source: docId ? { chunkId, documentId: docId } : { chunkId },
+    });
   }
 
   /** Find entities semantically similar to a query. */
