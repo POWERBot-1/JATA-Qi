@@ -18,6 +18,8 @@ export interface GatewayResponse {
   body: unknown;
   /** Override the default JSON content type (e.g. for Prometheus text). */
   contentType?: string;
+  /** Extra response headers (e.g. rate-limit metadata). */
+  headers?: Record<string, string>;
 }
 
 export type RouteHandler = (req: GatewayRequest) => Promise<GatewayResponse> | GatewayResponse;
@@ -27,6 +29,8 @@ export interface GatewayOptions {
   maxBodyBytes?: number;
   /** Enable permissive CORS headers (default false). */
   cors?: boolean;
+  /** Per-key (principal/IP) request rate limit. Default { limit: 1000, windowMs: 60000 }. */
+  rateLimit?: { limit: number; windowMs: number } | null;
 }
 
 export interface GatewayHandle {

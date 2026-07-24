@@ -21,8 +21,10 @@ import type { PluginManagerModule, InstalledPlugin } from '@jataqi/plugins';
 import type { ModelRegistryModule, SelectionRequest } from '@jataqi/model-registry';
 import type { SchedulerModule } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
+import { RateLimiter } from './rate-limit.js';
 
 const BOOT_TIME = Date.now();
+const DEFAULT_RATE_LIMIT = { limit: 1000, windowMs: 60_000 };
 
 export interface ListenOptions {
   port?: number;
@@ -49,9 +51,12 @@ export class ApiGatewayModule implements IModule {
   private booted = false;
   private readonly opts: GatewayOptions;
   private readonly routes = new Map<string, RouteHandler>();
+  private readonly limiter: RateLimiter | undefined;
 
   constructor(opts: GatewayOptions = {}) {
     this.opts = { maxBodyBytes: 1_048_576, ...opts };
+    const rl = opts.rateLimit === null ? null : (opts.rateLimit ?? DEFAULT_RATE_LIMIT);
+    this.limiter = rl ? new RateLimiter(rl) : undefined;
   }
 
   async init(kernel: KernelApi): Promise<void> {
@@ -170,6 +175,23 @@ export class ApiGatewayModule implements IModule {
 
       const handler = this.routes.get(`${method} ${path}`);
       let resp: GatewayResponse;
+
+      // Rate limiting (keyed by token or client IP). Step 15 "API Gateway: rate limiting".
+      if (this.limiter) {
+        const key = greq.headers['authorization'] ?? greq.remoteAddress ?? 'anon';
+        const decision = this.limiter.consume(key);
+        if (!decision.allowed) {
+          resp = {
+            status: 429,
+            body: { error: 'rate limit exceeded', limit: decision.limit },
+            headers: rateHeaders(decision),
+          };
+          this.send(res, resp);
+          this.metrics?.requests.inc(1, { method, path, status: '429' });
+          return;
+        }
+      }
+
       if (!handler) {
         resp = json(404, { error: 'not found', path });
       } else {
@@ -199,6 +221,7 @@ export class ApiGatewayModule implements IModule {
     res.writeHead(resp.status, {
       'content-type': resp.contentType ?? 'application/json; charset=utf-8',
       'content-length': Buffer.byteLength(payload),
+      ...(resp.headers ?? {}),
       ...(this.opts.cors ? { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' } : {}),
     });
     res.end(payload);
@@ -504,4 +527,13 @@ export class ApiGatewayModule implements IModule {
 
 function json(status: number, body: unknown): GatewayResponse {
   return { status, body };
+}
+
+function rateHeaders(d: { limit: number; remaining: number; resetAt: number; retryAfterSec: number }): Record<string, string> {
+  return {
+    'x-ratelimit-limit': String(d.limit),
+    'x-ratelimit-remaining': String(d.remaining),
+    'x-ratelimit-reset': String(d.resetAt),
+    'retry-after': String(d.retryAfterSec),
+  };
 }

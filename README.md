@@ -60,7 +60,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/plugins` | Plugin manager — capabilities, permissions, dependency validation, auto-registration |
 | `@jataqi/model-registry` | Model intelligence — catalog with metadata and a cost/latency/quality selector |
 | `@jataqi/scheduler` | Compute scheduler — priority task queue with targets, capacity, and dependencies |
-| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/audit`, `/stats` |
+| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
 ## Quick start
@@ -278,7 +278,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Plugins** (capability/permission/dependency validation, auto-registration)
 - ✅ **Model Registry** (catalog + cost/latency/quality model selection)
 - ✅ **Compute Scheduler** (priority task queue, targets, capacity, dependencies)
-- ✅ **HTTP API Gateway** (`/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/scheduler/stats`, `/ask`, `/audit`, `/stats`)
+- ✅ **HTTP API Gateway** (`/`, `/openapi.json`, `/health`, `/auth/*`, `/qil`, `/objective`, `/workflows`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/scheduler/stats`, `/ask`, `/audit`, `/stats`; bearer auth, RBAC, rate limiting)
 - ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`)
 - ✅ **Alpha vertical slice** (authenticate → QiL workflow → agents → knowledge → response → audit)
 
