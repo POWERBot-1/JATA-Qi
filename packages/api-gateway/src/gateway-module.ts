@@ -121,6 +121,8 @@ export class ApiGatewayModule implements IModule {
     };
 
     // Public.
+    route('GET', '/', () => this.apiIndex());
+    route('GET', '/openapi.json', () => this.openapi());
     route('GET', '/health', () => this.health());
     route('POST', '/auth/register', (req) => this.register(req));
     route('POST', '/auth/login', (req) => this.login(req));
@@ -234,6 +236,41 @@ export class ApiGatewayModule implements IModule {
       booted: this.booted,
       uptimeMs: Date.now() - BOOT_TIME,
       modules: this.moduleIds(),
+    });
+  }
+
+  /** Self-describing index of all routes (Step 15 API reference / discovery). */
+  private apiIndex(): GatewayResponse {
+    const endpoints = [...this.routes.keys()].map((key) => {
+      const [method, path] = key.split(' ');
+      return { method: method ?? 'GET', path: path ?? '/' };
+    });
+    return json(200, {
+      name: 'JATA Qi API',
+      version: '0.1.0',
+      description: 'Modular AI Operating System — HTTP gateway',
+      endpoints,
+      docs: '/openapi.json',
+    });
+  }
+
+  /** Generate a minimal OpenAPI 3.0 document from the registered routes. */
+  private openapi(): GatewayResponse {
+    const paths: Record<string, Record<string, { summary: string; operationId: string }>> = {};
+    for (const key of this.routes.keys()) {
+      const [method, path] = key.split(' ');
+      const p = path ?? '/';
+      const m = (method ?? 'get').toLowerCase();
+      const opPath = p.replace(/:(\w+)/g, '{$1}');
+      (paths[opPath] ??= {})[m] = {
+        summary: `${method} ${p}`,
+        operationId: `${m}${p.replace(/[^a-zA-Z0-9]/g, '_')}`,
+      };
+    }
+    return json(200, {
+      openapi: '3.0.3',
+      info: { title: 'JATA Qi API', version: '0.1.0' },
+      paths,
     });
   }
 

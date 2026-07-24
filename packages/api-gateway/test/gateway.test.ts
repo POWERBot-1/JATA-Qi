@@ -93,6 +93,23 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     assert.ok(b.modules.includes('orchestrator'));
   });
 
+  it('GET / returns a self-describing route index', async () => {
+    const { status, body } = await jsonRequest('GET', `${base}/`);
+    assert.equal(status, 200);
+    const b = body as { name: string; endpoints: { method: string; path: string }[] };
+    assert.equal(b.name, 'JATA Qi API');
+    assert.ok(b.endpoints.some((e) => e.path === '/health'));
+  });
+
+  it('GET /openapi.json returns an OpenAPI 3.0 document with all paths', async () => {
+    const { status, body } = await jsonRequest('GET', `${base}/openapi.json`);
+    assert.equal(status, 200);
+    const b = body as { openapi: string; paths: Record<string, unknown> };
+    assert.equal(b.openapi, '3.0.3');
+    assert.ok(b.paths['/health']);
+    assert.ok(b.paths['/qil']);
+  });
+
   it('registers and logs in a developer, returning a bearer token', async () => {
     const reg = await jsonRequest('POST', `${base}/auth/register`, { username: 'alice', password: 'pw', roles: ['developer'] });
     assert.equal(reg.status, 201);
