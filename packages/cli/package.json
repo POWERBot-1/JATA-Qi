@@ -26,7 +26,11 @@
     "@jataqi/qil": "0.1.0",
     "@jataqi/security": "0.1.0",
     "@jataqi/orchestrator": "0.1.0",
-    "@jataqi/api-gateway": "0.1.0"
+    "@jataqi/api-gateway": "0.1.0",
+    "@jataqi/metrics": "0.1.0",
+    "@jataqi/simulation": "0.1.0",
+    "@jataqi/teams": "0.1.0",
+    "@jataqi/plugins": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

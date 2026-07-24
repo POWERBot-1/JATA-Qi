@@ -13,6 +13,11 @@ import type { SecurityModule } from '@jataqi/security';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
 import type { KnowledgeService } from '@jataqi/knowledge-service';
+import type { MetricsModule } from '@jataqi/metrics';
+import type { SimulationModule, Scenario, SimulationResult } from '@jataqi/simulation';
+import { createDistribution } from '@jataqi/simulation';
+import type { TeamCoordinatorModule, TeamConfig, TeamResult } from '@jataqi/teams';
+import type { PluginManagerModule, InstalledPlugin } from '@jataqi/plugins';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 
 const BOOT_TIME = Date.now();
@@ -32,6 +37,10 @@ export class ApiGatewayModule implements IModule {
   private orch!: OrchestratorModule;
   private agents!: AgentRuntimeModule;
   private knowledge!: KnowledgeService;
+  private metrics?: MetricsModule;
+  private simulation?: SimulationModule;
+  private teams?: TeamCoordinatorModule;
+  private plugins?: PluginManagerModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -51,6 +60,11 @@ export class ApiGatewayModule implements IModule {
     this.orch = kernel.getModule<OrchestratorModule>('orchestrator');
     this.agents = kernel.getModule<AgentRuntimeModule>('agent-runtime');
     this.knowledge = kernel.getModule<KnowledgeService>('knowledge');
+    // Optional services — resolved best-effort so the gateway degrades gracefully.
+    this.metrics = this.tryModule<MetricsModule>('metrics');
+    this.simulation = this.tryModule<SimulationModule>('simulation');
+    this.teams = this.tryModule<TeamCoordinatorModule>('teams');
+    this.plugins = this.tryModule<PluginManagerModule>('plugins');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -114,6 +128,11 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/audit', auth('audit:read', (req) => this.audit(req)));
     route('GET', '/stats', auth('knowledge:read', () => this.stats()));
     route('GET', '/whoami', auth(null, (req) => json(200, { principal: req.principal })));
+    route('GET', '/metrics', auth('metrics:read', () => this.metricsHandler()));
+    route('POST', '/simulate', auth('qil:run', (req) => this.simulate(req)));
+    route('POST', '/team', auth('qil:run', (req) => this.team(req)));
+    route('GET', '/plugins', auth('plugin:read', () => this.pluginsList()));
+    route('POST', '/plugins', auth('plugin:manage', (req) => this.pluginAction(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -148,6 +167,7 @@ export class ApiGatewayModule implements IModule {
         }
       }
       this.send(res, resp);
+      this.metrics?.requests.inc(1, { method, path, status: String(resp.status) });
       this.api.logger.debug('gateway request', {
         method,
         path,
@@ -161,9 +181,10 @@ export class ApiGatewayModule implements IModule {
   }
 
   private send(res: ServerResponse, resp: GatewayResponse): void {
-    const payload = JSON.stringify(resp.body);
+    const isText = resp.contentType === 'text/plain';
+    const payload = isText ? String(resp.body) : JSON.stringify(resp.body);
     res.writeHead(resp.status, {
-      'content-type': 'application/json; charset=utf-8',
+      'content-type': resp.contentType ?? 'application/json; charset=utf-8',
       'content-length': Buffer.byteLength(payload),
       ...(this.opts.cors ? { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' } : {}),
     });
@@ -208,7 +229,10 @@ export class ApiGatewayModule implements IModule {
   private moduleIds(): string[] {
     // The kernel does not expose a public list; collect started modules via state.
     const ids: string[] = [];
-    for (const id of ['storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime', 'qil', 'security', 'orchestrator', 'api-gateway']) {
+    for (const id of [
+      'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
+      'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins', 'api-gateway',
+    ]) {
       try {
         this.api.getModuleState(id);
         ids.push(id);
@@ -217,6 +241,15 @@ export class ApiGatewayModule implements IModule {
       }
     }
     return ids;
+  }
+
+  /** Resolve an optional module without throwing when it is absent. */
+  private tryModule<T extends IModule>(id: string): T | undefined {
+    try {
+      return this.api.getModule<T>(id);
+    } catch {
+      return undefined;
+    }
   }
 
   private async register(req: GatewayRequest): Promise<GatewayResponse> {
@@ -289,6 +322,84 @@ export class ApiGatewayModule implements IModule {
       /* knowledge-graph not registered */
     }
     return json(200, { knowledge, graph });
+  }
+
+  private metricsHandler(): GatewayResponse {
+    if (!this.metrics) return json(501, { error: 'metrics module not registered' });
+    return { status: 200, body: this.metrics.format(), contentType: 'text/plain; version=0.0.4' };
+  }
+
+  private async simulate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.simulation) return json(501, { error: 'simulation module not registered' });
+    const body = this.asObject(req.body);
+    const name = typeof body.name === 'string' ? body.name : 'scenario';
+    const formula = typeof body.formula === 'string' ? body.formula : '';
+    const rawInputs = (body.inputs ?? {}) as Record<string, unknown>;
+    if (!formula.trim()) return json(400, { error: 'field "formula" is required (e.g. "revenue - cost")' });
+    const inputNames = Object.keys(rawInputs);
+    if (inputNames.length === 0) return json(400, { error: 'at least one input distribution is required' });
+
+    const inputs: Record<string, ReturnType<typeof createDistribution>> = {};
+    try {
+      for (const [k, spec] of Object.entries(rawInputs)) {
+        inputs[k] = createDistribution(spec as { kind: string } & Record<string, unknown>);
+      }
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+
+    // Evaluate the formula as a pure arithmetic expression over the inputs.
+    // (Behind qil:run auth; intended for local/dev modeling.)
+    const evaluate = new Function(...inputNames, `"use strict"; return (${formula});`) as (...args: number[]) => number;
+    const scenario: Scenario<number> = {
+      name,
+      inputs,
+      output: (ctx) => evaluate(...inputNames.map((n) => ctx[n] ?? 0)),
+      trials: typeof body.trials === 'number' ? body.trials : 10_000,
+      seed: typeof body.seed === 'number' ? body.seed : undefined,
+      targets: Array.isArray(body.targets) ? (body.targets as number[]) : undefined,
+      description: typeof body.description === 'string' ? body.description : undefined,
+    };
+    const result: SimulationResult = await this.simulation.run(scenario);
+    return json(200, { result: { ...result, samples: result.samples.slice(0, 50) } });
+  }
+
+  private async team(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.teams) return json(501, { error: 'teams module not registered' });
+    const body = this.asObject(req.body);
+    const objective = typeof body.objective === 'string' ? body.objective : '';
+    if (!objective.trim()) return json(400, { error: 'field "objective" is required' });
+    let result: TeamResult;
+    if (typeof body.team === 'string') {
+      result = await this.teams.execute(objective, body.team);
+    } else {
+      const members = Array.isArray(body.members) ? (body.members as string[]) : [];
+      if (members.length === 0) return json(400, { error: 'field "team" (name) or "members" (array) is required' });
+      const config: TeamConfig = {
+        name: typeof body.name === 'string' ? body.name : 'ad-hoc',
+        members,
+        mode: typeof body.mode === 'string' ? (body.mode as TeamConfig['mode']) : 'parallel',
+        ...(typeof body.synthesizer === 'string' ? { synthesizer: body.synthesizer } : {}),
+      };
+      result = await this.teams.execute(objective, config);
+    }
+    return json(200, { result });
+  }
+
+  private pluginsList(): GatewayResponse {
+    if (!this.plugins) return json(501, { error: 'plugins module not registered' });
+    return json(200, { plugins: this.plugins.list() });
+  }
+
+  private async pluginAction(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.plugins) return json(501, { error: 'plugins module not registered' });
+    const { id, action } = this.asObject(req.body);
+    if (typeof id !== 'string' || typeof action !== 'string') return json(400, { error: 'fields "id" and "action" (enable|disable) are required' });
+    if (action === 'enable') this.plugins.enable(id);
+    else if (action === 'disable') this.plugins.disable(id);
+    else return json(400, { error: 'action must be "enable" or "disable"' });
+    const after = this.plugins.get(id) as InstalledPlugin | undefined;
+    return json(200, { plugin: after });
   }
 
   // --- helpers -------------------------------------------------------------

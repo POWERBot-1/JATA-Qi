@@ -7,6 +7,10 @@ import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { SecurityModule } from '@jataqi/security';
 import { OrchestratorModule } from '@jataqi/orchestrator';
 import { QiLModule } from '@jataqi/qil';
+import { MetricsModule } from '@jataqi/metrics';
+import { SimulationModule } from '@jataqi/simulation';
+import { TeamCoordinatorModule } from '@jataqi/teams';
+import { PluginManagerModule } from '@jataqi/plugins';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 
 describe('createJataQi bootstrap', () => {
@@ -19,6 +23,10 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<QiLModule>('qil'));
     assert.ok(qi.kernel.getModule<SecurityModule>('security'));
     assert.ok(qi.kernel.getModule<OrchestratorModule>('orchestrator'));
+    assert.ok(qi.kernel.getModule<MetricsModule>('metrics'));
+    assert.ok(qi.kernel.getModule<SimulationModule>('simulation'));
+    assert.ok(qi.kernel.getModule<TeamCoordinatorModule>('teams'));
+    assert.ok(qi.kernel.getModule<PluginManagerModule>('plugins'));
     assert.ok(qi.kernel.getModule<ApiGatewayModule>('api-gateway'));
     assert.ok(qi.gateway, 'bootstrap should expose the gateway handle');
     await qi.shutdown();

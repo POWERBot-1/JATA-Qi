@@ -37,6 +37,7 @@ export class OrchestratorModule implements IModule {
   /** Execute a compiled QiL plan. */
   async execute(plan: ExecutionPlan, opts: ExecuteOptions = {}): Promise<ExecutionResult> {
     const startedAt = Date.now();
+    const metrics = this.tryMetrics();
     const topK = opts.topK ?? 4;
     const results: StepResult[] = [];
     const retrieved: string[] = [];
@@ -144,6 +145,10 @@ export class OrchestratorModule implements IModule {
     }
 
     await this.api.bus.emit(OrchestratorEvents.ExecutionCompleted, { execId: execResult.id, status });
+    if (metrics) {
+      metrics.workflowRuns.inc(1, { status });
+      metrics.workflowDuration.observe(finishedAt - startedAt);
+    }
     return execResult;
   }
 
@@ -227,6 +232,18 @@ export class OrchestratorModule implements IModule {
         audit: (rec: Record<string, unknown>) => Promise<{ id: string }>;
       };
       return mod;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Resolve the metrics module if it is registered (optional dependency). */
+  private tryMetrics(): { workflowRuns: { inc: (n: number, labels?: Record<string, string>) => void }; workflowDuration: { observe: (v: number) => void } } | undefined {
+    try {
+      return this.api.getModule('metrics') as unknown as {
+        workflowRuns: { inc: (n: number, labels?: Record<string, string>) => void };
+        workflowDuration: { observe: (v: number) => void };
+      };
     } catch {
       return undefined;
     }

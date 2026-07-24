@@ -22,6 +22,8 @@ structured response → produce an auditable execution record.
 ├──────────────────────────────────────────────────────────────────┤
 │  Identity/Security (auth, RBAC, audit)  ·  Workflow Orchestrator  │
 ├──────────────────────────────────────────────────────────────────┤
+│  Teams (multi-agent)  ·  Simulation (Monte-Carlo)  ·  Plugins     │
+├──────────────────────────────────────────────────────────────────┤
 │  QiL Language (lexer/parser/compiler → ExecutionPlan)             │
 ├──────────────────────────────────────────────────────────────────┤
 │  Agent Runtime  ·  Tools  ·  Sessions / Memory                    │
@@ -32,7 +34,7 @@ structured response → produce an auditable execution record.
 ├──────────────────────────────────────────────────────────────────┤
 │  Storage Layer  (Memory / Filesystem drivers, KV+Docs+Blobs)      │
 ├──────────────────────────────────────────────────────────────────┤
-│                        Core Kernel                                │
+│  Core Kernel  ·  Metrics (counters/gauges/histograms)             │
 │   Event Bus  ·  DI Container  ·  Lifecycle  ·  Config / Log       │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -49,8 +51,12 @@ structured response → produce an auditable execution record.
 | `@jataqi/agent-runtime` | Tool system, ReAct agent loop, Echo/Scripted/OpenAI LLMs, built-in knowledge+graph tools, session memory |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
+| `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
+| `@jataqi/simulation` | Probabilistic Monte-Carlo scenario engine with distributions, statistics, and target probabilities |
 | `@jataqi/security` | Identity, authentication (scrypt), RBAC authorization, API keys, append-only audit ledger |
-| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/ask`, `/audit`, `/stats` |
+| `@jataqi/metrics` | Observability — counters, gauges, histograms, registry, Prometheus exposition |
+| `@jataqi/plugins` | Plugin manager — capabilities, permissions, dependency validation, auto-registration |
+| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/metrics`, `/plugins`, `/audit`, `/stats` |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
 ## Quick start
@@ -171,6 +177,11 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/audit` | `audit:read` | Query the audit ledger |
 | GET | `/stats` | `knowledge:read` | Knowledge + graph stats |
 | GET | `/whoami` | bearer | Resolved principal |
+| GET | `/metrics` | `metrics:read` | Prometheus exposition (counters/gauges/histograms) |
+| POST | `/simulate` | `qil:run` | `{inputs, formula, trials, targets?}` Monte-Carlo result |
+| POST | `/team` | `qil:run` | `{objective, members, mode?}` coordinated team result |
+| GET | `/plugins` | `plugin:read` | List installed plugins |
+| POST | `/plugins` | `plugin:manage` | `{id, action}` enable/disable a plugin |
 
 ### Security model
 
@@ -221,7 +232,7 @@ await kernel.boot();
 
 ## Testing
 
-The full suite (150+ unit + integration tests across all packages):
+The full suite (180+ unit + integration tests across all packages):
 
 ```bash
 npm test
@@ -251,8 +262,12 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
 - ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit)
+- ✅ **Teams** (multi-agent coordination: parallel fan-out, sequential, consensus)
+- ✅ **Simulation** (Monte-Carlo scenarios, distributions, percentiles, target probabilities)
 - ✅ **Security** (identity, scrypt auth, RBAC, API keys, immutable audit ledger)
-- ✅ **HTTP API Gateway** (`/health`, `/auth/*`, `/qil`, `/objective`, `/ask`, `/audit`, `/stats`)
+- ✅ **Metrics** (counters/gauges/histograms, registry, Prometheus exposition)
+- ✅ **Plugins** (capability/permission/dependency validation, auto-registration)
+- ✅ **HTTP API Gateway** (`/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/metrics`, `/plugins`, `/ask`, `/audit`, `/stats`)
 - ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`)
 - ✅ **Alpha vertical slice** (authenticate → QiL workflow → agents → knowledge → response → audit)
 

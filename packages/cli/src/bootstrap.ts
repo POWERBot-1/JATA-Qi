@@ -16,6 +16,10 @@ import { QiLModule } from '@jataqi/qil';
 import { SecurityModule, type SecurityModuleConfig } from '@jataqi/security';
 import { OrchestratorModule } from '@jataqi/orchestrator';
 import { ApiGatewayModule, type GatewayOptions } from '@jataqi/api-gateway';
+import { MetricsModule } from '@jataqi/metrics';
+import { SimulationModule } from '@jataqi/simulation';
+import { TeamCoordinatorModule } from '@jataqi/teams';
+import { PluginManagerModule } from '@jataqi/plugins';
 import { readConfig } from './config.js';
 
 export interface JataQiConfig {
@@ -67,6 +71,10 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new QiLModule());
   kernel.register(new SecurityModule(cfg.security));
   kernel.register(new OrchestratorModule());
+  kernel.register(new MetricsModule());
+  kernel.register(new SimulationModule());
+  kernel.register(new TeamCoordinatorModule());
+  kernel.register(new PluginManagerModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

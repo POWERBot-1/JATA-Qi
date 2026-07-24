@@ -10,6 +10,10 @@ import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
 import { SecurityModule } from '@jataqi/security';
 import { QiLModule } from '@jataqi/qil';
 import { OrchestratorModule } from '@jataqi/orchestrator';
+import { MetricsModule } from '@jataqi/metrics';
+import { SimulationModule } from '@jataqi/simulation';
+import { TeamCoordinatorModule } from '@jataqi/teams';
+import { PluginManagerModule } from '@jataqi/plugins';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -52,6 +56,10 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     kernel.register(new QiLModule());
     kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
     kernel.register(new OrchestratorModule());
+    kernel.register(new MetricsModule());
+    kernel.register(new SimulationModule());
+    kernel.register(new TeamCoordinatorModule());
+    kernel.register(new PluginManagerModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -162,5 +170,71 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const { status, body } = await jsonRequest('GET', `${base}/whoami`, undefined, token);
     assert.equal(status, 200);
     assert.equal((body as { principal: { username: string } }).principal.username, 'alice');
+  });
+
+  it('exposes Prometheus metrics via GET /metrics', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    // generate some traffic first
+    await jsonRequest('GET', `${base}/health`);
+    const res = await fetch(`${base}/metrics`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.match(text, /jataqi_requests_total/);
+  });
+
+  it('runs a Monte-Carlo simulation via POST /simulate', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest(
+      'POST',
+      `${base}/simulate`,
+      {
+        name: 'profit',
+        inputs: { revenue: { kind: 'uniform', min: 80, max: 120 } },
+        formula: 'revenue - 100',
+        trials: 5000,
+        seed: 1,
+        targets: [0],
+      },
+      token,
+    );
+    assert.equal(status, 200);
+    const result = (body as { result: { stats: { mean: number }; probabilities?: Record<string, number>; caveat: string } }).result;
+    assert.ok(Math.abs(result.stats.mean - 0) < 2);
+    assert.ok(result.probabilities && Math.abs(result.probabilities['0']! - 0.5) < 0.06);
+    assert.match(result.caveat, /Modeled scenario/i);
+  });
+
+  it('coordinates an ad-hoc team via POST /team', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest(
+      'POST',
+      `${base}/team`,
+      { objective: 'review the plan', members: ['m1', 'm2', 'm3'], mode: 'parallel' },
+      token,
+    );
+    assert.equal(status, 200);
+    const result = (body as { result: { mode: string; contributions: unknown[]; synthesis: string } }).result;
+    assert.equal(result.mode, 'parallel');
+    assert.equal(result.contributions.length, 3);
+    assert.ok(result.synthesis.length > 0);
+  });
+
+  it('lists and toggles plugins via /plugins', async () => {
+    const plugins = kernel.getModule<PluginManagerModule>('plugins');
+    await plugins.install({ id: 'demo-plugin', version: '1.2.0', capabilities: ['tool'] });
+
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'admin', password: 'admin' });
+    const token = (login.body as { token: string }).token;
+
+    const list = await jsonRequest('GET', `${base}/plugins`, undefined, token);
+    assert.equal(list.status, 200);
+    assert.ok((list.body as { plugins: { id: string }[] }).plugins.some((p) => p.id === 'demo-plugin'));
+
+    const disable = await jsonRequest('POST', `${base}/plugins`, { id: 'demo-plugin', action: 'disable' }, token);
+    assert.equal(disable.status, 200);
+    assert.equal((disable.body as { plugin: { enabled: boolean } }).plugin.enabled, false);
   });
 });

@@ -16,6 +16,8 @@ export interface GatewayRequest {
 export interface GatewayResponse {
   status: number;
   body: unknown;
+  /** Override the default JSON content type (e.g. for Prometheus text). */
+  contentType?: string;
 }
 
 export type RouteHandler = (req: GatewayRequest) => Promise<GatewayResponse> | GatewayResponse;

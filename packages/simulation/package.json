@@ -1,7 +1,7 @@
 {
-  "name": "@jataqi/api-gateway",
+  "name": "@jataqi/simulation",
   "version": "0.1.0",
-  "description": "JATA Qi API Gateway — HTTP entrypoint exposing auth, QiL, orchestration and audit",
+  "description": "JATA Qi Simulation — probabilistic Monte-Carlo scenario engine (Steps 3, 11)",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -20,15 +20,7 @@
   "files": ["dist", "src"],
   "license": "MIT",
   "dependencies": {
-    "@jataqi/core-kernel": "0.1.0",
-    "@jataqi/security": "0.1.0",
-    "@jataqi/orchestrator": "0.1.0",
-    "@jataqi/agent-runtime": "0.1.0",
-    "@jataqi/knowledge-service": "0.1.0",
-    "@jataqi/metrics": "0.1.0",
-    "@jataqi/simulation": "0.1.0",
-    "@jataqi/teams": "0.1.0",
-    "@jataqi/plugins": "0.1.0"
+    "@jataqi/core-kernel": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
