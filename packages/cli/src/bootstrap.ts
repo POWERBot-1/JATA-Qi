@@ -20,7 +20,17 @@ import { MetricsModule } from '@jataqi/metrics';
 import { SimulationModule } from '@jataqi/simulation';
 import { TeamCoordinatorModule } from '@jataqi/teams';
 import { PluginManagerModule } from '@jataqi/plugins';
+import { ModelRegistryModule } from '@jataqi/model-registry';
+import { SchedulerModule } from '@jataqi/scheduler';
 import { readConfig } from './config.js';
+
+/** A small default model catalog, seeded into the registry at boot. */
+const DEFAULT_MODELS = [
+  { id: 'echo', provider: 'jataqi', name: 'EchoLLM', capabilities: ['chat'], quality: 1, latencyMs: 0, inputCostPer1k: 0, outputCostPer1k: 0, default: true },
+  { id: 'gpt-4o-mini', provider: 'openai', name: 'GPT-4o mini', capabilities: ['chat', 'reasoning', 'tool-use', 'code'], contextWindow: 128000, inputCostPer1k: 0.00015, outputCostPer1k: 0.0006, latencyMs: 900, quality: 72 },
+  { id: 'gpt-4o', provider: 'openai', name: 'GPT-4o', capabilities: ['chat', 'reasoning', 'vision', 'tool-use', 'code'], contextWindow: 128000, inputCostPer1k: 0.0025, outputCostPer1k: 0.01, latencyMs: 1400, quality: 90 },
+  { id: 'text-embedding-3-small', provider: 'openai', name: 'Text Embedding 3 Small', capabilities: ['embedding'], inputCostPer1k: 0.00002, latencyMs: 200, quality: 70 },
+];
 
 export interface JataQiConfig {
   /** Kernel-level overrides. */
@@ -75,6 +85,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new SimulationModule());
   kernel.register(new TeamCoordinatorModule());
   kernel.register(new PluginManagerModule());
+  kernel.register(new ModelRegistryModule({ models: DEFAULT_MODELS }));
+  kernel.register(new SchedulerModule({ defaultCapacity: 4 }));
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

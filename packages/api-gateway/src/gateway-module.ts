@@ -18,6 +18,8 @@ import type { SimulationModule, Scenario, SimulationResult } from '@jataqi/simul
 import { createDistribution } from '@jataqi/simulation';
 import type { TeamCoordinatorModule, TeamConfig, TeamResult } from '@jataqi/teams';
 import type { PluginManagerModule, InstalledPlugin } from '@jataqi/plugins';
+import type { ModelRegistryModule, SelectionRequest } from '@jataqi/model-registry';
+import type { SchedulerModule } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 
 const BOOT_TIME = Date.now();
@@ -41,6 +43,8 @@ export class ApiGatewayModule implements IModule {
   private simulation?: SimulationModule;
   private teams?: TeamCoordinatorModule;
   private plugins?: PluginManagerModule;
+  private modelRegistry?: ModelRegistryModule;
+  private scheduler?: SchedulerModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -65,6 +69,8 @@ export class ApiGatewayModule implements IModule {
     this.simulation = this.tryModule<SimulationModule>('simulation');
     this.teams = this.tryModule<TeamCoordinatorModule>('teams');
     this.plugins = this.tryModule<PluginManagerModule>('plugins');
+    this.modelRegistry = this.tryModule<ModelRegistryModule>('model-registry');
+    this.scheduler = this.tryModule<SchedulerModule>('scheduler');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -133,6 +139,9 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/team', auth('qil:run', (req) => this.team(req)));
     route('GET', '/plugins', auth('plugin:read', () => this.pluginsList()));
     route('POST', '/plugins', auth('plugin:manage', (req) => this.pluginAction(req)));
+    route('GET', '/models', auth('model:read', () => this.modelsList()));
+    route('POST', '/models/select', auth('model:read', (req) => this.modelSelect(req)));
+    route('GET', '/scheduler/stats', auth('metrics:read', () => this.schedulerStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -231,7 +240,8 @@ export class ApiGatewayModule implements IModule {
     const ids: string[] = [];
     for (const id of [
       'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
-      'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins', 'api-gateway',
+      'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
+      'model-registry', 'scheduler', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -400,6 +410,28 @@ export class ApiGatewayModule implements IModule {
     else return json(400, { error: 'action must be "enable" or "disable"' });
     const after = this.plugins.get(id) as InstalledPlugin | undefined;
     return json(200, { plugin: after });
+  }
+
+  private modelsList(): GatewayResponse {
+    if (!this.modelRegistry) return json(501, { error: 'model-registry module not registered' });
+    return json(200, { models: this.modelRegistry.list() });
+  }
+
+  private async modelSelect(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.modelRegistry) return json(501, { error: 'model-registry module not registered' });
+    const body = this.asObject(req.body);
+    const selection: SelectionRequest = {};
+    if (Array.isArray(body.capabilities)) selection.capabilities = body.capabilities as string[];
+    if (typeof body.prefer === 'string') selection.prefer = body.prefer as SelectionRequest['prefer'];
+    if (Array.isArray(body.providers)) selection.providers = body.providers as string[];
+    if (typeof body.minContextWindow === 'number') selection.minContextWindow = body.minContextWindow;
+    const result = await this.modelRegistry.select(selection);
+    return json(200, { selection: result });
+  }
+
+  private schedulerStats(): GatewayResponse {
+    if (!this.scheduler) return json(501, { error: 'scheduler module not registered' });
+    return json(200, { stats: this.scheduler.stats() });
   }
 
   // --- helpers -------------------------------------------------------------

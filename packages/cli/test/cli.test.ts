@@ -11,6 +11,8 @@ import { MetricsModule } from '@jataqi/metrics';
 import { SimulationModule } from '@jataqi/simulation';
 import { TeamCoordinatorModule } from '@jataqi/teams';
 import { PluginManagerModule } from '@jataqi/plugins';
+import { ModelRegistryModule } from '@jataqi/model-registry';
+import { SchedulerModule } from '@jataqi/scheduler';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 
 describe('createJataQi bootstrap', () => {
@@ -27,6 +29,8 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<SimulationModule>('simulation'));
     assert.ok(qi.kernel.getModule<TeamCoordinatorModule>('teams'));
     assert.ok(qi.kernel.getModule<PluginManagerModule>('plugins'));
+    assert.ok(qi.kernel.getModule<ModelRegistryModule>('model-registry'));
+    assert.ok(qi.kernel.getModule<SchedulerModule>('scheduler'));
     assert.ok(qi.kernel.getModule<ApiGatewayModule>('api-gateway'));
     assert.ok(qi.gateway, 'bootstrap should expose the gateway handle');
     await qi.shutdown();

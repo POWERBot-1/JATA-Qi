@@ -14,6 +14,8 @@ import { MetricsModule } from '@jataqi/metrics';
 import { SimulationModule } from '@jataqi/simulation';
 import { TeamCoordinatorModule } from '@jataqi/teams';
 import { PluginManagerModule } from '@jataqi/plugins';
+import { ModelRegistryModule } from '@jataqi/model-registry';
+import { SchedulerModule } from '@jataqi/scheduler';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -60,6 +62,11 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     kernel.register(new SimulationModule());
     kernel.register(new TeamCoordinatorModule());
     kernel.register(new PluginManagerModule());
+    kernel.register(new ModelRegistryModule({ models: [
+      { id: 'm1', provider: 'acme', name: 'M1', capabilities: ['chat', 'reasoning'], quality: 90, inputCostPer1k: 1, outputCostPer1k: 2, latencyMs: 1000 },
+      { id: 'm2', provider: 'acme', name: 'M2', capabilities: ['chat'], quality: 50, inputCostPer1k: 0.1, outputCostPer1k: 0.1, latencyMs: 200 },
+    ] }));
+    kernel.register(new SchedulerModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -236,5 +243,25 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const disable = await jsonRequest('POST', `${base}/plugins`, { id: 'demo-plugin', action: 'disable' }, token);
     assert.equal(disable.status, 200);
     assert.equal((disable.body as { plugin: { enabled: boolean } }).plugin.enabled, false);
+  });
+
+  it('lists models and selects the best by preference', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const list = await jsonRequest('GET', `${base}/models`, undefined, token);
+    assert.equal(list.status, 200);
+    assert.ok((list.body as { models: unknown[] }).models.length >= 2);
+
+    const sel = await jsonRequest('POST', `${base}/models/select`, { capabilities: ['chat'], prefer: 'quality' }, token);
+    assert.equal(sel.status, 200);
+    assert.equal((sel.body as { selection: { model: { id: string } } }).selection.model.id, 'm1'); // highest quality
+  });
+
+  it('reports scheduler stats', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const res = await jsonRequest('GET', `${base}/scheduler/stats`, undefined, token);
+    assert.equal(res.status, 200);
+    assert.ok((res.body as { stats: { targets: unknown[] } }).stats.targets.length >= 1);
   });
 });

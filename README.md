@@ -24,6 +24,8 @@ structured response → produce an auditable execution record.
 ├──────────────────────────────────────────────────────────────────┤
 │  Teams (multi-agent)  ·  Simulation (Monte-Carlo)  ·  Plugins     │
 ├──────────────────────────────────────────────────────────────────┤
+│  Model Registry (selection)  ·  Compute Scheduler (task queue)    │
+├──────────────────────────────────────────────────────────────────┤
 │  QiL Language (lexer/parser/compiler → ExecutionPlan)             │
 ├──────────────────────────────────────────────────────────────────┤
 │  Agent Runtime  ·  Tools  ·  Sessions / Memory                    │
@@ -56,7 +58,9 @@ structured response → produce an auditable execution record.
 | `@jataqi/security` | Identity, authentication (scrypt), RBAC authorization, API keys, append-only audit ledger |
 | `@jataqi/metrics` | Observability — counters, gauges, histograms, registry, Prometheus exposition |
 | `@jataqi/plugins` | Plugin manager — capabilities, permissions, dependency validation, auto-registration |
-| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/metrics`, `/plugins`, `/audit`, `/stats` |
+| `@jataqi/model-registry` | Model intelligence — catalog with metadata and a cost/latency/quality selector |
+| `@jataqi/scheduler` | Compute scheduler — priority task queue with targets, capacity, and dependencies |
+| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/audit`, `/stats` |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
 ## Quick start
@@ -182,6 +186,9 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | POST | `/team` | `qil:run` | `{objective, members, mode?}` coordinated team result |
 | GET | `/plugins` | `plugin:read` | List installed plugins |
 | POST | `/plugins` | `plugin:manage` | `{id, action}` enable/disable a plugin |
+| GET | `/models` | `model:read` | List registered models |
+| POST | `/models/select` | `model:read` | `{capabilities, prefer}` select best model |
+| GET | `/scheduler/stats` | `metrics:read` | Compute scheduler queue stats |
 
 ### Security model
 
@@ -232,7 +239,7 @@ await kernel.boot();
 
 ## Testing
 
-The full suite (180+ unit + integration tests across all packages):
+The full suite (200+ unit + integration tests across all packages):
 
 ```bash
 npm test
@@ -267,7 +274,9 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Security** (identity, scrypt auth, RBAC, API keys, immutable audit ledger)
 - ✅ **Metrics** (counters/gauges/histograms, registry, Prometheus exposition)
 - ✅ **Plugins** (capability/permission/dependency validation, auto-registration)
-- ✅ **HTTP API Gateway** (`/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/metrics`, `/plugins`, `/ask`, `/audit`, `/stats`)
+- ✅ **Model Registry** (catalog + cost/latency/quality model selection)
+- ✅ **Compute Scheduler** (priority task queue, targets, capacity, dependencies)
+- ✅ **HTTP API Gateway** (`/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/scheduler/stats`, `/ask`, `/audit`, `/stats`)
 - ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`)
 - ✅ **Alpha vertical slice** (authenticate → QiL workflow → agents → knowledge → response → audit)
 
