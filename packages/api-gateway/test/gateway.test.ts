@@ -264,4 +264,22 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     assert.equal(res.status, 200);
     assert.ok((res.body as { stats: { targets: unknown[] } }).stats.targets.length >= 1);
   });
+
+  it('records and retrieves workflow history', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const ran = await jsonRequest('POST', `${base}/objective`, { objective: 'history test' }, token);
+    const id = (ran.body as { result: { id: string } }).result.id;
+
+    const list = await jsonRequest('GET', `${base}/workflows`, undefined, token);
+    assert.equal(list.status, 200);
+    assert.ok((list.body as { runs: { id: string }[] }).runs.some((r) => r.id === id));
+
+    const one = await jsonRequest('GET', `${base}/workflow?id=${id}`, undefined, token);
+    assert.equal(one.status, 200);
+    assert.equal((one.body as { run: { id: string } }).run.id, id);
+
+    const missing = await jsonRequest('GET', `${base}/workflow?id=does-not-exist`, undefined, token);
+    assert.equal(missing.status, 404);
+  });
 });

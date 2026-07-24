@@ -130,6 +130,8 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/auth/apikey', auth(null, (req) => this.createApiKey(req)));
     route('POST', '/qil', auth('qil:run', (req) => this.runQiL(req)));
     route('POST', '/objective', auth('qil:run', (req) => this.runObjective(req)));
+    route('GET', '/workflows', auth('qil:run', (req) => this.listWorkflows(req)));
+    route('GET', '/workflow', auth('qil:run', (req) => this.getWorkflow(req)));
     route('POST', '/ask', auth('agent:run', (req) => this.ask(req)));
     route('GET', '/audit', auth('audit:read', (req) => this.audit(req)));
     route('GET', '/stats', auth('knowledge:read', () => this.stats()));
@@ -302,6 +304,22 @@ export class ApiGatewayModule implements IModule {
     if (typeof objective !== 'string' || !objective.trim()) return json(400, { error: 'field "objective" is required' });
     const result = await this.orch.runObjective(objective, { principal: req.principal });
     return json(200, { result });
+  }
+
+  private async listWorkflows(req: GatewayRequest): Promise<GatewayResponse> {
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const runs = await this.orch.listRuns(limit);
+    // Return a compact summary (omit verbose per-step outputs).
+    const summary = runs.map((r) => ({ id: r.id, mission: r.mission, status: r.status, steps: r.steps.length, startedAt: r.startedAt, finishedAt: r.finishedAt, auditRecordId: r.auditRecordId }));
+    return json(200, { runs: summary, count: summary.length });
+  }
+
+  private async getWorkflow(req: GatewayRequest): Promise<GatewayResponse> {
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const run = await this.orch.getRun(id);
+    if (!run) return json(404, { error: 'workflow run not found' });
+    return json(200, { run });
   }
 
   private async ask(req: GatewayRequest): Promise<GatewayResponse> {

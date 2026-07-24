@@ -31,6 +31,8 @@ export interface ExecutionResult {
   retrieved: string[];
   startedAt: number;
   finishedAt: number;
+  /** Monotonic execution sequence (for deterministic newest-first ordering). */
+  seq?: number;
   /** Id of the audit record written for this execution, when security is present. */
   auditRecordId?: string;
 }

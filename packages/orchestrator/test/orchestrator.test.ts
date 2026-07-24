@@ -111,4 +111,18 @@ REASON "should not run"`);
     assert.equal(started, 1);
     assert.equal(completed, 1);
   });
+
+  it('persists runs to durable storage and supports history queries', async () => {
+    const r1 = await orch.runObjective('first objective');
+    const r2 = await orch.runObjective('second objective');
+
+    const got = await orch.getRun(r1.id);
+    assert.ok(got);
+    assert.equal(got!.mission, 'first objective');
+
+    const list = await orch.listRuns();
+    assert.equal(list.length, 2);
+    // newest first
+    assert.equal(list[0]!.id, r2.id);
+  });
 });

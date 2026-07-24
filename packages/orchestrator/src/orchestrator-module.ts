@@ -15,6 +15,7 @@ import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
 import type { KnowledgeService, RetrievalHit } from '@jataqi/knowledge-service';
 import type { ExecutionPlan, PlanStep } from '@jataqi/qil';
 import { compileSource } from '@jataqi/qil';
+import type { INamespace } from '@jataqi/storage';
 import { OrchestratorEvents } from './types.js';
 import type { ExecutionResult, ExecuteOptions, StepResult } from './types.js';
 
@@ -24,10 +25,20 @@ export class OrchestratorModule implements IModule {
   readonly dependsOn = ['agent-runtime', 'knowledge', 'qil'] as const;
 
   private api!: KernelApi;
+  /** Durable store of execution results (when the storage module is present). */
+  private runs?: INamespace;
+  /** Monotonic run counter for deterministic ordering. */
+  private runSeq = 0;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
     kernel.container.registerValue('orchestrator', this);
+    try {
+      const storage = kernel.getModule('storage') as unknown as { namespace: (n: string) => Promise<INamespace> };
+      this.runs = await storage.namespace('orchestrator.runs');
+    } catch {
+      /* storage module not registered — runs stay ephemeral */
+    }
     kernel.logger.info('orchestrator module initialized');
   }
 
@@ -120,6 +131,7 @@ export class OrchestratorModule implements IModule {
     const finishedAt = Date.now();
     const execResult: ExecutionResult = {
       id: randomUUID(),
+      seq: ++this.runSeq,
       ...(plan.id !== undefined ? { planId: plan.id } : {}),
       ...(plan.mission !== undefined ? { mission: plan.mission } : {}),
       goals: plan.goals,
@@ -149,7 +161,30 @@ export class OrchestratorModule implements IModule {
       metrics.workflowRuns.inc(1, { status });
       metrics.workflowDuration.observe(finishedAt - startedAt);
     }
+    // Persist the run for later history/replay when durable storage is available.
+    if (this.runs) {
+      try {
+        await this.runs.set(execResult.id, execResult);
+      } catch (err) {
+        this.api.logger.warn('failed to persist workflow run', { error: (err as Error).message });
+      }
+    }
     return execResult;
+  }
+
+  /** Look up a previously executed run by id (when durable storage is present). */
+  async getRun(id: string): Promise<ExecutionResult | undefined> {
+    if (!this.runs) return undefined;
+    return this.runs.get<ExecutionResult>(id);
+  }
+
+  /** Recent runs, newest first (when durable storage is present). */
+  async listRuns(limit = 50): Promise<ExecutionResult[]> {
+    if (!this.runs) return [];
+    const res = await this.runs.list<ExecutionResult>({ limit: 10_000 });
+    const items = res.items.map((e) => e.value);
+    items.sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0));
+    return items.slice(0, limit);
   }
 
   /** Compile QiL source then execute it. */

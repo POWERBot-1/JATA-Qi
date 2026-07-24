@@ -177,6 +177,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | POST | `/auth/logout` | bearer | Invalidate the session |
 | POST | `/qil` | `qil:run` | `{program}` → compiled + executed workflow |
 | POST | `/objective` | `qil:run` | `{objective}` → workflow from free text |
+| GET | `/workflows` | `qil:run` | Recent workflow runs (durable history) |
+| GET | `/workflow?id=` | `qil:run` | Fetch a specific run by id |
 | POST | `/ask` | `agent:run` | `{message}` → agent passthrough |
 | GET | `/audit` | `audit:read` | Query the audit ledger |
 | GET | `/stats` | `knowledge:read` | Knowledge + graph stats |
@@ -268,7 +270,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
-- ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit)
+- ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit, durable history)
 - ✅ **Teams** (multi-agent coordination: parallel fan-out, sequential, consensus)
 - ✅ **Simulation** (Monte-Carlo scenarios, distributions, percentiles, target probabilities)
 - ✅ **Security** (identity, scrypt auth, RBAC, API keys, immutable audit ledger)
