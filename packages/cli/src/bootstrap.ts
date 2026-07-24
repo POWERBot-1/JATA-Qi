@@ -12,6 +12,10 @@ import {
   type AgentModuleConfig,
   type ILLM,
 } from '@jataqi/agent-runtime';
+import { QiLModule } from '@jataqi/qil';
+import { SecurityModule, type SecurityModuleConfig } from '@jataqi/security';
+import { OrchestratorModule } from '@jataqi/orchestrator';
+import { ApiGatewayModule, type GatewayOptions } from '@jataqi/api-gateway';
 import { readConfig } from './config.js';
 
 export interface JataQiConfig {
@@ -25,10 +29,16 @@ export interface JataQiConfig {
   graph?: KnowledgeGraphConfig;
   /** Agent runtime config. */
   agent?: AgentModuleConfig;
+  /** Security / identity config (bootstrap admin, roles, session ttl). */
+  security?: SecurityModuleConfig;
+  /** HTTP gateway options. */
+  gateway?: GatewayOptions;
 }
 
 export interface JataQiInstance {
   kernel: Kernel;
+  /** Convenience handle to the API gateway module (not listening until serve()). */
+  gateway?: ApiGatewayModule;
   /** Shut down JATA Qi cleanly. */
   shutdown: () => Promise<void>;
 }
@@ -54,10 +64,16 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
       ...cfg.agent,
     }),
   );
+  kernel.register(new QiLModule());
+  kernel.register(new SecurityModule(cfg.security));
+  kernel.register(new OrchestratorModule());
+  const gateway = new ApiGatewayModule(cfg.gateway);
+  kernel.register(gateway);
 
   await kernel.boot();
   return {
     kernel,
+    gateway,
     shutdown: () => kernel.shutdown(),
   };
 }
@@ -70,6 +86,13 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     (env.AGENT_LLM === 'openai' && env.OPENAI_API_KEY
       ? new OpenAILLM({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_CHAT_MODEL })
       : new EchoLLM());
+
+  const bootstrapAdmin =
+    overrides.security?.bootstrapAdmin ??
+    (env.JATAQI_ADMIN_USERNAME && env.JATAQI_ADMIN_PASSWORD
+      ? { username: env.JATAQI_ADMIN_USERNAME, password: env.JATAQI_ADMIN_PASSWORD }
+      : undefined);
+
   return createJataQi({
     storage: {
       driver: env.STORAGE_DRIVER as any ?? 'memory',
@@ -87,6 +110,8 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     },
     agent: { llm, ...(overrides.agent ?? {}) },
     graph: overrides.graph,
+    security: { ...(overrides.security ?? {}), ...(bootstrapAdmin ? { bootstrapAdmin } : {}) },
+    gateway: overrides.gateway,
     kernel: overrides.kernel,
   });
 }

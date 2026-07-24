@@ -1,0 +1,250 @@
+// OrchestratorModule — executes compiled QiL plans.
+//
+// Execution model (see Step 3 "Kernel Decision Flow" and Step 6 MAIF):
+//   1. Receive objective (a compiled plan).
+//   2. Walk steps in dependency order, sharing accumulated context.
+//   3. RETRIEVE pulls knowledge; REASON/ANALYZE/PLAN/SYNTHESIZE/VERIFY/OPTIMIZE
+//      invoke an agent with the objective + retrieved context; REPORT assembles a
+//      structured response; AUDIT records to the ledger; STOP halts the run.
+//   4. Emit per-step and overall events; write an audit record when security is
+//      available.
+
+import { randomUUID } from 'node:crypto';
+import type { KernelApi, IModule } from '@jataqi/core-kernel';
+import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
+import type { KnowledgeService, RetrievalHit } from '@jataqi/knowledge-service';
+import type { ExecutionPlan, PlanStep } from '@jataqi/qil';
+import { compileSource } from '@jataqi/qil';
+import { OrchestratorEvents } from './types.js';
+import type { ExecutionResult, ExecuteOptions, StepResult } from './types.js';
+
+export class OrchestratorModule implements IModule {
+  readonly id = 'orchestrator';
+  readonly tags = ['core', 'orchestration'] as const;
+  readonly dependsOn = ['agent-runtime', 'knowledge', 'qil'] as const;
+
+  private api!: KernelApi;
+
+  async init(kernel: KernelApi): Promise<void> {
+    this.api = kernel;
+    kernel.container.registerValue('orchestrator', this);
+    kernel.logger.info('orchestrator module initialized');
+  }
+
+  async start(_kernel: KernelApi): Promise<void> { /* no bg work */ }
+  async stop(_kernel: KernelApi): Promise<void> { /* stateless */ }
+
+  /** Execute a compiled QiL plan. */
+  async execute(plan: ExecutionPlan, opts: ExecuteOptions = {}): Promise<ExecutionResult> {
+    const startedAt = Date.now();
+    const topK = opts.topK ?? 4;
+    const results: StepResult[] = [];
+    const retrieved: string[] = [];
+    const reasoning: string[] = [];
+    let status: ExecutionResult['status'] = 'completed';
+    let finalReport = '';
+
+    this.assertAcyclic(plan);
+    await this.api.bus.emit(OrchestratorEvents.ExecutionStarted, { planId: plan.id, mission: plan.mission });
+
+    for (const step of plan.steps) {
+      await this.api.bus.emit(OrchestratorEvents.StepStarted, { planId: plan.id, stepId: step.id, kind: step.kind });
+
+      // If a prior STOP/error halted the run, record the remaining steps as skipped.
+      if (status === 'stopped' || status === 'failed') {
+        const skipped: StepResult = { stepId: step.id, kind: step.kind, keyword: step.keyword, status: 'skipped', durationMs: 0 };
+        results.push(skipped);
+        await this.api.bus.emit(OrchestratorEvents.StepCompleted, { planId: plan.id, stepId: step.id, status: 'skipped' });
+        continue;
+      }
+
+      const t0 = Date.now();
+      const result: StepResult = { stepId: step.id, kind: step.kind, keyword: step.keyword, status: 'success', durationMs: 0 };
+      try {
+        switch (step.kind) {
+          case 'retrieve': {
+            const query = step.argument ?? step.label ?? '';
+            const hits = query ? await this.retrieve(query, topK) : [];
+            for (const h of hits) retrieved.push(h);
+            result.output = { query, hits: hits.length };
+            break;
+          }
+          case 'reason':
+          case 'analyze':
+          case 'plan':
+          case 'synthesize':
+          case 'verify':
+          case 'optimize': {
+            const answer = await this.reason(step, { retrieved, reasoning, mission: plan.mission, agent: step.agent ?? opts.agent });
+            reasoning.push(answer);
+            result.output = answer;
+            break;
+          }
+          case 'report': {
+            finalReport = this.composeReport(plan, retrieved, reasoning, step.argument);
+            result.output = finalReport;
+            break;
+          }
+          case 'audit': {
+            const ok = await this.recordAudit(step, opts.principal);
+            result.output = { recorded: ok };
+            break;
+          }
+          case 'stop': {
+            status = 'stopped';
+            result.status = 'success';
+            result.output = { halted: true };
+            break;
+          }
+          default: {
+            // observe / learn / simulate / execute / deploy — record as a no-op step.
+            result.output = { note: `step "${step.keyword}" acknowledged`, argument: step.argument };
+            break;
+          }
+        }
+      } catch (err) {
+        status = 'failed';
+        result.status = 'error';
+        result.error = (err as Error)?.message ?? String(err);
+      }
+      result.durationMs = Date.now() - t0;
+      results.push(result);
+      await this.api.bus.emit(OrchestratorEvents.StepCompleted, { planId: plan.id, stepId: step.id, status: result.status });
+    }
+
+    if (!finalReport) {
+      finalReport = this.composeReport(plan, retrieved, reasoning, undefined);
+    }
+
+    const finishedAt = Date.now();
+    const execResult: ExecutionResult = {
+      id: randomUUID(),
+      ...(plan.id !== undefined ? { planId: plan.id } : {}),
+      ...(plan.mission !== undefined ? { mission: plan.mission } : {}),
+      goals: plan.goals,
+      status,
+      steps: results,
+      finalReport,
+      retrieved,
+      startedAt,
+      finishedAt,
+    };
+
+    // Attribute the run to an audit record when the security module is present.
+    const sec = this.trySecurity();
+    if (sec) {
+      const rec = await sec.audit({
+        actor: opts.principal?.userId ?? 'anonymous',
+        action: 'orchestrator.run',
+        resource: plan.id,
+        result: status === 'completed' ? 'success' : 'failure',
+        detail: { mission: plan.mission, steps: results.length, goalCount: plan.goals.length },
+      });
+      execResult.auditRecordId = rec.id;
+    }
+
+    await this.api.bus.emit(OrchestratorEvents.ExecutionCompleted, { execId: execResult.id, status });
+    return execResult;
+  }
+
+  /** Compile QiL source then execute it. */
+  async runSource(source: string, opts: ExecuteOptions = {}): Promise<ExecutionResult> {
+    const r = compileSource(source);
+    if (!r.ok || !r.plan) {
+      const first = r.diagnostics.find((d) => d.severity === 'error');
+      throw new Error(first?.message ?? 'QiL compilation failed');
+    }
+    return this.execute(r.plan, opts);
+  }
+
+  /**
+   * Natural-language shortcut (matches the Step 92 example "Analyze my business"
+   * -> Research -> Analysis -> Response). Builds a trivial plan from free text.
+   */
+  async runObjective(objective: string, opts: ExecuteOptions = {}): Promise<ExecutionResult> {
+    const safe = objective.replace(/"/g, '\\"');
+    const source = `MISSION "${safe}"\nRETRIEVE "${safe}"\nREASON "${safe}"\nREPORT`;
+    return this.runSource(source, opts);
+  }
+
+  // --- internals -----------------------------------------------------------
+
+  private async retrieve(query: string, topK: number): Promise<string[]> {
+    const knowledge = this.api.getModule<KnowledgeService>('knowledge');
+    const hits = await knowledge.retrieve(query, { topK });
+    return hits.map((h) => h.chunk.text);
+  }
+
+  private async reason(
+    step: PlanStep,
+    ctx: { retrieved: string[]; reasoning: string[]; mission?: string; agent?: string },
+  ): Promise<string> {
+    const agents = this.api.getModule<AgentRuntimeModule>('agent-runtime');
+    const parts: string[] = [];
+    if (ctx.mission) parts.push(`Mission: ${ctx.mission}`);
+    parts.push(step.argument ? `Directive (${step.keyword}): ${step.argument}` : `Directive: perform ${step.keyword}.`);
+    if (ctx.retrieved.length) {
+      const snippets = ctx.retrieved.slice(0, 4).map((t, i) => `[${i + 1}] ${t.slice(0, 500)}`).join('\n');
+      parts.push(`Relevant knowledge:\n${snippets}`);
+    }
+    if (ctx.reasoning.length) {
+      parts.push(`Prior reasoning:\n${ctx.reasoning.slice(-2).join('\n')}`);
+    }
+    const res = await agents.run(parts.join('\n\n'), { agent: ctx.agent });
+    return res.answer;
+  }
+
+  private composeReport(plan: ExecutionPlan, retrieved: string[], reasoning: string[], directive?: string): string {
+    const lines: string[] = [];
+    if (directive) lines.push(directive);
+    if (plan.mission) lines.push(`Mission: ${plan.mission}`);
+    if (plan.goals.length) lines.push(`Goals: ${plan.goals.join('; ')}`);
+    if (reasoning.length) lines.push(`Analysis:\n${reasoning[reasoning.length - 1]}`);
+    if (retrieved.length && !reasoning.length) {
+      lines.push(`Findings:\n${retrieved.slice(0, 3).map((t) => `- ${t.slice(0, 300)}`).join('\n')}`);
+    }
+    if (lines.length === 0) lines.push('No output produced.');
+    return lines.join('\n\n');
+  }
+
+  private async recordAudit(step: PlanStep, principal?: ExecuteOptions['principal']): Promise<boolean> {
+    const sec = this.trySecurity();
+    if (!sec) return false;
+    await sec.audit({
+      actor: principal?.userId ?? 'anonymous',
+      action: `workflow.${step.keyword.toLowerCase()}`,
+      resource: step.label,
+      result: 'success',
+      detail: { argument: step.argument },
+    });
+    return true;
+  }
+
+  /** Resolve the security module if it is registered (optional dependency). */
+  private trySecurity(): { audit: (rec: Record<string, unknown>) => Promise<{ id: string }> } | undefined {
+    try {
+      const mod = this.api.getModule('security') as unknown as {
+        audit: (rec: Record<string, unknown>) => Promise<{ id: string }>;
+      };
+      return mod;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Throw if the plan's dependency graph contains a cycle. */
+  private assertAcyclic(plan: ExecutionPlan): void {
+    const byId = new Map(plan.steps.map((s) => [s.id, s]));
+    const state = new Map<string, 0 | 1 | 2>(); // 0=unvisited,1=visiting,2=done
+    const visit = (id: string, path: string[]): void => {
+      const st = state.get(id) ?? 0;
+      if (st === 2) return;
+      if (st === 1) throw new Error(`orchestrator: cyclic dependency detected (${[...path, id].join(' -> ')})`);
+      state.set(id, 1);
+      const step = byId.get(id);
+      if (step) for (const dep of step.dependsOn) visit(dep, [...path, id]);
+      state.set(id, 2);
+    };
+    for (const s of plan.steps) visit(s.id, []);
+  }
+}

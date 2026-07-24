@@ -14,6 +14,10 @@ export interface EnvConfig {
   OPENAI_EMBEDDING_MODEL?: string;
   AGENT_LLM?: 'echo' | 'openai';
   OPENAI_CHAT_MODEL?: string;
+  JATAQI_ADMIN_USERNAME?: string;
+  JATAQI_ADMIN_PASSWORD?: string;
+  JATAQI_GATEWAY_PORT?: number;
+  JATAQI_GATEWAY_HOST?: string;
 }
 
 /** Parse a .env file into an object (KEY=VALUE lines, ignores comments/blanks). */
@@ -60,5 +64,9 @@ export function readConfig(): EnvConfig {
     OPENAI_EMBEDDING_MODEL: process.env.OPENAI_EMBEDDING_MODEL,
     AGENT_LLM: process.env.AGENT_LLM as EnvConfig['AGENT_LLM'],
     OPENAI_CHAT_MODEL: process.env.OPENAI_CHAT_MODEL,
+    JATAQI_ADMIN_USERNAME: process.env.JATAQI_ADMIN_USERNAME,
+    JATAQI_ADMIN_PASSWORD: process.env.JATAQI_ADMIN_PASSWORD,
+    JATAQI_GATEWAY_PORT: process.env.JATAQI_GATEWAY_PORT ? Number(process.env.JATAQI_GATEWAY_PORT) : undefined,
+    JATAQI_GATEWAY_HOST: process.env.JATAQI_GATEWAY_HOST,
   };
 }

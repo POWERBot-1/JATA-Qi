@@ -4,6 +4,10 @@ import { createJataQi } from '../src/bootstrap.js';
 import { AgentRuntimeModule } from '@jataqi/agent-runtime';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
+import { SecurityModule } from '@jataqi/security';
+import { OrchestratorModule } from '@jataqi/orchestrator';
+import { QiLModule } from '@jataqi/qil';
+import { ApiGatewayModule } from '@jataqi/api-gateway';
 
 describe('createJataQi bootstrap', () => {
   it('boots the full stack and exposes all modules', async () => {
@@ -12,6 +16,11 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<AgentRuntimeModule>('agent-runtime'));
     assert.ok(qi.kernel.getModule<KnowledgeService>('knowledge'));
     assert.ok(qi.kernel.getModule<KnowledgeGraphModule>('knowledge-graph'));
+    assert.ok(qi.kernel.getModule<QiLModule>('qil'));
+    assert.ok(qi.kernel.getModule<SecurityModule>('security'));
+    assert.ok(qi.kernel.getModule<OrchestratorModule>('orchestrator'));
+    assert.ok(qi.kernel.getModule<ApiGatewayModule>('api-gateway'));
+    assert.ok(qi.gateway, 'bootstrap should expose the gateway handle');
     await qi.shutdown();
     assert.equal(qi.kernel.isBooted(), false);
   });
@@ -42,4 +51,35 @@ describe('createJataQi bootstrap', () => {
     assert.ok(stats.triples >= 1, `expected triples, got ${stats.triples}`);
     await qi.shutdown();
   });
+
+  it('seeds a bootstrap admin and runs a full QiL workflow through the orchestrator', async () => {
+    const qi = await createJataQi({
+      security: { bootstrapAdmin: { username: 'root', password: 'toor' } },
+    });
+    const sec = qi.kernel.getModule<SecurityModule>('security');
+    const orch = qi.kernel.getModule<OrchestratorModule>('orchestrator');
+    const ks = qi.kernel.getModule<KnowledgeService>('knowledge');
+    await ks.ingestText('Acme Corp revenue grew 12% in Q3.');
+
+    const login = await sec.login('root', 'toor');
+    assert.equal(login.ok, true);
+
+    const result = await orch.runObjective('Analyze Acme revenue', { principal: login.principal });
+    assert.equal(result.status, 'completed');
+    assert.ok(result.auditRecordId, 'workflow should produce an audit record');
+
+    await qi.shutdown();
+  });
+
+  it('starts the gateway on an ephemeral port and answers /health', async () => {
+    const qi = await createJataQi();
+    const handle = await qi.gateway!.listen({ port: 0 });
+    const res = await fetch(`http://127.0.0.1:${handle.port}/health`);
+    const body = (await res.json()) as { status: string };
+    assert.equal(res.status, 200);
+    assert.equal(body.status, 'healthy');
+    await handle.close();
+    await qi.shutdown();
+  });
 });
+

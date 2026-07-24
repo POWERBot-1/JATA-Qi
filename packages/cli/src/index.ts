@@ -2,7 +2,7 @@
 // JATA Qi CLI — boots the OS and offers simple commands.
 
 import { createJataQiFromEnv } from './bootstrap.js';
-import { loadEnv } from './config.js';
+import { loadEnv, readConfig } from './config.js';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
@@ -13,6 +13,9 @@ const HELP = `
 JATA Qi CLI
 -----------
 Commands:
+  serve [port]        Boot the platform and start the HTTP API gateway (default port from
+                      JATAQI_GATEWAY_PORT or 7400). Exposes /health, /auth/*, /qil, /objective,
+                      /ask, /audit, /stats.
   ask <question>      Run a single question through the default agent and exit.
   ingest <file>       Ingest a text file into the knowledge base.
   stats               Print knowledge/vector/graph stats.
@@ -33,6 +36,7 @@ async function main() {
   const agents = kernel.getModule<AgentRuntimeModule>('agent-runtime');
   const knowledge = kernel.getModule<KnowledgeService>('knowledge');
   const graph = kernel.getModule<KnowledgeGraphModule>('knowledge-graph');
+  let longRunning = false;
 
   try {
     switch (cmd) {
@@ -41,6 +45,30 @@ async function main() {
       case '-h':
         console.log(HELP);
         break;
+      case 'serve': {
+        const env = readConfig();
+        const port = args[1] ? Number(args[1]) : env.JATAQI_GATEWAY_PORT ?? 7400;
+        const host = env.JATAQI_GATEWAY_HOST ?? '0.0.0.0';
+        if (!jataqi.gateway) throw new Error('API gateway module not registered');
+        const handle = await jataqi.gateway.listen({ port, host });
+        console.log(`JATA Qi API gateway listening on http://${host}:${handle.port}`);
+        console.log(`  GET  /health`);
+        console.log(`  POST /auth/register  POST /auth/login`);
+        console.log(`  POST /qil           (QiL program -> workflow)`);
+        console.log(`  POST /objective     (natural language -> workflow)`);
+        console.log(`  POST /ask           POST /audit  GET /stats`);
+        // Keep the process alive until signalled.
+        const stop = async (sig: string): Promise<void> => {
+          console.log(`\nreceived ${sig}, shutting down...`);
+          await handle.close();
+          await jataqi.shutdown();
+          process.exit(0);
+        };
+        process.on('SIGINT', () => void stop('SIGINT'));
+        process.on('SIGTERM', () => void stop('SIGTERM'));
+        longRunning = true;
+        return; // the listening server keeps the process alive
+      }
       case 'ask': {
         const q = args.slice(1).join(' ');
         if (!q) { console.error('Usage: jataqi ask <question>'); process.exit(1); }
@@ -111,7 +139,7 @@ async function main() {
       }
     }
   } finally {
-    await jataqi.shutdown();
+    if (!longRunning) await jataqi.shutdown();
   }
 }
 

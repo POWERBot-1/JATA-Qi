@@ -2,26 +2,39 @@
 
 JATA Qi is a production-ready, modular AI operating system built on a plugin-style
 kernel. It coordinates storage, vector search, knowledge services, knowledge
-graphs, and an agent runtime behind a unified event-driven API you can embed in
-any Node.js application or run from the CLI.
+graphs, an agent runtime, a declarative orchestration language (**QiL**), an
+orchestration/workflow engine, identity & security, and an HTTP API gateway —
+behind a unified event-driven API you can embed in any Node.js application or run
+from the CLI.
+
+The system implements the layered architecture described in the **JATA AI
+specification**: a Quantum Intelligence kernel, a Unified Knowledge Fabric, a
+multi-agent framework, and a set of intelligence services, exposed through an
+**Alpha vertical slice** in which a user can authenticate → submit a request →
+have QiL generate a workflow → execute agents → retrieve knowledge → receive a
+structured response → produce an auditable execution record.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Applications / CLI                     │
-├─────────────────────────────────────────────────────────────┤
-│  Agent Runtime  │  Tools  │  Sessions / Memory  │  REPL      │
-├─────────────────────────────────────────────────────────────┤
-│  Knowledge Service     │  Knowledge Graph  (Graph-RAG)       │
-├─────────────────────────────────────────────────────────────┤
-│  Vector Search  (embeddings + ANN index + persistence)      │
-├─────────────────────────────────────────────────────────────┤
-│  Storage Layer  (Memory / Filesystem drivers, KV+Docs+Blobs)│
-├─────────────────────────────────────────────────────────────┤
-│                        Core Kernel                          │
-│   Event Bus  ·  DI Container  ·  Lifecycle  ·  Config/Log   │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│            HTTP API Gateway   ·   CLI   ·   Applications          │
+├──────────────────────────────────────────────────────────────────┤
+│  Identity/Security (auth, RBAC, audit)  ·  Workflow Orchestrator  │
+├──────────────────────────────────────────────────────────────────┤
+│  QiL Language (lexer/parser/compiler → ExecutionPlan)             │
+├──────────────────────────────────────────────────────────────────┤
+│  Agent Runtime  ·  Tools  ·  Sessions / Memory                    │
+├──────────────────────────────────────────────────────────────────┤
+│  Knowledge Service  ·  Knowledge Graph  (Graph-RAG)               │
+├──────────────────────────────────────────────────────────────────┤
+│  Vector Search  (embeddings + ANN index + persistence)            │
+├──────────────────────────────────────────────────────────────────┤
+│  Storage Layer  (Memory / Filesystem drivers, KV+Docs+Blobs)      │
+├──────────────────────────────────────────────────────────────────┤
+│                        Core Kernel                                │
+│   Event Bus  ·  DI Container  ·  Lifecycle  ·  Config / Log       │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Packages
@@ -34,6 +47,10 @@ any Node.js application or run from the CLI.
 | `@jataqi/knowledge-service` | Document/chunk model, paragraph+sentence+fixed chunker, semantic retrieval with context expansion |
 | `@jataqi/knowledge-graph` | Entities, relations, SPO triple store, BFS traversal, heuristic extractor, Graph-RAG fusion |
 | `@jataqi/agent-runtime` | Tool system, ReAct agent loop, Echo/Scripted/OpenAI LLMs, built-in knowledge+graph tools, session memory |
+| `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
+| `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
+| `@jataqi/security` | Identity, authentication (scrypt), RBAC authorization, API keys, append-only audit ledger |
+| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/ask`, `/audit`, `/stats` |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
 ## Quick start
@@ -57,7 +74,33 @@ console.log(answer);
 await qi.shutdown();
 ```
 
-Run the CLI:
+Run the Alpha vertical slice (all seven success criteria):
+
+```bash
+node examples/vertical-slice.mjs
+```
+
+Serve the HTTP API gateway:
+
+```bash
+node packages/cli/dist/src/index.js serve              # default port 7400
+node packages/cli/dist/src/index.js serve 8080         # explicit port
+```
+
+Then talk to it:
+
+```bash
+curl http://127.0.0.1:7400/health
+# register, login, then submit an objective
+curl -X POST http://127.0.0.1:7400/auth/register -H 'content-type: application/json' \
+  -d '{"username":"ada","password":"pw","roles":["developer"]}'
+TOKEN=$(curl -s -X POST http://127.0.0.1:7400/auth/login -H 'content-type: application/json' \
+  -d '{"username":"ada","password":"pw"}' | jq -r .token)
+curl -X POST http://127.0.0.1:7400/objective -H 'content-type: application/json' \
+  -H "authorization: Bearer $TOKEN" -d '{"objective":"Analyze my business"}'
+```
+
+Other CLI commands:
 
 ```bash
 node packages/cli/dist/src/index.js ask "what is JATA Qi?"
@@ -67,6 +110,84 @@ node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
 
+## QiL — the Quantum Intelligence Language
+
+QiL is the declarative orchestration language of JATA Qi (spec Step 2). It
+expresses *objectives* and *workflows* rather than imperative steps. A QiL
+program is parsed into an AST, validated, and **compiled into an execution plan**
+(a dependency graph of steps) that the orchestrator interprets.
+
+```qil
+MISSION "Analyze quarterly revenue"
+GOAL "Identify revenue risks"
+AGENT research
+MODEL gpt-4
+
+RETRIEVE knowledge "revenue Q3"     # pull relevant context
+REASON  "Summarize the findings"    # agent reasoning over the context
+ANALYZE "Highlight risks"
+REPORT                              # assemble the structured response
+```
+
+Native statements (spec Step 2): `MISSION`, `GOAL`, `AGENT`, `TEAM`, `MODEL`,
+`DATASET`, `OBSERVE`, `RETRIEVE`, `LEARN`, `REASON`, `PLAN`, `SIMULATE`,
+`SYNTHESIZE`, `ANALYZE`, `VERIFY`, `OPTIMIZE`, `EXECUTE`, `REPORT`, `AUDIT`,
+`DEPLOY`, `STOP`. A trailing `-> agent` routes a step to a named agent;
+`after: "step-1"` adds an explicit dependency edge.
+
+```ts
+import { compileSource } from '@jataqi/qil';
+
+const { ok, plan, diagnostics } = compileSource('MISSION "x" { RETRIEVE "a" REPORT }');
+if (ok) console.log(plan.steps);   // [{ id: 'step-1', kind: 'retrieve', ... }, ...]
+```
+
+## The Alpha vertical slice
+
+The orchestrator turns a QiL plan into an audited workflow result:
+
+```ts
+const orch = qi.kernel.getModule('orchestrator');
+const result = await orch.runObjective('Analyze revenue', { principal });
+// result.status        -> 'completed'
+// result.steps[]       -> per-step outputs (retrieve / reason / report)
+// result.retrieved[]   -> knowledge snippets
+// result.finalReport   -> structured response
+// result.auditRecordId -> immutable audit record
+```
+
+### HTTP API (gateway)
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/health` | – | Liveness + booted modules |
+| POST | `/auth/register` | – | Create a user `{username,password,roles?}` |
+| POST | `/auth/login` | – | `{username,password}` → bearer token |
+| POST | `/auth/apikey` | bearer | Issue an API key |
+| POST | `/auth/logout` | bearer | Invalidate the session |
+| POST | `/qil` | `qil:run` | `{program}` → compiled + executed workflow |
+| POST | `/objective` | `qil:run` | `{objective}` → workflow from free text |
+| POST | `/ask` | `agent:run` | `{message}` → agent passthrough |
+| GET | `/audit` | `audit:read` | Query the audit ledger |
+| GET | `/stats` | `knowledge:read` | Knowledge + graph stats |
+| GET | `/whoami` | bearer | Resolved principal |
+
+### Security model
+
+Passwords are hashed with scrypt; sessions are opaque bearer tokens; API keys are
+hash-stored. Authorization is RBAC over permission strings with `*` and
+`<segment>:*` wildcards.
+
+| Role | Permissions |
+|---|---|
+| `admin` | `*` |
+| `developer` | `health:read`, `qil:run`, `knowledge:*`, `agent:run`, `audit:read` |
+| `analyst` | `health:read`, `qil:run`, `knowledge:read`, `agent:run`, `audit:read` |
+| `guest` | `health:read` |
+
+Every security-relevant action (login, denial, workflow run) is appended to the
+**immutable audit ledger**, which is persisted via the storage layer.
+
 ## Configuring for production
 
 Copy `.env.example` to `.env` and set:
@@ -74,14 +195,16 @@ Copy `.env.example` to `.env` and set:
 - `STORAGE_DRIVER=filesystem` (persists to `STORAGE_FS_ROOT`)
 - `VECTOR_MODEL=openai` with `OPENAI_API_KEY` and `OPENAI_EMBEDDING_MODEL`
 - `AGENT_LLM=openai` with `OPENAI_CHAT_MODEL` (e.g. `gpt-4o-mini`)
+- `JATAQI_ADMIN_USERNAME` / `JATAQI_ADMIN_PASSWORD` to seed a bootstrap admin
+- `JATAQI_GATEWAY_PORT` / `JATAQI_GATEWAY_HOST` for `jataqi serve`
 - `LOG_LEVEL=info` (or `debug` for development)
 
 The CLI auto-loads `.env`; library users call `createJataQiFromEnv()`.
 
 ## Extending JATA Qi
 
-Modules implement the `IModule` interface (`init`, `start`, `stop`, `dependsOn`) and
-register themselves with the kernel:
+Modules implement the `IModule` interface (`init`, `start`, `stop`, `dependsOn`)
+and register themselves with the kernel:
 
 ```ts
 class MyModule implements IModule {
@@ -98,7 +221,7 @@ await kernel.boot();
 
 ## Testing
 
-Run the full test suite (100+ unit tests across all packages):
+The full suite (150+ unit + integration tests across all packages):
 
 ```bash
 npm test
@@ -107,14 +230,15 @@ npm test
 Each package can be built/tested independently:
 
 ```bash
-npm run build --workspace=@jataqi/core-kernel
-npm test --workspace=@jataqi/knowledge-graph
+npm run build --workspace=@jataqi/qil
+npm test --workspace=@jataqi/orchestrator
 ```
 
-An end-to-end demo is in `examples/demo.mjs`:
+End-to-end demos:
 
 ```bash
-node examples/demo.mjs
+node examples/demo.mjs              # knowledge + graph + agent
+node examples/vertical-slice.mjs    # the seven Alpha success criteria
 ```
 
 ## Repository status
@@ -125,8 +249,12 @@ node examples/demo.mjs
 - ✅ Knowledge Service (ingestion, chunking, retrieval, metadata filters, context expansion)
 - ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
-- ✅ CLI + Bootstrap (.env support, ask/ingest/stats/search/entities/repl)
-- ⬜ Push to GitHub remote (awaiting remote URL; all commits ready at `master`)
+- ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
+- ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit)
+- ✅ **Security** (identity, scrypt auth, RBAC, API keys, immutable audit ledger)
+- ✅ **HTTP API Gateway** (`/health`, `/auth/*`, `/qil`, `/objective`, `/ask`, `/audit`, `/stats`)
+- ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`)
+- ✅ **Alpha vertical slice** (authenticate → QiL workflow → agents → knowledge → response → audit)
 
 ## License
 

@@ -1,0 +1,166 @@
+import { describe, it, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { createTestKernel } from '@jataqi/core-kernel/testing';
+import { StorageModule } from '@jataqi/storage';
+import { VectorSearchModule } from '@jataqi/vector-search';
+import { KnowledgeService } from '@jataqi/knowledge-service';
+import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
+import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
+import { SecurityModule } from '@jataqi/security';
+import { QiLModule } from '@jataqi/qil';
+import { OrchestratorModule } from '@jataqi/orchestrator';
+import { ApiGatewayModule } from '../src/index.js';
+import type { GatewayHandle } from '../src/index.js';
+import type { Kernel } from '@jataqi/core-kernel';
+
+async function jsonRequest(method: string, url: string, body?: unknown, token?: string) {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let parsed: unknown = undefined;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = text;
+    }
+  }
+  return { status: res.status, body: parsed };
+}
+
+describe('ApiGatewayModule (HTTP vertical slice)', () => {
+  let kernel: Kernel;
+  let gateway: ApiGatewayModule;
+  let handle: GatewayHandle;
+  let base: string;
+  let knowledge: KnowledgeService;
+
+  before(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new QiLModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    kernel.register(new OrchestratorModule());
+    gateway = new ApiGatewayModule();
+    kernel.register(gateway);
+    await kernel.boot();
+
+    knowledge = kernel.getModule<KnowledgeService>('knowledge');
+    await knowledge.ingestText('JATA Qi is a modular AI operating system.');
+    await knowledge.ingestText('Q3 revenue grew 12% year over year.');
+
+    handle = await gateway.listen({ port: 0 });
+    base = `http://127.0.0.1:${handle.port}`;
+  });
+
+  after(async () => {
+    await handle.close();
+    await kernel.shutdown();
+  });
+
+  it('GET /health reports healthy and booted', async () => {
+    const { status, body } = await jsonRequest('GET', `${base}/health`);
+    assert.equal(status, 200);
+    const b = body as { status: string; booted: boolean; modules: string[] };
+    assert.equal(b.status, 'healthy');
+    assert.equal(b.booted, true);
+    assert.ok(b.modules.includes('orchestrator'));
+  });
+
+  it('registers and logs in a developer, returning a bearer token', async () => {
+    const reg = await jsonRequest('POST', `${base}/auth/register`, { username: 'alice', password: 'pw', roles: ['developer'] });
+    assert.equal(reg.status, 201);
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    assert.equal(login.status, 200);
+    const b = login.body as { token: string; principal: { username: string } };
+    assert.ok(b.token);
+    assert.equal(b.principal.username, 'alice');
+  });
+
+  it('rejects /qil without a token (401)', async () => {
+    const { status } = await jsonRequest('POST', `${base}/qil`, { program: 'MISSION "x" { REPORT }' });
+    assert.equal(status, 401);
+  });
+
+  it('denies a guest the qil:run permission (403)', async () => {
+    await jsonRequest('POST', `${base}/auth/register`, { username: 'guest1', password: 'pw', roles: ['guest'] });
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'guest1', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest('POST', `${base}/qil`, { program: 'MISSION "x" { REPORT }' }, token);
+    assert.equal(status, 403);
+    assert.match((body as { error: string }).error, /permission denied/);
+  });
+
+  it('runs the full Alpha slice: objective -> workflow -> agent -> report -> audit', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+
+    const { status, body } = await jsonRequest(
+      'POST',
+      `${base}/objective`,
+      { objective: 'Analyze revenue growth' },
+      token,
+    );
+    assert.equal(status, 200);
+    const result = (body as { result: { status: string; finalReport: string; auditRecordId?: string; steps: unknown[] } }).result;
+    assert.equal(result.status, 'completed');
+    assert.ok(result.finalReport.length > 0);
+    assert.ok(result.auditRecordId, 'execution must produce an audit record');
+
+    // The audit ledger records the run.
+    const audit = await jsonRequest('GET', `${base}/audit?action=orchestrator.run`, undefined, token);
+    assert.equal(audit.status, 200);
+    const records = (audit.body as { records: { action: string }[] }).records;
+    assert.ok(records.some((r) => r.action === 'orchestrator.run'));
+  });
+
+  it('accepts a QiL program via POST /qil', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest(
+      'POST',
+      `${base}/qil`,
+      { program: 'MISSION "demo" { RETRIEVE "revenue" REASON "summarize" REPORT }' },
+      token,
+    );
+    assert.equal(status, 200);
+    const result = (body as { result: { status: string; steps: { kind: string }[] } }).result;
+    assert.equal(result.status, 'completed');
+    assert.equal(result.steps[0]!.kind, 'retrieve');
+  });
+
+  it('passes a message to the agent via POST /ask', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest('POST', `${base}/ask`, { message: 'hello there' }, token);
+    assert.equal(status, 200);
+    assert.ok(typeof (body as { answer: string }).answer === 'string');
+  });
+
+  it('returns stats via GET /stats', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest('GET', `${base}/stats`, undefined, token);
+    assert.equal(status, 200);
+    assert.ok((body as { knowledge: { documents: number } }).knowledge.documents >= 2);
+  });
+
+  it('returns the principal via GET /whoami', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const { status, body } = await jsonRequest('GET', `${base}/whoami`, undefined, token);
+    assert.equal(status, 200);
+    assert.equal((body as { principal: { username: string } }).principal.username, 'alice');
+  });
+});
