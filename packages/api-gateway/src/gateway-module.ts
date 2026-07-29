@@ -32,6 +32,7 @@ import type { NotificationsModule } from '@jataqi/notifications';
 import type { PoliciesModule } from '@jataqi/policies';
 import type { FeatureFlagsModule } from '@jataqi/feature-flags';
 import type { PrivacyModule } from '@jataqi/privacy';
+import type { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -71,6 +72,7 @@ export class ApiGatewayModule implements IModule {
   private policies?: PoliciesModule;
   private featureFlags?: FeatureFlagsModule;
   private privacy?: PrivacyModule;
+  private governance?: PolicyGovernanceModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -111,6 +113,7 @@ export class ApiGatewayModule implements IModule {
     this.policies = this.tryModule<PoliciesModule>('policies');
     this.featureFlags = this.tryModule<FeatureFlagsModule>('feature-flags');
     this.privacy = this.tryModule<PrivacyModule>('privacy');
+    this.governance = this.tryModule<PolicyGovernanceModule>('policy-governance');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -250,6 +253,17 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/privacy/consent', auth('audit:read', (req) => this.privacyConsentList(req)));
     route('POST', '/privacy/sar', auth('audit:read', (req) => this.privacySAR(req)));
     route('GET', '/privacy/sar', auth('audit:read', (req) => this.privacySARList(req)));
+    // Policy & governance registry.
+    route('GET', '/gov/policies', auth('policy:read', (req) => this.govList(req)));
+    route('POST', '/gov/policies', auth('policy:read', (req) => this.govCreate(req)));
+    route('GET', '/gov/policy', auth('policy:read', (req) => this.govGet(req)));
+    route('POST', '/gov/policy', auth('policy:read', (req) => this.govUpdate(req)));
+    route('POST', '/gov/policies/evaluate', auth('policy:evaluate', (req) => this.govEvaluate(req)));
+    route('POST', '/gov/policies/simulate', auth('policy:evaluate', (req) => this.govSimulate(req)));
+    route('GET', '/gov/policy/versions', auth('policy:read', (req) => this.govVersions(req)));
+    route('GET', '/gov/evaluations', auth('policy:audit', (req) => this.govEvaluations(req)));
+    route('POST', '/gov/agent', auth('policy:read', (req) => this.govSetAgent(req)));
+    route('POST', '/gov/agent/check', auth('policy:evaluate', (req) => this.govCheckAgent(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -404,7 +418,8 @@ export class ApiGatewayModule implements IModule {
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
       'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
       'tool-intelligence', 'readiness', 'provenance', 'commerce',
-      'organizations', 'notifications', 'policies', 'feature-flags', 'privacy', 'api-gateway',
+      'organizations', 'notifications', 'policies', 'feature-flags', 'privacy',
+      'policy-governance', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -1165,6 +1180,141 @@ export class ApiGatewayModule implements IModule {
   private async privacySARList(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.privacy) return json(501, { error: 'privacy module not registered' });
     return json(200, { requests: await this.privacy.listSARs(req.query.subjectId ?? req.principal!.userId) });
+  }
+
+  // --- policy & governance registry ---------------------------------------
+
+  /** Build a governance subject from the principal, org membership, and entitlements. */
+  private async governanceSubject(req: GatewayRequest): Promise<{ userId: string; organizationId?: string; roles: string[]; entitlements: string[]; isAgent?: boolean; agentId?: string }> {
+    const principal = req.principal!;
+    const body = this.asObject(req.body);
+    const orgId = typeof body.organizationId === 'string' ? body.organizationId : undefined;
+    const roles = [...(principal.roles ?? [])];
+    let entitlements: string[] = [];
+    if (orgId && this.organizations) {
+      try {
+        const m = await this.organizations.getMembership(orgId, principal.userId);
+        if (m) roles.push(m.role);
+      } catch { /* not a member */ }
+    }
+    if (this.commerce) {
+      try {
+        const sub = await this.commerce.activeSubscription(principal.userId);
+        if (sub) {
+          const plan = await this.commerce.getPlan(sub.planId);
+          if (plan) entitlements = Object.keys(plan.entitlements);
+        }
+      } catch { /* commerce optional */ }
+    }
+    return { userId: principal.userId, ...(orgId ? { organizationId: orgId } : {}), roles, entitlements, ...(body.isAgent === true ? { isAgent: true, agentId: typeof body.agentId === 'string' ? body.agentId : principal.userId } : {}) };
+  }
+
+  private async govList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const policies = await this.governance.listPolicies({
+      ...(req.query.category ? { category: req.query.category } : {}),
+      ...(req.query.scope ? { scope: req.query.scope } : {}),
+      ...(req.query.organizationId ? { organizationId: req.query.organizationId } : {}),
+      ...(req.query.status ? { status: req.query.status as 'active' } : {}),
+    });
+    return json(200, { policies });
+  }
+
+  private async govCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.effect !== 'string' || typeof b.category !== 'string' || typeof b.scope !== 'string') {
+      return json(400, { error: 'fields "name", "effect", "category", "scope" are required' });
+    }
+    const policy = await this.governance.createPolicy({
+      name: b.name, effect: b.effect as 'ALLOW', category: b.category, scope: b.scope,
+      ...(typeof b.action === 'string' ? { action: b.action } : {}),
+      ...(typeof b.subjectType === 'string' ? { subjectType: b.subjectType } : {}),
+      ...(typeof b.resourceType === 'string' ? { resourceType: b.resourceType } : {}),
+      ...(b.conditions ? { conditions: b.conditions as Record<string, unknown> as never } : {}),
+      ...(typeof b.priority === 'number' ? { priority: b.priority } : {}),
+      ...(typeof b.organizationId === 'string' ? { organizationId: b.organizationId } : {}),
+      ...(typeof b.description === 'string' ? { description: b.description } : {}),
+    }, req.principal!.userId);
+    return json(201, { policy });
+  }
+
+  private async govGet(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const policy = await this.governance.getPolicy(id);
+    return policy ? json(200, { policy }) : json(404, { error: 'policy not found' });
+  }
+
+  private async govUpdate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : '';
+    if (!id) return json(400, { error: 'field "id" is required' });
+    if (b.action === 'deactivate') return json(200, { policy: await this.governance.deactivatePolicy(id, req.principal!.userId) });
+    const changes: Record<string, unknown> = { ...b };
+    delete changes.id; delete changes.action;
+    return json(200, { policy: await this.governance.updatePolicy(id, changes as never, req.principal!.userId) });
+  }
+
+  private async govEvaluate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.action !== 'string') return json(400, { error: 'field "action" is required' });
+    const subject = await this.governanceSubject(req);
+    const result = await this.governance.evaluate(subject, b.action, {
+      ...(typeof b.resource === 'string' ? { resource: b.resource } : {}),
+      ...(typeof b.amount === 'number' ? { amount: b.amount } : {}),
+      ...(typeof b.risk === 'number' ? { risk: b.risk } : {}),
+      ...(typeof b.dataClassification === 'string' ? { dataClassification: b.dataClassification } : {}),
+      ...(typeof b.toolId === 'string' ? { toolId: b.toolId } : {}),
+    });
+    return json(200, { result });
+  }
+
+  private async govSimulate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.action !== 'string') return json(400, { error: 'field "action" is required' });
+    const subject = await this.governanceSubject(req);
+    const result = await this.governance.simulate(subject, b.action, { ...(typeof b.amount === 'number' ? { amount: b.amount } : {}) });
+    return json(200, { result });
+  }
+
+  private async govVersions(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    return json(200, { versions: await this.governance.policyVersions(id) });
+  }
+
+  private async govEvaluations(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    return json(200, { evaluations: await this.governance.evaluationHistory(req.query.actor ?? req.principal!.userId) });
+  }
+
+  private async govSetAgent(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.agentId !== 'string') return json(400, { error: 'field "agentId" is required' });
+    const gov = await this.governance.setAgentGovernance(b as never);
+    return json(201, { governance: gov });
+  }
+
+  private async govCheckAgent(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.governance) return json(501, { error: 'policy-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.agentId !== 'string') return json(400, { error: 'field "agentId" is required' });
+    const result = await this.governance.checkAgent(b.agentId, {
+      ...(typeof b.action === 'string' ? { action: b.action } : {}),
+      ...(typeof b.toolId === 'string' ? { toolId: b.toolId } : {}),
+      ...(typeof b.autonomy === 'string' ? { autonomy: b.autonomy as 'L0' } : {}),
+      ...(typeof b.spent === 'number' ? { spent: b.spent } : {}),
+      ...(typeof b.cost === 'number' ? { cost: b.cost } : {}),
+      ...(typeof b.iterations === 'number' ? { iterations: b.iterations } : {}),
+    });
+    return json(200, { result });
   }
 
   // --- helpers -------------------------------------------------------------

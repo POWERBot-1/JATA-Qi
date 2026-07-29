@@ -27,6 +27,7 @@ import { NotificationsModule } from '@jataqi/notifications';
 import { PoliciesModule } from '@jataqi/policies';
 import { FeatureFlagsModule } from '@jataqi/feature-flags';
 import { PrivacyModule } from '@jataqi/privacy';
+import { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -90,6 +91,7 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     kernel.register(new PoliciesModule());
     kernel.register(new FeatureFlagsModule());
     kernel.register(new PrivacyModule());
+    kernel.register(new PolicyGovernanceModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -442,6 +444,19 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const sar = await jsonRequest('POST', `${base}/privacy/sar`, { type: 'export' }, token);
     assert.equal(sar.status, 201);
     assert.ok((sar.body as { sar: { id: string } }).sar.id);
+  });
+
+  it('governs actions via the policy-governance registry', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    // Sensitive action defaults to DENY.
+    const denied = await jsonRequest('POST', `${base}/gov/policies/evaluate`, { action: 'finance.transfer' }, token);
+    assert.equal(denied.status, 200);
+    assert.equal((denied.body as { result: { decision: string } }).result.decision, 'DENY');
+    // Create an ALLOW policy then evaluate.
+    await jsonRequest('POST', `${base}/gov/policies`, { name: 'allow read', effect: 'ALLOW', category: 'ACCESS', scope: 'GLOBAL', action: 'workspace.read' }, token);
+    const allowed = await jsonRequest('POST', `${base}/gov/policies/evaluate`, { action: 'workspace.read' }, token);
+    assert.equal((allowed.body as { result: { decision: string } }).result.decision, 'ALLOW');
   });
 
   it('records and retrieves workflow history', async () => {

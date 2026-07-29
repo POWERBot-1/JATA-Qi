@@ -71,6 +71,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/policies` | Governance — declarative policy engine (allow/deny/require_approval) + compliance-control registry |
 | `@jataqi/feature-flags` | Deployment/testing rollout switches (deterministic % rollout; separate from entitlements) |
 | `@jataqi/privacy` | Data privacy — classification, retention, consent, subject-access requests, AI-context restriction |
+| `@jataqi/policy-governance` | Policy & governance control plane — versioned, tenant-aware, precedence-based engine; agent/tool/autonomy governance |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 

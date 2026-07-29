@@ -24,6 +24,7 @@ import { NotificationsModule } from '@jataqi/notifications';
 import { PoliciesModule } from '@jataqi/policies';
 import { FeatureFlagsModule } from '@jataqi/feature-flags';
 import { PrivacyModule } from '@jataqi/privacy';
+import { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 
 describe('createJataQi bootstrap', () => {
@@ -53,6 +54,7 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<PoliciesModule>('policies'));
     assert.ok(qi.kernel.getModule<FeatureFlagsModule>('feature-flags'));
     assert.ok(qi.kernel.getModule<PrivacyModule>('privacy'));
+    assert.ok(qi.kernel.getModule<PolicyGovernanceModule>('policy-governance'));
     assert.ok(qi.kernel.getModule<ApiGatewayModule>('api-gateway'));
     assert.ok(qi.gateway, 'bootstrap should expose the gateway handle');
     await qi.shutdown();
