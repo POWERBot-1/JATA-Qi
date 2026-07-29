@@ -37,7 +37,9 @@
     "@jataqi/tool-intelligence": "0.1.0",
     "@jataqi/readiness": "0.1.0",
     "@jataqi/provenance": "0.1.0",
-    "@jataqi/commerce": "0.1.0"
+    "@jataqi/commerce": "0.1.0",
+    "@jataqi/organizations": "0.1.0",
+    "@jataqi/notifications": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

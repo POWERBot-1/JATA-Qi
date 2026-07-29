@@ -22,6 +22,8 @@ import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { ReadinessModule } from '@jataqi/readiness';
 import { ProvenanceModule, provisionRoot } from '@jataqi/provenance';
 import { CommerceModule } from '@jataqi/commerce';
+import { OrganizationsModule } from '@jataqi/organizations';
+import { NotificationsModule } from '@jataqi/notifications';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -80,6 +82,8 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const prov = provisionRoot();
     kernel.register(new ProvenanceModule({ manifest: prov.manifest, privateKey: prov.privateKeyDerB64 }));
     kernel.register(new CommerceModule());
+    kernel.register(new OrganizationsModule());
+    kernel.register(new NotificationsModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -393,6 +397,28 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const analytics = await jsonRequest('GET', `${base}/commerce/analytics`, undefined, token);
     assert.equal(analytics.status, 200);
     assert.ok((analytics.body as { totalSubscriptions: number }).totalSubscriptions >= 1);
+  });
+
+  it('creates an organization and manages membership', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const created = await jsonRequest('POST', `${base}/orgs`, { name: 'Acme Inc' }, token);
+    assert.equal(created.status, 201);
+    const org = (created.body as { organization: { id: string; ownerId: string } }).organization;
+    const members = await jsonRequest('GET', `${base}/org/members?id=${org.id}`, undefined, token);
+    assert.equal(members.status, 200);
+    const list = (members.body as { members: { userId: string; role: string }[] }).members;
+    assert.ok(list.some((m) => m.userId === org.ownerId && m.role === 'owner'));
+  });
+
+  it('sends and lists notifications', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const sent = await jsonRequest('POST', `${base}/notify`, { type: 'system', title: 'Hello', body: 'world' }, token);
+    assert.equal(sent.status, 201);
+    const list = await jsonRequest('GET', `${base}/notifications`, undefined, token);
+    assert.equal(list.status, 200);
+    assert.ok((list.body as { notifications: unknown[] }).notifications.length >= 1);
   });
 
   it('records and retrieves workflow history', async () => {

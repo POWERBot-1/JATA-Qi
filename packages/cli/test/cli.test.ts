@@ -19,6 +19,8 @@ import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { ReadinessModule } from '@jataqi/readiness';
 import { ProvenanceModule } from '@jataqi/provenance';
 import { CommerceModule } from '@jataqi/commerce';
+import { OrganizationsModule } from '@jataqi/organizations';
+import { NotificationsModule } from '@jataqi/notifications';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 
 describe('createJataQi bootstrap', () => {
@@ -43,6 +45,8 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<ReadinessModule>('readiness'));
     assert.ok(qi.kernel.getModule<ProvenanceModule>('provenance'));
     assert.ok(qi.kernel.getModule<CommerceModule>('commerce'));
+    assert.ok(qi.kernel.getModule<OrganizationsModule>('organizations'));
+    assert.ok(qi.kernel.getModule<NotificationsModule>('notifications'));
     assert.ok(qi.kernel.getModule<ApiGatewayModule>('api-gateway'));
     assert.ok(qi.gateway, 'bootstrap should expose the gateway handle');
     await qi.shutdown();

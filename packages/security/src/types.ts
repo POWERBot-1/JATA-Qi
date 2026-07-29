@@ -89,7 +89,7 @@ export const SecurityEvents = Object.freeze({
  */
 export const DEFAULT_ROLE_POLICY: Record<string, string[]> = Object.freeze({
   admin: ['*'],
-  developer: ['health:read', 'qil:run', 'knowledge:read', 'knowledge:write', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read'],
-  analyst: ['health:read', 'qil:run', 'knowledge:read', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read'],
+  developer: ['health:read', 'qil:run', 'knowledge:read', 'knowledge:write', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read', 'org:read', 'notification:read'],
+  analyst: ['health:read', 'qil:run', 'knowledge:read', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read', 'org:read', 'notification:read'],
   guest: ['health:read'],
 });

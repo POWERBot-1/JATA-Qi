@@ -27,6 +27,8 @@ import type { ToolIntelligenceModule, ToolStatus } from '@jataqi/tool-intelligen
 import type { ReadinessModule } from '@jataqi/readiness';
 import type { ProvenanceModule } from '@jataqi/provenance';
 import type { CommerceModule } from '@jataqi/commerce';
+import type { OrganizationsModule } from '@jataqi/organizations';
+import type { NotificationsModule } from '@jataqi/notifications';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -61,6 +63,8 @@ export class ApiGatewayModule implements IModule {
   private readiness?: ReadinessModule;
   private provenance?: ProvenanceModule;
   private commerce?: CommerceModule;
+  private organizations?: OrganizationsModule;
+  private notifications?: NotificationsModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -96,6 +100,8 @@ export class ApiGatewayModule implements IModule {
     this.readiness = this.tryModule<ReadinessModule>('readiness');
     this.provenance = this.tryModule<ProvenanceModule>('provenance');
     this.commerce = this.tryModule<CommerceModule>('commerce');
+    this.organizations = this.tryModule<OrganizationsModule>('organizations');
+    this.notifications = this.tryModule<NotificationsModule>('notifications');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -210,6 +216,18 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/commerce/credits', auth('commerce:read', (req) => this.grantCredits(req)));
     route('GET', '/commerce/analytics', auth('commerce:read', () => this.commerceAnalytics()));
     route('POST', '/commerce/marketplace', auth('commerce:read', (req) => this.marketplacePurchase(req)));
+    // Organizations (multi-tenancy).
+    route('GET', '/orgs', auth('org:read', (req) => this.orgsList(req)));
+    route('POST', '/orgs', auth('org:read', (req) => this.orgCreate(req)));
+    route('GET', '/org', auth('org:read', (req) => this.orgGet(req)));
+    route('POST', '/org', auth('org:read', (req) => this.orgAction(req)));
+    route('GET', '/org/members', auth('org:read', (req) => this.orgMembers(req)));
+    // Notifications.
+    route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
+    route('POST', '/notification/read', auth('notification:read', (req) => this.notificationRead(req)));
+    route('POST', '/notify', auth('notification:read', (req) => this.notify(req)));
+    route('GET', '/notification/preferences', auth('notification:read', (req) => this.notificationPrefs(req)));
+    route('POST', '/notification/preferences', auth('notification:read', (req) => this.notificationSetPrefs(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -363,7 +381,8 @@ export class ApiGatewayModule implements IModule {
       'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
       'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
-      'tool-intelligence', 'readiness', 'provenance', 'commerce', 'api-gateway',
+      'tool-intelligence', 'readiness', 'provenance', 'commerce',
+      'organizations', 'notifications', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -918,6 +937,119 @@ export class ApiGatewayModule implements IModule {
     if (!b.item || typeof b.item !== 'object') return json(400, { error: 'field "item" (marketplace item) is required' });
     const result = await this.commerce.purchase(req.principal!.userId, b.item as Parameters<CommerceModule['purchase']>[1], { ...(typeof b.currency === 'string' ? { currency: b.currency } : {}) });
     return json(201, result);
+  }
+
+  // --- organizations (multi-tenancy) --------------------------------------
+
+  private async orgsList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.organizations) return json(501, { error: 'organizations module not registered' });
+    const mine = await this.organizations.organizationsForUser(req.principal!.userId);
+    return json(200, { organizations: mine });
+  }
+
+  private async orgCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.organizations) return json(501, { error: 'organizations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string') return json(400, { error: 'field "name" is required' });
+    const org = await this.organizations.createOrganization(b.name, req.principal!.userId, typeof b.slug === 'string' ? b.slug : undefined);
+    return json(201, { organization: org });
+  }
+
+  private async orgGet(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.organizations) return json(501, { error: 'organizations module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const org = await this.organizations.getOrganization(id);
+    if (!org) return json(404, { error: 'organization not found' });
+    await this.organizations.requireRole(id, req.principal!.userId, 'guest');
+    return json(200, { organization: org });
+  }
+
+  private async orgAction(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.organizations) return json(501, { error: 'organizations module not registered' });
+    const b = this.asObject(req.body);
+    const orgId = typeof b.id === 'string' ? b.id : '';
+    const me = req.principal!.userId;
+    if (!orgId || typeof b.action !== 'string') return json(400, { error: 'fields "id" and "action" are required' });
+    try {
+      switch (b.action) {
+        case 'addMember': {
+          await this.organizations.requireRole(orgId, me, 'admin');
+          return json(200, { membership: await this.organizations.addMember(orgId, String(b.userId), (b.role as 'member') ?? 'member') });
+        }
+        case 'removeMember': {
+          await this.organizations.requireRole(orgId, me, 'admin');
+          return json(200, { removed: await this.organizations.removeMember(orgId, String(b.userId)) });
+        }
+        case 'setRole': {
+          await this.organizations.requireRole(orgId, me, 'owner');
+          return json(200, { membership: await this.organizations.setRole(orgId, String(b.userId), b.role as 'member') });
+        }
+        case 'invite': {
+          await this.organizations.requireRole(orgId, me, 'admin');
+          return json(201, { invitation: await this.organizations.invite(orgId, String(b.target), (b.role as 'member') ?? 'member', me) });
+        }
+        case 'accept': {
+          return json(200, { membership: await this.organizations.acceptInvitation(String(b.token), me) });
+        }
+        case 'decline': {
+          return json(200, { invitation: await this.organizations.declineInvitation(String(b.token)) });
+        }
+        default:
+          return json(400, { error: 'unknown action (addMember|removeMember|setRole|invite|accept|decline)' });
+      }
+    } catch (err) {
+      return json(403, { error: (err as Error).message });
+    }
+  }
+
+  private async orgMembers(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.organizations) return json(501, { error: 'organizations module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    await this.organizations.requireRole(id, req.principal!.userId, 'guest');
+    return json(200, { members: await this.organizations.listMembers(id) });
+  }
+
+  // --- notifications -------------------------------------------------------
+
+  private async notificationsList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.notifications) return json(501, { error: 'notifications module not registered' });
+    const recipient = req.query.recipientId ?? req.principal!.userId;
+    const items = await this.notifications.list(recipient, { unreadOnly: req.query.unread === 'true' });
+    return json(200, { notifications: items, unread: await this.notifications.unreadCount(recipient) });
+  }
+
+  private async notificationRead(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.notifications) return json(501, { error: 'notifications module not registered' });
+    const b = this.asObject(req.body);
+    if (b.all === true) return json(200, { marked: await this.notifications.markAllRead(req.principal!.userId) });
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" (or "all": true) is required' });
+    const n = await this.notifications.markRead(b.id);
+    return n ? json(200, { notification: n }) : json(404, { error: 'notification not found' });
+  }
+
+  private async notify(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.notifications) return json(501, { error: 'notifications module not registered' });
+    const b = this.asObject(req.body);
+    const recipientId = typeof b.recipientId === 'string' ? b.recipientId : req.principal!.userId;
+    if (typeof b.type !== 'string' || typeof b.title !== 'string') return json(400, { error: 'fields "type" and "title" are required' });
+    const payload: Parameters<NotificationsModule['notify']>[1] = { type: b.type, title: b.title, ...(typeof b.body === 'string' ? { body: b.body } : {}) };
+    if (typeof b.priority === 'string') payload.priority = b.priority as 'normal';
+    const result = await this.notifications.notify(recipientId, payload);
+    return json(201, result);
+  }
+
+  private async notificationPrefs(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.notifications) return json(501, { error: 'notifications module not registered' });
+    return json(200, { preferences: await this.notifications.getPreferences(req.principal!.userId) });
+  }
+
+  private async notificationSetPrefs(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.notifications) return json(501, { error: 'notifications module not registered' });
+    const b = this.asObject(req.body);
+    if (!b.preferences || typeof b.preferences !== 'object') return json(400, { error: 'field "preferences" (object) is required' });
+    return json(200, { preferences: await this.notifications.setPreferences(req.principal!.userId, b.preferences as Record<string, { enabled: boolean; channels: string[] }>) });
   }
 
   // --- helpers -------------------------------------------------------------

@@ -21,7 +21,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'api', name: 'HTTP API gateway (auth, rate limiting, OpenAPI)', category: 'foundation', status: 'TESTED', module: '@jataqi/api-gateway', evidence: ['/openapi.json', 'rate limiting', '20+ endpoints'] }),
   cap({ id: 'observability', name: 'Observability (metrics, audit, structured logs)', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/metrics', notes: 'counters/gauges/histograms + Prometheus; no distributed tracing or dashboards yet' }),
   cap({ id: 'mfa-sso', name: 'MFA / SSO / OAuth-OIDC', category: 'foundation', status: 'NOT_IMPLEMENTED', notes: 'username/password + API keys only' }),
-  cap({ id: 'multi-tenancy', name: 'Multi-tenancy & organizations (tenant isolation)', category: 'foundation', status: 'NOT_IMPLEMENTED', notes: 'single-tenant; users/roles exist, no org/tenant isolation' }),
+  cap({ id: 'multi-tenancy', name: 'Multi-tenancy & organizations (tenant isolation)', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/organizations', evidence: ['organizations, memberships, roles, invitations, role gating — 8 tests'], notes: 'org/membership model + per-org scoping helpers exist; full platform-wide tenant isolation on every store is not yet enforced everywhere' }),
   cap({ id: 'module-registry', name: 'Universal module registry', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/plugins', notes: 'plugin registry exists; formal module manifest registry PLANNED' }),
 
   // --- Intelligence (P1) ---
@@ -70,6 +70,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'environment', name: 'Environmental intelligence', category: 'physical', status: 'NOT_IMPLEMENTED' }),
 
   // --- Governance & safety ---
+  cap({ id: 'notifications', name: 'Notification engine (in-app, webhook, preferences, rate limits)', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/notifications', evidence: ['multi-channel delivery, inbox, preferences, rate limits, event-driven — 6 tests'], notes: 'email/SMS are adapter abstractions (no real provider wired); no portal UI' }),
   cap({ id: 'governance', name: 'Policy & compliance registry', category: 'governance', status: 'NOT_IMPLEMENTED', notes: 'RBAC exists; no policy/compliance-control registry' }),
   cap({ id: 'human-oversight', name: 'Human approval engine (high-risk actions)', category: 'governance', status: 'TESTED', module: '@jataqi/tool-intelligence', evidence: ['approval gating for R4/R5 tools'] }),
   cap({ id: 'provenance', name: 'Creator identity & cryptographic provenance (JQ-CIP)', category: 'governance', status: 'TESTED', module: '@jataqi/provenance', evidence: ['Ed25519 signed root manifest', 'append-only hash-chained ledger', 'tamper detection', 'key rotation/revocation'], notes: 'creator = GITANYA K; private signing key kept out of the repo' }),
