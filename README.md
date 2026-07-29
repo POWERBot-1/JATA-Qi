@@ -68,6 +68,9 @@ structured response → produce an auditable execution record.
 | `@jataqi/commerce` | Commercial & product packaging — configurable plans/editions, subscriptions/trials, entitlements, usage metering, credits, licensing, invoices, marketplace commissions (payments abstracted) |
 | `@jataqi/organizations` | Multi-tenancy — organizations, memberships, roles, invitations, tenant scoping |
 | `@jataqi/notifications` | Notification engine — multi-channel delivery, in-app inbox, preferences, rate limits (event-driven) |
+| `@jataqi/policies` | Governance — declarative policy engine (allow/deny/require_approval) + compliance-control registry |
+| `@jataqi/feature-flags` | Deployment/testing rollout switches (deterministic % rollout; separate from entitlements) |
+| `@jataqi/privacy` | Data privacy — classification, retention, consent, subject-access requests, AI-context restriction |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 

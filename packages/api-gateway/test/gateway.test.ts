@@ -24,6 +24,9 @@ import { ProvenanceModule, provisionRoot } from '@jataqi/provenance';
 import { CommerceModule } from '@jataqi/commerce';
 import { OrganizationsModule } from '@jataqi/organizations';
 import { NotificationsModule } from '@jataqi/notifications';
+import { PoliciesModule } from '@jataqi/policies';
+import { FeatureFlagsModule } from '@jataqi/feature-flags';
+import { PrivacyModule } from '@jataqi/privacy';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -84,6 +87,9 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     kernel.register(new CommerceModule());
     kernel.register(new OrganizationsModule());
     kernel.register(new NotificationsModule());
+    kernel.register(new PoliciesModule());
+    kernel.register(new FeatureFlagsModule());
+    kernel.register(new PrivacyModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -419,6 +425,23 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const list = await jsonRequest('GET', `${base}/notifications`, undefined, token);
     assert.equal(list.status, 200);
     assert.ok((list.body as { notifications: unknown[] }).notifications.length >= 1);
+  });
+
+  it('evaluates governance policies and manages feature flags + privacy', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    // Policy evaluate (default allow).
+    const dec = await jsonRequest('POST', `${base}/policy/evaluate`, { action: 'something' }, token);
+    assert.equal(dec.status, 200);
+    assert.equal((dec.body as { decision: { effect: string } }).decision.effect, 'allow');
+    // Feature flag set + check.
+    await jsonRequest('POST', `${base}/flag`, { key: 'new-ui', enabled: true, rolloutPct: 100 }, token);
+    const fc = await jsonRequest('GET', `${base}/flag/check?key=new-ui`, undefined, token);
+    assert.equal((fc.body as { enabled: boolean }).enabled, true);
+    // Privacy: create SAR for self.
+    const sar = await jsonRequest('POST', `${base}/privacy/sar`, { type: 'export' }, token);
+    assert.equal(sar.status, 201);
+    assert.ok((sar.body as { sar: { id: string } }).sar.id);
   });
 
   it('records and retrieves workflow history', async () => {

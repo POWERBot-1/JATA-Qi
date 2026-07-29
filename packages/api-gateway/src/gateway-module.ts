@@ -29,6 +29,9 @@ import type { ProvenanceModule } from '@jataqi/provenance';
 import type { CommerceModule } from '@jataqi/commerce';
 import type { OrganizationsModule } from '@jataqi/organizations';
 import type { NotificationsModule } from '@jataqi/notifications';
+import type { PoliciesModule } from '@jataqi/policies';
+import type { FeatureFlagsModule } from '@jataqi/feature-flags';
+import type { PrivacyModule } from '@jataqi/privacy';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -65,6 +68,9 @@ export class ApiGatewayModule implements IModule {
   private commerce?: CommerceModule;
   private organizations?: OrganizationsModule;
   private notifications?: NotificationsModule;
+  private policies?: PoliciesModule;
+  private featureFlags?: FeatureFlagsModule;
+  private privacy?: PrivacyModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -102,6 +108,9 @@ export class ApiGatewayModule implements IModule {
     this.commerce = this.tryModule<CommerceModule>('commerce');
     this.organizations = this.tryModule<OrganizationsModule>('organizations');
     this.notifications = this.tryModule<NotificationsModule>('notifications');
+    this.policies = this.tryModule<PoliciesModule>('policies');
+    this.featureFlags = this.tryModule<FeatureFlagsModule>('feature-flags');
+    this.privacy = this.tryModule<PrivacyModule>('privacy');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -228,6 +237,19 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/notify', auth('notification:read', (req) => this.notify(req)));
     route('GET', '/notification/preferences', auth('notification:read', (req) => this.notificationPrefs(req)));
     route('POST', '/notification/preferences', auth('notification:read', (req) => this.notificationSetPrefs(req)));
+    // Governance: policies, compliance controls, feature flags, privacy.
+    route('GET', '/policies', auth('audit:read', () => this.policiesList()));
+    route('POST', '/policy/evaluate', auth('audit:read', (req) => this.policyEvaluate(req)));
+    route('POST', '/policy', auth('audit:read', (req) => this.policyCreate(req)));
+    route('GET', '/compliance', auth('audit:read', () => this.complianceSummary()));
+    route('GET', '/flags', auth('metrics:read', () => this.flagsList()));
+    route('GET', '/flag/check', auth('metrics:read', (req) => this.flagCheck(req)));
+    route('POST', '/flag', auth('metrics:read', (req) => this.flagSet(req)));
+    route('GET', '/privacy/classification', auth('audit:read', (req) => this.privacyClassify(req)));
+    route('POST', '/privacy/consent', auth('audit:read', (req) => this.privacyConsent(req)));
+    route('GET', '/privacy/consent', auth('audit:read', (req) => this.privacyConsentList(req)));
+    route('POST', '/privacy/sar', auth('audit:read', (req) => this.privacySAR(req)));
+    route('GET', '/privacy/sar', auth('audit:read', (req) => this.privacySARList(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -382,7 +404,7 @@ export class ApiGatewayModule implements IModule {
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
       'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
       'tool-intelligence', 'readiness', 'provenance', 'commerce',
-      'organizations', 'notifications', 'api-gateway',
+      'organizations', 'notifications', 'policies', 'feature-flags', 'privacy', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -1050,6 +1072,99 @@ export class ApiGatewayModule implements IModule {
     const b = this.asObject(req.body);
     if (!b.preferences || typeof b.preferences !== 'object') return json(400, { error: 'field "preferences" (object) is required' });
     return json(200, { preferences: await this.notifications.setPreferences(req.principal!.userId, b.preferences as Record<string, { enabled: boolean; channels: string[] }>) });
+  }
+
+  // --- governance: policies, compliance, feature flags, privacy ------------
+
+  private async policiesList(): Promise<GatewayResponse> {
+    if (!this.policies) return json(501, { error: 'policies module not registered' });
+    return json(200, { policies: await this.policies.listPolicies(), controls: await this.policies.listControls() });
+  }
+
+  private async policyEvaluate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.policies) return json(501, { error: 'policies module not registered' });
+    const b = this.asObject(req.body);
+    const decision = await this.policies.decide({
+      ...(typeof b.action === 'string' ? { action: b.action } : {}),
+      ...(typeof b.resource === 'string' ? { resource: b.resource } : {}),
+      ...(typeof b.risk === 'number' ? { risk: b.risk } : {}),
+      ...(typeof b.organizationId === 'string' ? { organizationId: b.organizationId } : {}),
+    });
+    return json(200, { decision });
+  }
+
+  private async policyCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.policies) return json(501, { error: 'policies module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.effect !== 'string') return json(400, { error: 'fields "name" and "effect" are required' });
+    const policy = await this.policies.createPolicy({
+      name: b.name,
+      effect: b.effect as 'allow',
+      match: (b.match as { action?: string; resource?: string; riskMin?: number; organizationId?: string }) ?? {},
+      priority: typeof b.priority === 'number' ? b.priority : 1,
+      status: 'active',
+      ...(typeof b.description === 'string' ? { description: b.description } : {}),
+    });
+    return json(201, { policy });
+  }
+
+  private async complianceSummary(): Promise<GatewayResponse> {
+    if (!this.policies) return json(501, { error: 'policies module not registered' });
+    return json(200, { summary: await this.policies.complianceSummary() });
+  }
+
+  private async flagsList(): Promise<GatewayResponse> {
+    if (!this.featureFlags) return json(501, { error: 'feature-flags module not registered' });
+    return json(200, { flags: await this.featureFlags.list() });
+  }
+
+  private async flagCheck(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.featureFlags) return json(501, { error: 'feature-flags module not registered' });
+    const key = req.query.key;
+    if (!key) return json(400, { error: 'query parameter "key" is required' });
+    return json(200, { key, enabled: await this.featureFlags.isEnabled(key, req.query.userId ?? req.principal!.userId) });
+  }
+
+  private async flagSet(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.featureFlags) return json(501, { error: 'feature-flags module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.key !== 'string') return json(400, { error: 'field "key" is required' });
+    const flag = await this.featureFlags.set(b.key, b.enabled !== false, typeof b.rolloutPct === 'number' ? b.rolloutPct : 100, typeof b.description === 'string' ? b.description : undefined);
+    return json(201, { flag });
+  }
+
+  private async privacyClassify(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const dataKind = req.query.dataKind;
+    if (!dataKind) return json(400, { error: 'query parameter "dataKind" is required' });
+    return json(200, { ...(await this.privacy.classify(dataKind)), aiRestricted: await this.privacy.isAIRestricted(dataKind) });
+  }
+
+  private async privacyConsent(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    const subjectId = typeof b.subjectId === 'string' ? b.subjectId : req.principal!.userId;
+    if (typeof b.purpose !== 'string' || typeof b.status !== 'string') return json(400, { error: 'fields "purpose" and "status" are required' });
+    return json(200, { consent: await this.privacy.recordConsent(subjectId, b.purpose, b.status as 'granted') });
+  }
+
+  private async privacyConsentList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { consent: await this.privacy.listConsent(req.query.subjectId ?? req.principal!.userId) });
+  }
+
+  private async privacySAR(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    const subjectId = typeof b.subjectId === 'string' ? b.subjectId : req.principal!.userId;
+    if (b.type !== 'export' && b.type !== 'delete') return json(400, { error: 'field "type" (export|delete) is required' });
+    const sar = await this.privacy.requestSAR(subjectId, b.type, typeof b.reason === 'string' ? b.reason : undefined);
+    return json(201, { sar });
+  }
+
+  private async privacySARList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { requests: await this.privacy.listSARs(req.query.subjectId ?? req.principal!.userId) });
   }
 
   // --- helpers -------------------------------------------------------------
