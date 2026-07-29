@@ -34,7 +34,10 @@
     "@jataqi/model-registry": "0.1.0",
     "@jataqi/scheduler": "0.1.0",
     "@jataqi/compute": "0.1.0",
-    "@jataqi/robotics": "0.1.0"
+    "@jataqi/robotics": "0.1.0",
+    "@jataqi/digital-twin": "0.1.0",
+    "@jataqi/tool-intelligence": "0.1.0",
+    "@jataqi/readiness": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

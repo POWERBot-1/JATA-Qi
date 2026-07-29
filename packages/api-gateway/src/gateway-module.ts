@@ -22,6 +22,9 @@ import type { ModelRegistryModule, SelectionRequest } from '@jataqi/model-regist
 import type { SchedulerModule } from '@jataqi/scheduler';
 import { summarize, linearRegression } from '@jataqi/compute';
 import type { RoboticsModule } from '@jataqi/robotics';
+import type { DigitalTwinModule } from '@jataqi/digital-twin';
+import type { ToolIntelligenceModule, ToolStatus } from '@jataqi/tool-intelligence';
+import type { ReadinessModule } from '@jataqi/readiness';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -51,6 +54,9 @@ export class ApiGatewayModule implements IModule {
   private modelRegistry?: ModelRegistryModule;
   private scheduler?: SchedulerModule;
   private robotics?: RoboticsModule;
+  private digitalTwin?: DigitalTwinModule;
+  private tools?: ToolIntelligenceModule;
+  private readiness?: ReadinessModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -81,6 +87,9 @@ export class ApiGatewayModule implements IModule {
     this.modelRegistry = this.tryModule<ModelRegistryModule>('model-registry');
     this.scheduler = this.tryModule<SchedulerModule>('scheduler');
     this.robotics = this.tryModule<RoboticsModule>('robotics');
+    this.digitalTwin = this.tryModule<DigitalTwinModule>('digital-twin');
+    this.tools = this.tryModule<ToolIntelligenceModule>('tool-intelligence');
+    this.readiness = this.tryModule<ReadinessModule>('readiness');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -164,6 +173,21 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/device', auth('device:read', (req) => this.deviceAction(req)));
     route('GET', '/missions', auth('device:read', (req) => this.listMissions(req)));
     route('POST', '/missions', auth('device:read', (req) => this.missionAction(req)));
+    route('GET', '/twins', auth('device:read', (req) => this.listTwins(req)));
+    route('POST', '/twins', auth('device:read', (req) => this.addTwin(req)));
+    route('POST', '/twin', auth('device:read', (req) => this.twinAction(req)));
+    // Readiness (public for transparency).
+    route('GET', '/readiness', (req) => this.readinessList(req));
+    route('GET', '/readiness/summary', () => this.readinessSummary());
+    // Universal AI Tool Intelligence Layer.
+    route('GET', '/tools', auth('tool:read', (req) => this.toolsList(req)));
+    route('GET', '/tools/capability', auth('tool:read', (req) => this.toolsForCapability(req)));
+    route('POST', '/tools', auth('tool:read', (req) => this.toolRegister(req)));
+    route('GET', '/tool', auth('tool:read', (req) => this.toolGet(req)));
+    route('POST', '/tool/invoke', auth('tool:invoke', (req) => this.toolInvoke(req)));
+    route('POST', '/tool/request-approval', auth('tool:invoke', (req) => this.toolRequestApproval(req)));
+    route('POST', '/tool/approve', auth('approval:decide', (req) => this.toolApprove(req)));
+    route('GET', '/approvals', auth('approval:decide', () => this.approvalsList()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -316,7 +340,8 @@ export class ApiGatewayModule implements IModule {
     for (const id of [
       'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
-      'model-registry', 'scheduler', 'compute', 'robotics', 'api-gateway',
+      'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
+      'tool-intelligence', 'readiness', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -622,6 +647,140 @@ export class ApiGatewayModule implements IModule {
     } catch (err) {
       return json(404, { error: (err as Error).message });
     }
+  }
+
+  // --- digital twins (Digital Twin Universe) ------------------------------
+
+  private async listTwins(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.digitalTwin) return json(501, { error: 'digital-twin module not registered' });
+    const twins = await this.digitalTwin.list(req.query.type);
+    return json(200, { twins, count: twins.length });
+  }
+
+  private async addTwin(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.digitalTwin) return json(501, { error: 'digital-twin module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.type !== 'string' || !b.state || typeof b.state !== 'object') {
+      return json(400, { error: 'fields "name", "type", and "state" (object) are required' });
+    }
+    const twin = await this.digitalTwin.register({
+      name: b.name,
+      type: b.type,
+      state: b.state as Record<string, number>,
+      ...(b.metadata && typeof b.metadata === 'object' ? { metadata: b.metadata as Record<string, unknown> } : {}),
+    });
+    return json(201, { twin });
+  }
+
+  private async twinAction(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.digitalTwin) return json(501, { error: 'digital-twin module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : '';
+    if (!id) return json(400, { error: 'field "id" is required' });
+    try {
+      if (b.action === 'update' && b.state && typeof b.state === 'object') {
+        return json(200, { twin: await this.digitalTwin.update(id, b.state as Record<string, number>) });
+      }
+      if (b.action === 'step' && Array.isArray(b.rules)) {
+        return json(200, { twin: await this.digitalTwin.step(id, b.rules as { key: string; add?: number; from?: { key: string; factor: number }[] }[]) });
+      }
+      if (b.action === 'project' && Array.isArray(b.rules) && typeof b.steps === 'number') {
+        return json(200, { trajectory: await this.digitalTwin.project(id, b.rules as { key: string; add?: number; from?: { key: string; factor: number }[] }[], Number(b.steps)) });
+      }
+      return json(400, { error: 'unknown twin action (use update|step|project)' });
+    } catch (err) {
+      return json(404, { error: (err as Error).message });
+    }
+  }
+
+  // --- readiness (honest capability matrix) -------------------------------
+
+  private readinessList(req: GatewayRequest): GatewayResponse {
+    if (!this.readiness) return json(501, { error: 'readiness module not registered' });
+    return json(200, { capabilities: this.readiness.list(req.query.category) });
+  }
+
+  private readinessSummary(): GatewayResponse {
+    if (!this.readiness) return json(501, { error: 'readiness module not registered' });
+    return json(200, this.readiness.summary());
+  }
+
+  // --- universal AI tool intelligence -------------------------------------
+
+  private async toolsList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const tools = await this.tools.list(req.query.category, req.query.status as ToolStatus | undefined);
+    return json(200, { tools, count: tools.length });
+  }
+
+  private async toolsForCapability(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const cap = req.query.capability;
+    if (!cap) return json(400, { error: 'query parameter "capability" is required' });
+    const ranked = await this.tools.rankForCapability(cap);
+    return json(200, { capability: cap, ranked });
+  }
+
+  private async toolRegister(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.canonicalName !== 'string' || typeof b.provider !== 'string') return json(400, { error: 'fields "canonicalName" and "provider" are required' });
+    const tool = await this.tools.register({
+      canonicalName: b.canonicalName,
+      provider: b.provider,
+      version: typeof b.version === 'string' ? b.version : '1.0.0',
+      category: typeof b.category === 'string' ? b.category : 'general',
+      capabilities: Array.isArray(b.capabilities) ? b.capabilities as string[] : [],
+      protocol: typeof b.protocol === 'string' ? b.protocol : 'REST',
+      riskClass: typeof b.riskClass === 'string' ? b.riskClass as 'R0' : 'R0',
+      ...(typeof b.displayName === 'string' ? { displayName: b.displayName } : {}),
+      ...(typeof b.status === 'string' ? { status: b.status as 'ACTIVE' } : {}),
+    });
+    return json(201, { tool });
+  }
+
+  private async toolGet(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const tool = await this.tools.get(id);
+    if (!tool) return json(404, { error: 'tool not found' });
+    return json(200, { tool });
+  }
+
+  private async toolInvoke(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const result = await this.tools.invoke(b.id, b.input, req.principal, typeof b.approvalRequestId === 'string' ? b.approvalRequestId : undefined);
+    // 202 when human approval is required.
+    const status = result.status === 'pending_approval' ? 202 : result.status === 'success' ? 200 : 500;
+    return json(status, { result });
+  }
+
+  private toolRequestApproval(req: GatewayRequest): GatewayResponse {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.action !== 'string') return json(400, { error: 'fields "id" and "action" are required' });
+    const req2 = this.tools.requestApproval(b.id, req.principal?.userId ?? 'anonymous', b.action, typeof b.reason === 'string' ? b.reason : undefined);
+    return json(202, { approvalRequest: req2 });
+  }
+
+  private toolApprove(req: GatewayRequest): GatewayResponse {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || (b.decision !== 'approved' && b.decision !== 'denied')) return json(400, { error: 'fields "id" and "decision" (approved|denied) are required' });
+    try {
+      const decided = this.tools.decideApproval(b.id, b.decision, req.principal?.userId ?? 'admin');
+      return json(200, { approvalRequest: decided });
+    } catch (err) {
+      return json(404, { error: (err as Error).message });
+    }
+  }
+
+  private approvalsList(): GatewayResponse {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    return json(200, { approvals: this.tools.listPendingApprovals() });
   }
 
   // --- helpers -------------------------------------------------------------

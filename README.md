@@ -62,7 +62,9 @@ structured response → produce an auditable execution record.
 | `@jataqi/scheduler` | Compute scheduler — priority task queue with targets, capacity, dependencies + adaptive compute router |
 | `@jataqi/compute` | Scientific/math — statistics, linear regression, numerical optimization (Step 11); agent tools |
 | `@jataqi/robotics` | Embodied intelligence (Step 32) — device registry, missions, telemetry, digital twins |
-| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
+| `@jataqi/tool-intelligence` | Universal AI Tool Layer — global registry, adapters, risk classes, approval gating, evaluation, fallback |
+| `@jataqi/readiness` | Honest machine-readable capability/readiness matrix (directives #64/#100) |
+| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
 ## Quick start

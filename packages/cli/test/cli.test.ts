@@ -14,6 +14,9 @@ import { PluginManagerModule } from '@jataqi/plugins';
 import { ModelRegistryModule } from '@jataqi/model-registry';
 import { SchedulerModule } from '@jataqi/scheduler';
 import { RoboticsModule } from '@jataqi/robotics';
+import { DigitalTwinModule } from '@jataqi/digital-twin';
+import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
+import { ReadinessModule } from '@jataqi/readiness';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 
 describe('createJataQi bootstrap', () => {
@@ -33,6 +36,9 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<ModelRegistryModule>('model-registry'));
     assert.ok(qi.kernel.getModule<SchedulerModule>('scheduler'));
     assert.ok(qi.kernel.getModule<RoboticsModule>('robotics'));
+    assert.ok(qi.kernel.getModule<DigitalTwinModule>('digital-twin'));
+    assert.ok(qi.kernel.getModule<ToolIntelligenceModule>('tool-intelligence'));
+    assert.ok(qi.kernel.getModule<ReadinessModule>('readiness'));
     assert.ok(qi.kernel.getModule<ApiGatewayModule>('api-gateway'));
     assert.ok(qi.gateway, 'bootstrap should expose the gateway handle');
     await qi.shutdown();

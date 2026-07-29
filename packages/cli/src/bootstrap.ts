@@ -24,6 +24,9 @@ import { ModelRegistryModule } from '@jataqi/model-registry';
 import { SchedulerModule } from '@jataqi/scheduler';
 import { ComputeModule, computeTools } from '@jataqi/compute';
 import { RoboticsModule } from '@jataqi/robotics';
+import { DigitalTwinModule } from '@jataqi/digital-twin';
+import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
+import { ReadinessModule } from '@jataqi/readiness';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -93,10 +96,37 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new ModelRegistryModule({ models: DEFAULT_MODELS }));
   kernel.register(new SchedulerModule({ defaultCapacity: 4 }));
   kernel.register(new RoboticsModule());
+  kernel.register(new DigitalTwinModule());
+  kernel.register(new ToolIntelligenceModule());
+  kernel.register(new ReadinessModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 
   await kernel.boot();
+
+  // Seed a default, locally-invocable tool so the Universal Tool layer is
+  // demonstrably usable out of the box (echo capability, R0 read-only).
+  const tools = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+  const echoTool = await tools.register({
+    canonicalName: 'echo',
+    displayName: 'Echo Tool',
+    provider: 'jataqi',
+    version: '1.0.0',
+    category: 'util',
+    capabilities: ['echo'],
+    protocol: 'function',
+    riskClass: 'R0',
+    status: 'ACTIVE',
+  });
+  tools.registerAdapter({
+    id: echoTool.id,
+    capabilities: () => ['echo'],
+    validateInput: (i) => (i !== undefined && i !== null ? undefined : 'input required'),
+    async invoke(input) {
+      return { echoed: input };
+    },
+  });
+
   return {
     kernel,
     gateway,

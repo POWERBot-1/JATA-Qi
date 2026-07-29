@@ -1,0 +1,87 @@
+// The default capability matrix — an HONEST assessment of JATA Qi as of this
+// build. Statuses are backed by the real, tested packages in this repo. The
+// platform is explicitly NOT production-ready: many domain, commercial and
+// governance capabilities are PLANNED or NOT_IMPLEMENTED.
+
+import type { Capability } from './types.js';
+
+const now = Date.now();
+function cap(c: Omit<Capability, 'updatedAt'>): Capability {
+  return { ...c, updatedAt: now };
+}
+
+export const DEFAULT_CAPABILITIES: Capability[] = [
+  // --- Foundation (P0) ---
+  cap({ id: 'kernel', name: 'Core Kernel (event bus, DI, lifecycle, config, logging)', category: 'foundation', status: 'TESTED', module: '@jataqi/core-kernel', evidence: ['20 unit tests', 'topological module lifecycle'] }),
+  cap({ id: 'storage', name: 'Data Fabric (KV/collections/blobs, memory + filesystem)', category: 'foundation', status: 'TESTED', module: '@jataqi/storage', evidence: ['14 tests', 'pluggable drivers'] }),
+  cap({ id: 'vector-search', name: 'Vector retrieval (embeddings + index)', category: 'foundation', status: 'TESTED', module: '@jataqi/vector-search', evidence: ['18 tests'] }),
+  cap({ id: 'identity', name: 'Identity & Authentication (users, scrypt, sessions, API keys)', category: 'foundation', status: 'TESTED', module: '@jataqi/security', evidence: ['14 tests', 'bearer auth over HTTP'] }),
+  cap({ id: 'security.rbac', name: 'RBAC authorization + permission enforcement', category: 'foundation', status: 'TESTED', module: '@jataqi/security', evidence: ['wildcard RBAC', 'gateway enforcement'] }),
+  cap({ id: 'security.audit', name: 'Immutable audit ledger', category: 'foundation', status: 'TESTED', module: '@jataqi/security', evidence: ['append-only ledger', 'workflow attribution'] }),
+  cap({ id: 'api', name: 'HTTP API gateway (auth, rate limiting, OpenAPI)', category: 'foundation', status: 'TESTED', module: '@jataqi/api-gateway', evidence: ['/openapi.json', 'rate limiting', '20+ endpoints'] }),
+  cap({ id: 'observability', name: 'Observability (metrics, audit, structured logs)', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/metrics', notes: 'counters/gauges/histograms + Prometheus; no distributed tracing or dashboards yet' }),
+  cap({ id: 'mfa-sso', name: 'MFA / SSO / OAuth-OIDC', category: 'foundation', status: 'NOT_IMPLEMENTED', notes: 'username/password + API keys only' }),
+  cap({ id: 'multi-tenancy', name: 'Multi-tenancy & organizations (tenant isolation)', category: 'foundation', status: 'NOT_IMPLEMENTED', notes: 'single-tenant; users/roles exist, no org/tenant isolation' }),
+  cap({ id: 'module-registry', name: 'Universal module registry', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/plugins', notes: 'plugin registry exists; formal module manifest registry PLANNED' }),
+
+  // --- Intelligence (P1) ---
+  cap({ id: 'qil', name: 'QiL orchestration language (lexer/parser/compiler)', category: 'intelligence', status: 'TESTED', module: '@jataqi/qil', evidence: ['19 tests', 'execution-plan DAG'] }),
+  cap({ id: 'memory', name: 'Agent & session memory', category: 'intelligence', status: 'TESTED', module: '@jataqi/agent-runtime', evidence: ['ConversationManager', 'session memory'] }),
+  cap({ id: 'knowledge', name: 'Knowledge fabric (ingest/chunk/retrieve/graph)', category: 'intelligence', status: 'TESTED', module: '@jataqi/knowledge-service', evidence: ['33 tests across knowledge + graph'] }),
+  cap({ id: 'agents', name: 'Agent runtime (ReAct loop, tools, LLMs)', category: 'intelligence', status: 'TESTED', module: '@jataqi/agent-runtime', evidence: ['10 tests', 'Echo/Scripted/OpenAI LLMs'] }),
+  cap({ id: 'workflows', name: 'Workflow engine (QiL plan execution, durable history)', category: 'intelligence', status: 'TESTED', module: '@jataqi/orchestrator', evidence: ['8 tests', 'durable run store'] }),
+  cap({ id: 'model-abstraction', name: 'Model abstraction & routing', category: 'intelligence', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/model-registry', notes: 'catalog + selector implemented; not yet auto-wired into agent LLM choice at runtime' }),
+  cap({ id: 'teams', name: 'Multi-agent orchestration (parallel/sequential/consensus)', category: 'intelligence', status: 'TESTED', module: '@jataqi/teams', evidence: ['5 tests'] }),
+  cap({ id: 'tool-intelligence', name: 'Universal AI Tool Intelligence Layer', category: 'intelligence', status: 'TESTED', module: '@jataqi/tool-intelligence', evidence: ['registry, adapters, risk gating, fallback, approvals — 8 tests'] }),
+  cap({ id: 'compute', name: 'Scientific/math compute (stats, regression, optimization)', category: 'intelligence', status: 'TESTED', module: '@jataqi/compute', evidence: ['11 tests', 'agent tools'] }),
+  cap({ id: 'simulation', name: 'Simulation engine (Monte-Carlo)', category: 'intelligence', status: 'TESTED', module: '@jataqi/simulation', evidence: ['7 tests', 'probabilistic outputs'] }),
+  cap({ id: 'scheduler', name: 'Compute scheduler + adaptive router', category: 'intelligence', status: 'TESTED', module: '@jataqi/scheduler', evidence: ['priority queue, targets, profile router'] }),
+
+  // --- Developer (P2) ---
+  cap({ id: 'cli', name: 'Developer CLI', category: 'developer', status: 'TESTED', module: '@jataqi/cli', evidence: ['serve, ask, models, simulate, plugins'] }),
+  cap({ id: 'sdk', name: 'SDKs (Python/TS)', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'TypeScript library API only; no published SDKs' }),
+  cap({ id: 'evals', name: 'AI evaluation platform', category: 'developer', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'web-ui', name: 'Web/mobile dashboards & consoles', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'HTTP API only; no UI' }),
+
+  // --- Commercial (P3) ---
+  cap({ id: 'billing', name: 'Billing & subscriptions', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'marketplace', name: 'Marketplace (agents/tools/data)', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'organizations', name: 'Organizations & teams', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
+
+  // --- Enterprise (P4) ---
+  cap({ id: 'enterprise', name: 'Enterprise OS (CRM/ERP/HR/Finance)', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'finance', name: 'Financial intelligence (wallets/ledgers/payments)', category: 'enterprise', status: 'NOT_IMPLEMENTED', notes: 'requires regulated providers; not built' }),
+  cap({ id: 'supply-chain', name: 'Supply chain intelligence', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
+
+  // --- Domain intelligence (P5) ---
+  cap({ id: 'education', name: 'Education intelligence', category: 'domain', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'health', name: 'Health intelligence', category: 'domain', status: 'NOT_IMPLEMENTED', notes: 'clinical use requires validation & oversight — not built' }),
+  cap({ id: 'research', name: 'Research & scientific discovery', category: 'domain', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'communication', name: 'Communication intelligence (email/messaging/voice)', category: 'domain', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'creative', name: 'Creative intelligence (image/video/audio gen)', category: 'domain', status: 'NOT_IMPLEMENTED', notes: 'no real generative providers connected' }),
+  cap({ id: 'multimodal', name: 'Multimodal (vision/audio/video) models', category: 'domain', status: 'NOT_IMPLEMENTED', notes: 'model-registry catalogs capabilities; no live multimodal backends' }),
+
+  // --- Physical / infrastructure (P6) ---
+  cap({ id: 'robotics', name: 'Robotics & device registry', category: 'physical', status: 'TESTED', module: '@jataqi/robotics', notes: 'device/mission/telemetry abstraction; no real hardware connected' }),
+  cap({ id: 'digital-twin', name: 'Digital twin framework', category: 'physical', status: 'TESTED', module: '@jataqi/digital-twin', evidence: ['7 tests', 'step/project'] }),
+  cap({ id: 'iot', name: 'IoT / sensor ingestion', category: 'physical', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'cloud-devops', name: 'Autonomous cloud & DevOps', category: 'physical', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'smart-cities', name: 'Smart cities', category: 'physical', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'environment', name: 'Environmental intelligence', category: 'physical', status: 'NOT_IMPLEMENTED' }),
+
+  // --- Governance & safety ---
+  cap({ id: 'governance', name: 'Policy & compliance registry', category: 'governance', status: 'NOT_IMPLEMENTED', notes: 'RBAC exists; no policy/compliance-control registry' }),
+  cap({ id: 'human-oversight', name: 'Human approval engine (high-risk actions)', category: 'governance', status: 'TESTED', module: '@jataqi/tool-intelligence', evidence: ['approval gating for R4/R5 tools'] }),
+  cap({ id: 'ai-safety', name: 'AI safety framework (injection defenses, loop limits)', category: 'governance', status: 'PARTIALLY_IMPLEMENTED', notes: 'agent max-iterations + tool risk gating; no prompt-injection scanner' }),
+  cap({ id: 'cyberdefense', name: 'Cybersecurity & threat defense', category: 'governance', status: 'NOT_IMPLEMENTED' }),
+
+  // --- Global / sovereign (P7) ---
+  cap({ id: 'sovereign', name: 'Sovereign / government deployment', category: 'global', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'localization', name: 'Global localization & currencies', category: 'global', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'disaster-recovery', name: 'Disaster recovery & backups', category: 'global', status: 'NOT_IMPLEMENTED' }),
+
+  // --- Frontier (P8) — research/simulation only ---
+  cap({ id: 'quantum', name: 'Quantum computing integration', category: 'frontier', status: 'RESEARCH_ONLY', notes: 'scheduler models a quantum target tag; no real quantum hardware' }),
+  cap({ id: 'space', name: 'Space / interplanetary intelligence', category: 'frontier', status: 'RESEARCH_ONLY' }),
+  cap({ id: 'self-evolution', name: 'Self-evolution engine', category: 'frontier', status: 'NOT_IMPLEMENTED', notes: 'gated by governance per spec' }),
+];

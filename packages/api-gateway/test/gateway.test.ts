@@ -17,6 +17,9 @@ import { PluginManagerModule } from '@jataqi/plugins';
 import { ModelRegistryModule } from '@jataqi/model-registry';
 import { SchedulerModule } from '@jataqi/scheduler';
 import { RoboticsModule } from '@jataqi/robotics';
+import { DigitalTwinModule } from '@jataqi/digital-twin';
+import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
+import { ReadinessModule } from '@jataqi/readiness';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -69,6 +72,9 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     ] }));
     kernel.register(new SchedulerModule());
     kernel.register(new RoboticsModule());
+    kernel.register(new DigitalTwinModule());
+    kernel.register(new ToolIntelligenceModule());
+    kernel.register(new ReadinessModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -322,6 +328,36 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const res = await jsonRequest('POST', `${base}/scheduler/route`, { kind: 'simulation', requireGpu: true }, token);
     assert.equal(res.status, 200);
     assert.ok(typeof (res.body as { target: string }).target === 'string');
+  });
+
+  it('creates and projects a digital twin', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const created = await jsonRequest('POST', `${base}/twins`, { name: 'Acct', type: 'finance', state: { balance: 1000 } }, token);
+    assert.equal(created.status, 201);
+    const id = (created.body as { twin: { id: string } }).twin.id;
+    const proj = await jsonRequest('POST', `${base}/twin`, { id, action: 'project', steps: 3, rules: [{ key: 'balance', from: [{ key: 'balance', factor: 1.05 }] }] }, token);
+    assert.equal(proj.status, 200);
+    assert.equal((proj.body as { trajectory: number[] }).trajectory.length, 4);
+  });
+
+  it('exposes an honest readiness matrix (public)', async () => {
+    const list = await jsonRequest('GET', `${base}/readiness`);
+    assert.equal(list.status, 200);
+    assert.ok((list.body as { capabilities: unknown[] }).capabilities.length > 10);
+    const summary = await jsonRequest('GET', `${base}/readiness/summary`);
+    assert.match((summary.body as { overall: string }).overall, /NOT production-ready/);
+  });
+
+  it('registers and invokes a tool through the Universal Tool layer', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const reg = await jsonRequest('POST', `${base}/tools`, { canonicalName: 'upper', provider: 'test', version: '1.0.0', category: 'util', capabilities: ['uppercase'], protocol: 'function', riskClass: 'R0', status: 'ACTIVE' }, token);
+    assert.equal(reg.status, 201);
+    const toolId = (reg.body as { tool: { id: string } }).tool.id;
+    // No adapter bound -> invoke fails gracefully.
+    const failed = await jsonRequest('POST', `${base}/tool/invoke`, { id: toolId, input: { x: 1 } }, token);
+    assert.equal(failed.status, 500);
   });
 
   it('records and retrieves workflow history', async () => {

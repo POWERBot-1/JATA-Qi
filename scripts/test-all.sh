@@ -8,8 +8,8 @@ PKGS=(
   core-kernel storage vector-search
   qil security metrics simulation
   knowledge-service knowledge-graph
-  model-registry scheduler plugins
-  agent-runtime compute teams robotics
+  model-registry scheduler plugins readiness
+  agent-runtime compute teams robotics digital-twin tool-intelligence
   orchestrator api-gateway cli
 )
 
