@@ -22,6 +22,8 @@ import { TeamCoordinatorModule } from '@jataqi/teams';
 import { PluginManagerModule } from '@jataqi/plugins';
 import { ModelRegistryModule } from '@jataqi/model-registry';
 import { SchedulerModule } from '@jataqi/scheduler';
+import { ComputeModule, computeTools } from '@jataqi/compute';
+import { RoboticsModule } from '@jataqi/robotics';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -72,10 +74,13 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   );
   kernel.register(new KnowledgeService());
   kernel.register(new KnowledgeGraphModule(cfg.graph));
+  kernel.register(new ComputeModule());
+  const { extraTools: userTools, ...restAgent } = cfg.agent ?? {};
   kernel.register(
     new AgentRuntimeModule({
+      ...restAgent,
       llm: cfg.agent?.llm ?? new EchoLLM(),
-      ...cfg.agent,
+      extraTools: [...computeTools(), ...(userTools ?? [])],
     }),
   );
   kernel.register(new QiLModule());
@@ -87,6 +92,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new PluginManagerModule());
   kernel.register(new ModelRegistryModule({ models: DEFAULT_MODELS }));
   kernel.register(new SchedulerModule({ defaultCapacity: 4 }));
+  kernel.register(new RoboticsModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

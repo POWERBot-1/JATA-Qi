@@ -4,6 +4,8 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import { Scheduler } from './scheduler.js';
 import type { SchedulerOptions } from './scheduler.js';
+import { recommendTarget } from './router.js';
+import type { TaskProfile } from './router.js';
 import type { ComputeTarget, SchedulerStats, Task } from './types.js';
 
 export class SchedulerModule implements IModule {
@@ -38,6 +40,12 @@ export class SchedulerModule implements IModule {
 
   stats(): SchedulerStats {
     return this.scheduler.stats();
+  }
+
+  /** Recommend a compute target for a task profile (Step 31 Adaptive Compute Router). */
+  recommendTarget(profile: TaskProfile): string {
+    const targets = this.scheduler.stats().targets.map((t) => ({ id: t.id, kind: t.kind }));
+    return recommendTarget(profile, targets);
   }
 
   async idle(): Promise<void> {

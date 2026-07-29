@@ -59,8 +59,10 @@ structured response → produce an auditable execution record.
 | `@jataqi/metrics` | Observability — counters, gauges, histograms, registry, Prometheus exposition |
 | `@jataqi/plugins` | Plugin manager — capabilities, permissions, dependency validation, auto-registration |
 | `@jataqi/model-registry` | Model intelligence — catalog with metadata and a cost/latency/quality selector |
-| `@jataqi/scheduler` | Compute scheduler — priority task queue with targets, capacity, and dependencies |
-| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
+| `@jataqi/scheduler` | Compute scheduler — priority task queue with targets, capacity, dependencies + adaptive compute router |
+| `@jataqi/compute` | Scientific/math — statistics, linear regression, numerical optimization (Step 11); agent tools |
+| `@jataqi/robotics` | Embodied intelligence (Step 32) — device registry, missions, telemetry, digital twins |
+| `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
 ## Quick start

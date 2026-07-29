@@ -20,6 +20,9 @@ import type { TeamCoordinatorModule, TeamConfig, TeamResult } from '@jataqi/team
 import type { PluginManagerModule, InstalledPlugin } from '@jataqi/plugins';
 import type { ModelRegistryModule, SelectionRequest } from '@jataqi/model-registry';
 import type { SchedulerModule } from '@jataqi/scheduler';
+import { summarize, linearRegression } from '@jataqi/compute';
+import type { RoboticsModule } from '@jataqi/robotics';
+import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
 
@@ -47,6 +50,7 @@ export class ApiGatewayModule implements IModule {
   private plugins?: PluginManagerModule;
   private modelRegistry?: ModelRegistryModule;
   private scheduler?: SchedulerModule;
+  private robotics?: RoboticsModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -76,6 +80,7 @@ export class ApiGatewayModule implements IModule {
     this.plugins = this.tryModule<PluginManagerModule>('plugins');
     this.modelRegistry = this.tryModule<ModelRegistryModule>('model-registry');
     this.scheduler = this.tryModule<SchedulerModule>('scheduler');
+    this.robotics = this.tryModule<RoboticsModule>('robotics');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -151,6 +156,14 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/models', auth('model:read', () => this.modelsList()));
     route('POST', '/models/select', auth('model:read', (req) => this.modelSelect(req)));
     route('GET', '/scheduler/stats', auth('metrics:read', () => this.schedulerStats()));
+    route('POST', '/compute/stats', auth('qil:run', (req) => this.computeStats(req)));
+    route('POST', '/compute/regression', auth('qil:run', (req) => this.computeRegression(req)));
+    route('POST', '/scheduler/route', auth('compute:run', (req) => this.schedulerRoute(req)));
+    route('GET', '/devices', auth('device:read', (req) => this.listDevices(req)));
+    route('POST', '/devices', auth('device:read', (req) => this.addDevice(req)));
+    route('POST', '/device', auth('device:read', (req) => this.deviceAction(req)));
+    route('GET', '/missions', auth('device:read', (req) => this.listMissions(req)));
+    route('POST', '/missions', auth('device:read', (req) => this.missionAction(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -303,7 +316,7 @@ export class ApiGatewayModule implements IModule {
     for (const id of [
       'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
-      'model-registry', 'scheduler', 'api-gateway',
+      'model-registry', 'scheduler', 'compute', 'robotics', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -510,6 +523,105 @@ export class ApiGatewayModule implements IModule {
   private schedulerStats(): GatewayResponse {
     if (!this.scheduler) return json(501, { error: 'scheduler module not registered' });
     return json(200, { stats: this.scheduler.stats() });
+  }
+
+  private computeStats(req: GatewayRequest): GatewayResponse {
+    const { values } = this.asObject(req.body);
+    if (!Array.isArray(values)) return json(400, { error: 'field "values" (number[]) is required' });
+    const nums = (values as unknown[]).map((n) => Number(n));
+    if (nums.some((n) => Number.isNaN(n))) return json(400, { error: '"values" must contain only numbers' });
+    return json(200, { stats: summarize(nums) });
+  }
+
+  private computeRegression(req: GatewayRequest): GatewayResponse {
+    const { x, y } = this.asObject(req.body);
+    if (!Array.isArray(x) || !Array.isArray(y)) return json(400, { error: 'fields "x" and "y" (number[]) are required' });
+    const xs = (x as unknown[]).map((n) => Number(n));
+    const ys = (y as unknown[]).map((n) => Number(n));
+    try {
+      return json(200, { fit: linearRegression(xs, ys) });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private schedulerRoute(req: GatewayRequest): GatewayResponse {
+    if (!this.scheduler) return json(501, { error: 'scheduler module not registered' });
+    const body = this.asObject(req.body);
+    const profile: TaskProfile = {
+      kind: typeof body.kind === 'string' ? body.kind : 'cpu',
+      ...(typeof body.prefer === 'string' ? { prefer: body.prefer as TaskProfile['prefer'] } : {}),
+      ...(body.requireGpu === true ? { requireGpu: true } : {}),
+    };
+    return json(200, { target: this.scheduler.recommendTarget(profile), stats: this.scheduler.stats() });
+  }
+
+  // --- robotics (Step 32 embodied intelligence) ---------------------------
+
+  private async listDevices(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.robotics) return json(501, { error: 'robotics module not registered' });
+    const devices = await this.robotics.listDevices(req.query.kind);
+    return json(200, { devices, count: devices.length });
+  }
+
+  private async addDevice(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.robotics) return json(501, { error: 'robotics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.kind !== 'string') return json(400, { error: 'fields "name" and "kind" are required' });
+    const device = await this.robotics.addDevice({
+      name: b.name,
+      kind: b.kind,
+      ...(Array.isArray(b.capabilities) ? { capabilities: b.capabilities as string[] } : {}),
+      ...(b.location && typeof b.location === 'object' ? { location: b.location as { lat: number; lon: number; label?: string } } : {}),
+      ...(b.specs && typeof b.specs === 'object' ? { specs: b.specs as Record<string, unknown> } : {}),
+    });
+    return json(201, { device });
+  }
+
+  private async deviceAction(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.robotics) return json(501, { error: 'robotics module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : '';
+    if (!id) return json(400, { error: 'field "id" is required' });
+    try {
+      if (b.action === 'status' && typeof b.status === 'string') {
+        return json(200, { device: await this.robotics.setStatus(id, b.status as 'online' | 'offline' | 'busy' | 'error') });
+      }
+      if (b.action === 'telemetry' && b.readings && typeof b.readings === 'object') {
+        return json(200, { device: await this.robotics.recordTelemetry(id, b.readings as Record<string, number>) });
+      }
+      if (b.action === 'maintenance' && typeof b.note === 'string') {
+        return json(200, { device: await this.robotics.addMaintenance(id, b.note) });
+      }
+      return json(400, { error: 'unknown device action (use status|telemetry|maintenance)' });
+    } catch (err) {
+      return json(404, { error: (err as Error).message });
+    }
+  }
+
+  private async listMissions(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.robotics) return json(501, { error: 'robotics module not registered' });
+    const missions = await this.robotics.listMissions(req.query.deviceId, req.query.status as 'queued' | 'active' | 'completed' | 'failed' | 'cancelled' | undefined);
+    return json(200, { missions, count: missions.length });
+  }
+
+  private async missionAction(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.robotics) return json(501, { error: 'robotics module not registered' });
+    const b = this.asObject(req.body);
+    try {
+      if (b.action === 'assign') {
+        if (typeof b.deviceId !== 'string' || typeof b.objective !== 'string') return json(400, { error: 'assign requires "deviceId" and "objective"' });
+        return json(201, { mission: await this.robotics.assignMission(b.deviceId, b.objective) });
+      }
+      if (b.action === 'complete') {
+        if (typeof b.id !== 'string') return json(400, { error: 'complete requires "id"' });
+        const status = b.status === 'failed' ? 'failed' : 'completed';
+        return json(200, { mission: await this.robotics.completeMission(b.id, status, typeof b.result === 'string' ? b.result : undefined) });
+      }
+      return json(400, { error: 'unknown mission action (use assign|complete)' });
+    } catch (err) {
+      return json(404, { error: (err as Error).message });
+    }
   }
 
   // --- helpers -------------------------------------------------------------

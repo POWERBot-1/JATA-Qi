@@ -112,4 +112,16 @@ describe('SchedulerModule (kernel integration)', () => {
     assert.ok(tgt);
     assert.equal(tgt!.capacity, 8);
   });
+
+  it('recommends targets by profile and never assumes quantum is better', () => {
+    // Only an edge + default target registered.
+    mod.registerTarget({ id: 'edge01', kind: 'edge', capacity: 4 });
+    // optimization -> prefers quantum, but none registered -> falls back to default.
+    assert.equal(mod.recommendTarget({ kind: 'optimization' }), 'default');
+    // io -> edge target exists.
+    assert.equal(mod.recommendTarget({ kind: 'io' }), 'edge01');
+    // Now register a quantum target -> optimization routes to it.
+    mod.registerTarget({ id: 'qpu1', kind: 'quantum', capacity: 1 });
+    assert.equal(mod.recommendTarget({ kind: 'optimization' }), 'qpu1');
+  });
 });

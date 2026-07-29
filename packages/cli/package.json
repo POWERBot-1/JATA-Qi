@@ -32,7 +32,9 @@
     "@jataqi/teams": "0.1.0",
     "@jataqi/plugins": "0.1.0",
     "@jataqi/model-registry": "0.1.0",
-    "@jataqi/scheduler": "0.1.0"
+    "@jataqi/scheduler": "0.1.0",
+    "@jataqi/compute": "0.1.0",
+    "@jataqi/robotics": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

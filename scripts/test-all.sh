@@ -9,7 +9,7 @@ PKGS=(
   qil security metrics simulation
   knowledge-service knowledge-graph
   model-registry scheduler plugins
-  agent-runtime teams
+  agent-runtime compute teams robotics
   orchestrator api-gateway cli
 )
 

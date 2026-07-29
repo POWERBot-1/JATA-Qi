@@ -16,6 +16,7 @@ import { TeamCoordinatorModule } from '@jataqi/teams';
 import { PluginManagerModule } from '@jataqi/plugins';
 import { ModelRegistryModule } from '@jataqi/model-registry';
 import { SchedulerModule } from '@jataqi/scheduler';
+import { RoboticsModule } from '@jataqi/robotics';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -67,6 +68,7 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
       { id: 'm2', provider: 'acme', name: 'M2', capabilities: ['chat'], quality: 50, inputCostPer1k: 0.1, outputCostPer1k: 0.1, latencyMs: 200 },
     ] }));
     kernel.register(new SchedulerModule());
+    kernel.register(new RoboticsModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -280,6 +282,46 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const res = await jsonRequest('GET', `${base}/scheduler/stats`, undefined, token);
     assert.equal(res.status, 200);
     assert.ok((res.body as { stats: { targets: unknown[] } }).stats.targets.length >= 1);
+  });
+
+  it('computes statistics and regression', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const stats = await jsonRequest('POST', `${base}/compute/stats`, { values: [1, 2, 3, 4] }, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { stats: { mean: number } }).stats.mean, 2.5);
+    const reg = await jsonRequest('POST', `${base}/compute/regression`, { x: [1, 2, 3], y: [2, 4, 6] }, token);
+    assert.equal(reg.status, 200);
+    assert.ok(Math.abs((reg.body as { fit: { slope: number; r2: number } }).fit.slope - 2) < 1e-9);
+  });
+
+  it('manages robotic devices and missions', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+
+    const created = await jsonRequest('POST', `${base}/devices`, { name: 'Scout', kind: 'drone', capabilities: ['scan'] }, token);
+    assert.equal(created.status, 201);
+    const deviceId = (created.body as { device: { id: string } }).device.id;
+
+    const listed = await jsonRequest('GET', `${base}/devices`, undefined, token);
+    assert.equal(listed.status, 200);
+    assert.ok((listed.body as { devices: unknown[] }).devices.length >= 1);
+
+    const mission = await jsonRequest('POST', `${base}/missions`, { action: 'assign', deviceId, objective: 'survey zone A' }, token);
+    assert.equal(mission.status, 201);
+    const missionId = (mission.body as { mission: { id: string; status: string } }).mission.id;
+    assert.equal((mission.body as { mission: { status: string } }).mission.status, 'active');
+
+    const done = await jsonRequest('POST', `${base}/missions`, { action: 'complete', id: missionId, result: 'surveyed' }, token);
+    assert.equal((done.body as { mission: { status: string } }).mission.status, 'completed');
+  });
+
+  it('recommends a compute target by profile', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const res = await jsonRequest('POST', `${base}/scheduler/route`, { kind: 'simulation', requireGpu: true }, token);
+    assert.equal(res.status, 200);
+    assert.ok(typeof (res.body as { target: string }).target === 'string');
   });
 
   it('records and retrieves workflow history', async () => {
