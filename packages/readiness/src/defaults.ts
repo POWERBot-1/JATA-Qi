@@ -72,6 +72,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   // --- Governance & safety ---
   cap({ id: 'governance', name: 'Policy & compliance registry', category: 'governance', status: 'NOT_IMPLEMENTED', notes: 'RBAC exists; no policy/compliance-control registry' }),
   cap({ id: 'human-oversight', name: 'Human approval engine (high-risk actions)', category: 'governance', status: 'TESTED', module: '@jataqi/tool-intelligence', evidence: ['approval gating for R4/R5 tools'] }),
+  cap({ id: 'provenance', name: 'Creator identity & cryptographic provenance (JQ-CIP)', category: 'governance', status: 'TESTED', module: '@jataqi/provenance', evidence: ['Ed25519 signed root manifest', 'append-only hash-chained ledger', 'tamper detection', 'key rotation/revocation'], notes: 'creator = GITANYA K; private signing key kept out of the repo' }),
   cap({ id: 'ai-safety', name: 'AI safety framework (injection defenses, loop limits)', category: 'governance', status: 'PARTIALLY_IMPLEMENTED', notes: 'agent max-iterations + tool risk gating; no prompt-injection scanner' }),
   cap({ id: 'cyberdefense', name: 'Cybersecurity & threat defense', category: 'governance', status: 'NOT_IMPLEMENTED' }),
 

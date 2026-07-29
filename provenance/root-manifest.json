@@ -1,0 +1,18 @@
+{
+  "project": "JATA QI",
+  "creator": {
+    "display_name": "GITANYA K",
+    "role": "ORIGINAL CREATOR / FOUNDER / ORIGINATOR",
+    "identity_type": "JATA_QI_CREATOR_ROOT"
+  },
+  "canonical_identity": "JATA-QI|CREATOR|GITANYA-K|ROOT|2026-07-29",
+  "identity_anchor_sha256": "9be651b8e7a86cd55450b170ad88d7b9f5ea4569cac7c57126482fa9b7ce4f82",
+  "provenance": "ORIGINAL_CREATOR",
+  "status": "ROOT",
+  "created": "2026-07-29",
+  "signature_algorithm": "ed25519",
+  "public_key": "MCowBQYDK2VwAyEAZb+jU1NBfD+k9CFWVE5l5fUtJSh17/+ofvcAk/w0AwA=",
+  "signed_payload": "{\"canonical_identity\":\"JATA-QI|CREATOR|GITANYA-K|ROOT|2026-07-29\",\"created\":\"2026-07-29\",\"creator\":{\"display_name\":\"GITANYA K\",\"identity_type\":\"JATA_QI_CREATOR_ROOT\",\"role\":\"ORIGINAL CREATOR / FOUNDER / ORIGINATOR\"},\"identity_anchor_sha256\":\"9be651b8e7a86cd55450b170ad88d7b9f5ea4569cac7c57126482fa9b7ce4f82\",\"project\":\"JATA QI\",\"provenance\":\"ORIGINAL_CREATOR\",\"public_key\":\"MCowBQYDK2VwAyEAZb+jU1NBfD+k9CFWVE5l5fUtJSh17/+ofvcAk/w0AwA=\",\"signature_algorithm\":\"ed25519\",\"status\":\"ROOT\"}",
+  "root_signature": "tMFP5YDP/FozZmfXXKZTM/9xutSGYMcrrMbwZkFdQz2s7qMke/et/00m1uFt0jkECPjlze7hEz9B9uKcCgaPAg==",
+  "manifest_fingerprint": "7b682ee3de9773a13e6cd5eb3e536ea83e37eb0461d3787b0ad1ac6440e9bbd3"
+}

@@ -9,3 +9,8 @@ coverage/
 *.tsbuildinfo
 node_modules/
 dist/
+
+# JQ-CIP: creator signing keys are PRIVATE — never commit.
+provenance/keys/
+*.key
+*.pem

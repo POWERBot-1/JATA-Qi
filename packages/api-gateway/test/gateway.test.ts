@@ -20,6 +20,7 @@ import { RoboticsModule } from '@jataqi/robotics';
 import { DigitalTwinModule } from '@jataqi/digital-twin';
 import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { ReadinessModule } from '@jataqi/readiness';
+import { ProvenanceModule, provisionRoot } from '@jataqi/provenance';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -75,6 +76,8 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     kernel.register(new DigitalTwinModule());
     kernel.register(new ToolIntelligenceModule());
     kernel.register(new ReadinessModule());
+    const prov = provisionRoot();
+    kernel.register(new ProvenanceModule({ manifest: prov.manifest, privateKey: prov.privateKeyDerB64 }));
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -358,6 +361,20 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     // No adapter bound -> invoke fails gracefully.
     const failed = await jsonRequest('POST', `${base}/tool/invoke`, { id: toolId, input: { x: 1 } }, token);
     assert.equal(failed.status, 500);
+  });
+
+  it('exposes the creator identity and verifies provenance', async () => {
+    const info = await jsonRequest('GET', `${base}/identity`);
+    assert.equal(info.status, 200);
+    const body = info.body as { creator: { display_name: string }; self: { who_created_you: string }; public_key: string };
+    assert.equal(body.creator.display_name, 'GITANYA K');
+    assert.equal(body.self.who_created_you, 'GITANYA K');
+    assert.ok(body.public_key); // public key exposed, but never the private key
+    assert.doesNotMatch(JSON.stringify(body), /private/i);
+
+    const verify = await jsonRequest('GET', `${base}/identity/verify`);
+    assert.equal(verify.status, 200);
+    assert.equal((verify.body as { valid: boolean }).valid, true);
   });
 
   it('records and retrieves workflow history', async () => {

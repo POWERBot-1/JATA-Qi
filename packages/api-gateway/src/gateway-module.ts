@@ -25,6 +25,7 @@ import type { RoboticsModule } from '@jataqi/robotics';
 import type { DigitalTwinModule } from '@jataqi/digital-twin';
 import type { ToolIntelligenceModule, ToolStatus } from '@jataqi/tool-intelligence';
 import type { ReadinessModule } from '@jataqi/readiness';
+import type { ProvenanceModule } from '@jataqi/provenance';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -57,6 +58,7 @@ export class ApiGatewayModule implements IModule {
   private digitalTwin?: DigitalTwinModule;
   private tools?: ToolIntelligenceModule;
   private readiness?: ReadinessModule;
+  private provenance?: ProvenanceModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -90,6 +92,7 @@ export class ApiGatewayModule implements IModule {
     this.digitalTwin = this.tryModule<DigitalTwinModule>('digital-twin');
     this.tools = this.tryModule<ToolIntelligenceModule>('tool-intelligence');
     this.readiness = this.tryModule<ReadinessModule>('readiness');
+    this.provenance = this.tryModule<ProvenanceModule>('provenance');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -188,6 +191,12 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/tool/request-approval', auth('tool:invoke', (req) => this.toolRequestApproval(req)));
     route('POST', '/tool/approve', auth('approval:decide', (req) => this.toolApprove(req)));
     route('GET', '/approvals', auth('approval:decide', () => this.approvalsList()));
+    // JQ-CIP creator identity & provenance (public read-only; never exposes private keys).
+    route('GET', '/identity', () => this.identityInfo());
+    route('GET', '/identity/creator', () => this.identityCreator());
+    route('GET', '/identity/root', () => this.identityRoot());
+    route('GET', '/identity/provenance', () => this.identityProvenance());
+    route('GET', '/identity/verify', () => this.identityVerify());
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -341,7 +350,7 @@ export class ApiGatewayModule implements IModule {
       'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
       'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
-      'tool-intelligence', 'readiness', 'api-gateway',
+      'tool-intelligence', 'readiness', 'provenance', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -781,6 +790,40 @@ export class ApiGatewayModule implements IModule {
   private approvalsList(): GatewayResponse {
     if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
     return json(200, { approvals: this.tools.listPendingApprovals() });
+  }
+
+  // --- JQ-CIP creator identity & provenance (public, read-only) -----------
+
+  private identityInfo(): GatewayResponse {
+    if (!this.provenance) return json(501, { error: 'provenance module not registered' });
+    return json(200, {
+      ...this.provenance.identity(),
+      self: {
+        who_created_you: this.provenance.whoCreatedYou(),
+        what_are_you: this.provenance.whatAreYou(),
+        how_do_you_know: this.provenance.howDoYouKnow(),
+      },
+    });
+  }
+
+  private identityCreator(): GatewayResponse {
+    if (!this.provenance) return json(501, { error: 'provenance module not registered' });
+    return json(200, { creator: this.provenance.creator() });
+  }
+
+  private identityRoot(): GatewayResponse {
+    if (!this.provenance) return json(501, { error: 'provenance module not registered' });
+    return json(200, { root: this.provenance.root() });
+  }
+
+  private async identityProvenance(): Promise<GatewayResponse> {
+    if (!this.provenance) return json(501, { error: 'provenance module not registered' });
+    return json(200, { events: await this.provenance.events() });
+  }
+
+  private async identityVerify(): Promise<GatewayResponse> {
+    if (!this.provenance) return json(501, { error: 'provenance module not registered' });
+    return json(200, await this.provenance.verify());
   }
 
   // --- helpers -------------------------------------------------------------
