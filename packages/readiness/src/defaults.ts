@@ -44,8 +44,8 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'web-ui', name: 'Web/mobile dashboards & consoles', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'HTTP API only; no UI' }),
 
   // --- Commercial (P3) ---
-  cap({ id: 'billing', name: 'Billing & subscriptions', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'marketplace', name: 'Marketplace (agents/tools/data)', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'commerce', name: 'Commercial & product packaging engine (plans, subscriptions, entitlements, usage, credits, invoices, marketplace commissions)', category: 'commercial', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/commerce', evidence: ['configurable catalogue/plans/editions', 'subscription + trial lifecycle', 'quota enforcement', 'credits', 'invoices/tax/discount', 'marketplace commission split', 'analytics — 12 tests'], notes: 'engine is real & tested; payments are ABSTRACTED (no real provider wired, no real money movement); no customer billing portal UI; no dunning/tax-jurisdiction DB' }),
+  cap({ id: 'marketplace', name: 'Marketplace storefront & seller economy', category: 'commercial', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/commerce', notes: 'purchase + commission + payout ledger implemented; no storefront UI, discovery, ratings, or real payouts' }),
   cap({ id: 'organizations', name: 'Organizations & teams', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
 
   // --- Enterprise (P4) ---

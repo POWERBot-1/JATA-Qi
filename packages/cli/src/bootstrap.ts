@@ -28,6 +28,7 @@ import { DigitalTwinModule } from '@jataqi/digital-twin';
 import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { ReadinessModule } from '@jataqi/readiness';
 import { ProvenanceModule } from '@jataqi/provenance';
+import { CommerceModule } from '@jataqi/commerce';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -101,6 +102,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new ToolIntelligenceModule());
   kernel.register(new ReadinessModule());
   kernel.register(new ProvenanceModule());
+  kernel.register(new CommerceModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

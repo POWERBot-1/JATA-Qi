@@ -37,9 +37,9 @@ describe('ReadinessModule (kernel integration)', () => {
   });
 
   it('updates a capability status with evidence', () => {
-    const updated = readiness.update('billing', 'IMPLEMENTED', ['ledgers module', 'tests'], 'basic ledgers');
+    const updated = readiness.update('commerce', 'IMPLEMENTED', ['commerce module', 'tests'], 'engine complete');
     assert.equal(updated.status, 'IMPLEMENTED');
-    assert.equal(readiness.get('billing')!.status, 'IMPLEMENTED');
+    assert.equal(readiness.get('commerce')!.status, 'IMPLEMENTED');
   });
 
   it('filters by category', () => {

@@ -21,6 +21,7 @@ import { DigitalTwinModule } from '@jataqi/digital-twin';
 import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { ReadinessModule } from '@jataqi/readiness';
 import { ProvenanceModule, provisionRoot } from '@jataqi/provenance';
+import { CommerceModule } from '@jataqi/commerce';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -78,6 +79,7 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     kernel.register(new ReadinessModule());
     const prov = provisionRoot();
     kernel.register(new ProvenanceModule({ manifest: prov.manifest, privateKey: prov.privateKeyDerB64 }));
+    kernel.register(new CommerceModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -375,6 +377,22 @@ describe('ApiGatewayModule (HTTP vertical slice)', () => {
     const verify = await jsonRequest('GET', `${base}/identity/verify`);
     assert.equal(verify.status, 200);
     assert.equal((verify.body as { valid: boolean }).valid, true);
+  });
+
+  it('runs the commercial flow: plans, subscribe, entitlement check', async () => {
+    const login = await jsonRequest('POST', `${base}/auth/login`, { username: 'alice', password: 'pw' });
+    const token = (login.body as { token: string }).token;
+    const plans = await jsonRequest('GET', `${base}/commerce/plans`, undefined, token);
+    assert.equal(plans.status, 200);
+    assert.ok((plans.body as { plans: unknown[] }).plans.length >= 10);
+    const sub = await jsonRequest('POST', `${base}/commerce/subscribe`, { planSlug: 'free' }, token);
+    assert.equal(sub.status, 201);
+    const check = await jsonRequest('GET', `${base}/commerce/check?feature=ai.requests`, undefined, token);
+    assert.equal(check.status, 200);
+    assert.equal((check.body as { decision: { allowed: boolean } }).decision.allowed, true);
+    const analytics = await jsonRequest('GET', `${base}/commerce/analytics`, undefined, token);
+    assert.equal(analytics.status, 200);
+    assert.ok((analytics.body as { totalSubscriptions: number }).totalSubscriptions >= 1);
   });
 
   it('records and retrieves workflow history', async () => {

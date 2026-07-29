@@ -26,6 +26,7 @@ import type { DigitalTwinModule } from '@jataqi/digital-twin';
 import type { ToolIntelligenceModule, ToolStatus } from '@jataqi/tool-intelligence';
 import type { ReadinessModule } from '@jataqi/readiness';
 import type { ProvenanceModule } from '@jataqi/provenance';
+import type { CommerceModule } from '@jataqi/commerce';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -59,6 +60,7 @@ export class ApiGatewayModule implements IModule {
   private tools?: ToolIntelligenceModule;
   private readiness?: ReadinessModule;
   private provenance?: ProvenanceModule;
+  private commerce?: CommerceModule;
   private server: Server | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -93,6 +95,7 @@ export class ApiGatewayModule implements IModule {
     this.tools = this.tryModule<ToolIntelligenceModule>('tool-intelligence');
     this.readiness = this.tryModule<ReadinessModule>('readiness');
     this.provenance = this.tryModule<ProvenanceModule>('provenance');
+    this.commerce = this.tryModule<CommerceModule>('commerce');
     this.registerRoutes();
     this.server = createServer((req, res) => this.handle(req, res));
     this.booted = true;
@@ -197,6 +200,16 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/identity/root', () => this.identityRoot());
     route('GET', '/identity/provenance', () => this.identityProvenance());
     route('GET', '/identity/verify', () => this.identityVerify());
+    // Commerce (product packaging, plans, subscriptions, entitlements).
+    route('GET', '/commerce/plans', auth('commerce:read', () => this.plansList()));
+    route('POST', '/commerce/subscribe', auth('commerce:read', (req) => this.subscribe(req)));
+    route('POST', '/commerce/subscription', auth('commerce:read', (req) => this.subscriptionAction(req)));
+    route('GET', '/commerce/check', auth('commerce:read', (req) => this.entitlementCheck(req)));
+    route('POST', '/commerce/meter', auth('commerce:read', (req) => this.meterUsage(req)));
+    route('GET', '/commerce/credits', auth('commerce:read', (req) => this.creditsBalance(req)));
+    route('POST', '/commerce/credits', auth('commerce:read', (req) => this.grantCredits(req)));
+    route('GET', '/commerce/analytics', auth('commerce:read', () => this.commerceAnalytics()));
+    route('POST', '/commerce/marketplace', auth('commerce:read', (req) => this.marketplacePurchase(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -350,7 +363,7 @@ export class ApiGatewayModule implements IModule {
       'storage', 'vector-search', 'knowledge', 'knowledge-graph', 'agent-runtime',
       'qil', 'security', 'orchestrator', 'metrics', 'simulation', 'teams', 'plugins',
       'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
-      'tool-intelligence', 'readiness', 'provenance', 'api-gateway',
+      'tool-intelligence', 'readiness', 'provenance', 'commerce', 'api-gateway',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -824,6 +837,87 @@ export class ApiGatewayModule implements IModule {
   private async identityVerify(): Promise<GatewayResponse> {
     if (!this.provenance) return json(501, { error: 'provenance module not registered' });
     return json(200, await this.provenance.verify());
+  }
+
+  // --- commerce (product packaging, plans, subscriptions, entitlements) ----
+
+  private async plansList(): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    return json(200, { plans: await this.commerce.listPlans() });
+  }
+
+  private async subscribe(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.planSlug !== 'string') return json(400, { error: 'field "planSlug" is required' });
+    const sub = await this.commerce.subscribe(req.principal!.userId, b.planSlug, {
+      ...(typeof b.currency === 'string' ? { currency: b.currency } : {}),
+      ...(typeof b.seats === 'number' ? { seats: b.seats } : {}),
+      ...(b.trial === true ? { trial: true } : {}),
+    });
+    return json(201, { subscription: sub });
+  }
+
+  private async subscriptionAction(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : '';
+    const action = typeof b.action === 'string' ? b.action : '';
+    if (!id || !action) return json(400, { error: 'fields "id" and "action" are required' });
+    try {
+      if (action === 'upgrade') return json(200, { subscription: await this.commerce.upgrade(id, String(b.planSlug)) });
+      if (action === 'downgrade') return json(200, { subscription: await this.commerce.downgrade(id, String(b.planSlug), { scheduleAtPeriodEnd: b.scheduleAtPeriodEnd === true }) });
+      if (action === 'cancel') return json(200, { subscription: await this.commerce.cancel(id, { immediate: b.immediate === true }) });
+      if (action === 'pause') return json(200, { subscription: await this.commerce.pause(id) });
+      if (action === 'resume') return json(200, { subscription: await this.commerce.resume(id) });
+      return json(400, { error: 'unknown action (upgrade|downgrade|cancel|pause|resume)' });
+    } catch (err) {
+      return json(404, { error: (err as Error).message });
+    }
+  }
+
+  private async entitlementCheck(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const customerId = req.query.customerId ?? req.principal!.userId;
+    const feature = req.query.feature;
+    if (!feature) return json(400, { error: 'query parameter "feature" is required' });
+    return json(200, { decision: await this.commerce.check(customerId, feature) });
+  }
+
+  private async meterUsage(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    const customerId = typeof b.customerId === 'string' ? b.customerId : req.principal!.userId;
+    if (typeof b.metric !== 'string') return json(400, { error: 'field "metric" is required' });
+    const res = await this.commerce.meterUsage(customerId, b.metric, typeof b.qty === 'number' ? b.qty : 1);
+    return json(200, res);
+  }
+
+  private async creditsBalance(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const customerId = req.query.customerId ?? req.principal!.userId;
+    return json(200, { balance: await this.commerce.creditBalance(customerId) });
+  }
+
+  private async grantCredits(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.customerId !== 'string' || typeof b.amount !== 'number') return json(400, { error: 'fields "customerId" and "amount" are required' });
+    const batch = await this.commerce.grantCredits(b.customerId, b.amount, typeof b.source === 'string' ? b.source : 'grant');
+    return json(201, { batch });
+  }
+
+  private async commerceAnalytics(): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    return json(200, await this.commerce.analytics());
+  }
+
+  private async marketplacePurchase(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    if (!b.item || typeof b.item !== 'object') return json(400, { error: 'field "item" (marketplace item) is required' });
+    const result = await this.commerce.purchase(req.principal!.userId, b.item as Parameters<CommerceModule['purchase']>[1], { ...(typeof b.currency === 'string' ? { currency: b.currency } : {}) });
+    return json(201, result);
   }
 
   // --- helpers -------------------------------------------------------------
