@@ -32,9 +32,10 @@ describe('ReadinessModule (kernel integration)', () => {
 
   it('classifies frontier work as research-only, and tracks partial implementations', () => {
     assert.equal(readiness.get('quantum')!.status, 'RESEARCH_ONLY');
-    assert.equal(readiness.get('enterprise')!.status, 'NOT_IMPLEMENTED');
+    assert.equal(readiness.get('mfa-sso')!.status, 'NOT_IMPLEMENTED');
     assert.equal(readiness.get('kernel')!.status, 'TESTED');
     assert.equal(readiness.get('finance')!.status, 'PARTIALLY_IMPLEMENTED');
+    assert.equal(readiness.get('enterprise')!.status, 'PARTIALLY_IMPLEMENTED');
   });
 
   it('updates a capability status with evidence', () => {

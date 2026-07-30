@@ -56,7 +56,12 @@
     "@jataqi/self-evolution": "0.1.0",
     "@jataqi/supply-chain": "0.1.0",
     "@jataqi/environment": "0.1.0",
-    "@jataqi/cyberdefense": "0.1.0"
+    "@jataqi/cyberdefense": "0.1.0",
+    "@jataqi/iot": "0.1.0",
+    "@jataqi/smart-cities": "0.1.0",
+    "@jataqi/cloud-devops": "0.1.0",
+    "@jataqi/localization": "0.1.0",
+    "@jataqi/enterprise": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

@@ -49,7 +49,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'organizations', name: 'Organizations & teams', category: 'commercial', status: 'NOT_IMPLEMENTED' }),
 
   // --- Enterprise (P4) ---
-  cap({ id: 'enterprise', name: 'Enterprise OS (CRM/ERP/HR/Finance)', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'enterprise', name: 'Enterprise OS (CRM/ERP/HR/Finance/Procurement)', category: 'enterprise', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/enterprise', evidence: ['org units, records with typed data, workflows — 4 tests'], notes: 'no real CRM/ERP integrations; no multi-tenant data isolation enforcement' }),
   cap({ id: 'finance', name: 'Financial intelligence (wallets, ledgers, transactions, reconciliation)', category: 'enterprise', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/finance', evidence: ['immutable append-only ledger, wallets, credit/debit/transfer/reverse, reconciliation, governance-gated — 12 tests'], notes: 'real ledger engine; no real payment provider integration; no FX/multi-currency conversion; no regulated financial services' }),
   cap({ id: 'supply-chain', name: 'Supply chain intelligence (suppliers, inventory, POs, deliveries)', category: 'enterprise', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/supply-chain', evidence: ['suppliers+ratings, inventory with low-stock alerts, purchase orders with approval, deliveries with auto-stock-in — 3 tests'], notes: 'no demand forecasting, no logistics optimization, no multi-warehouse' }),
 
@@ -65,9 +65,9 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   // --- Physical / infrastructure (P6) ---
   cap({ id: 'robotics', name: 'Robotics & device registry', category: 'physical', status: 'TESTED', module: '@jataqi/robotics', notes: 'device/mission/telemetry abstraction; no real hardware connected' }),
   cap({ id: 'digital-twin', name: 'Digital twin framework', category: 'physical', status: 'TESTED', module: '@jataqi/digital-twin', evidence: ['7 tests', 'step/project'] }),
-  cap({ id: 'iot', name: 'IoT / sensor ingestion', category: 'physical', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'cloud-devops', name: 'Autonomous cloud & DevOps', category: 'physical', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'smart-cities', name: 'Smart cities', category: 'physical', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'iot', name: 'IoT (device registry, telemetry, commands)', category: 'physical', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/iot', evidence: ['devices, telemetry, commands with ack, offline detection — 5 tests'], notes: 'no real sensor/actuator hardware; abstract device protocol' }),
+  cap({ id: 'cloud-devops', name: 'Cloud & DevOps (deployments, resources, logs, rollback)', category: 'physical', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/cloud-devops', evidence: ['deployment lifecycle (plan→deploy→rollback), infra resources, deployment logs — 5 tests'], notes: 'no real K8s/Docker integration; simulated deployment completion' }),
+  cap({ id: 'smart-cities', name: 'Smart cities (services, metrics, threshold alerts)', category: 'physical', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/smart-cities', evidence: ['city services, metrics with threshold alerts, sustainability tracking — 3 tests'], notes: 'no real city infrastructure integration' }),
   cap({ id: 'environment', name: 'Environmental intelligence (monitoring, alerts, sustainability)', category: 'physical', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/environment', evidence: ['monitoring stations, readings with threshold alerts (severity-scaled), sustainability metrics — 4 tests'], notes: 'no real sensor integration, no satellite data, no climate modeling' }),
 
   // --- Governance & safety ---
@@ -83,7 +83,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
 
   // --- Global / sovereign (P7) ---
   cap({ id: 'sovereign', name: 'Sovereign / government deployment', category: 'global', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'localization', name: 'Global localization & currencies', category: 'global', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'localization', name: 'Localization (locales, currencies, translations)', category: 'global', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/localization', evidence: ['locales, currencies, translation CRUD with variable interpolation, money formatting — 5 tests'], notes: 'no ICU/CLDR integration; no RTL rendering' }),
   cap({ id: 'disaster-recovery', name: 'Disaster recovery & backups', category: 'global', status: 'NOT_IMPLEMENTED' }),
 
   // --- Frontier (P8) — research/simulation only ---

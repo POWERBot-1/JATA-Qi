@@ -46,6 +46,11 @@ import { SelfEvolutionModule } from '@jataqi/self-evolution';
 import { SupplyChainModule } from '@jataqi/supply-chain';
 import { EnvironmentModule } from '@jataqi/environment';
 import { CyberdefenseModule } from '@jataqi/cyberdefense';
+import { IoTModule } from '@jataqi/iot';
+import { SmartCitiesModule } from '@jataqi/smart-cities';
+import { CloudDevopsModule } from '@jataqi/cloud-devops';
+import { LocalizationModule } from '@jataqi/localization';
+import { EnterpriseModule } from '@jataqi/enterprise';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -137,6 +142,11 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new SupplyChainModule());
   kernel.register(new EnvironmentModule());
   kernel.register(new CyberdefenseModule());
+  kernel.register(new IoTModule());
+  kernel.register(new SmartCitiesModule());
+  kernel.register(new CloudDevopsModule());
+  kernel.register(new LocalizationModule());
+  kernel.register(new EnterpriseModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 
