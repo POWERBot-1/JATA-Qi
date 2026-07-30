@@ -78,6 +78,8 @@ export interface InvocationResult {
   cost?: number;
   durationMs: number;
   auditRecordId?: string;
+  /** Governance decision recorded by the mandatory pre-execution gate. */
+  governance?: { decision: string; evaluationId?: string };
 }
 
 export type ApprovalDecision = 'approved' | 'denied';

@@ -1,4 +1,4 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createTestKernel } from '@jataqi/core-kernel/testing';
@@ -8,6 +8,7 @@ import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
 import { SecurityModule } from '@jataqi/security';
+import { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import { QiLModule, compileSource } from '@jataqi/qil';
 import { OrchestratorModule } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -124,5 +125,57 @@ REASON "should not run"`);
     assert.equal(list.length, 2);
     // newest first
     assert.equal(list[0]!.id, r2.id);
+  });
+});
+
+describe('Orchestrator — mandatory governance enforcement', () => {
+  let kernel: Kernel;
+  let orch: OrchestratorModule;
+  let gov: PolicyGovernanceModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new QiLModule());
+    kernel.register(new PolicyGovernanceModule());
+    kernel.register(new OrchestratorModule());
+    await kernel.boot();
+    orch = kernel.getModule<OrchestratorModule>('orchestrator');
+    gov = kernel.getModule<PolicyGovernanceModule>('policy-governance');
+    await kernel.getModule<KnowledgeService>('knowledge').ingestText('JATA Qi is a modular AI operating system.');
+  });
+  afterEach(async () => { await kernel.shutdown(); });
+
+  it('passes every step through the governance gate (default allow → completed)', async () => {
+    const result = await orch.runObjective('summarize');
+    assert.equal(result.status, 'completed');
+    // Every executed step recorded a governance decision.
+    assert.ok(result.steps.every((s) => s.governance && s.governance.decision === 'ALLOW'));
+  });
+
+  it('blocks a step whose action governance denies (agent.run)', async () => {
+    await gov.createPolicy({ name: 'deny agent run', category: 'AI', scope: 'GLOBAL', effect: 'DENY', action: 'agent.run' }, 'admin');
+    const result = await orch.runObjective('summarize');
+    const reason = result.steps.find((s) => s.kind === 'reason')!;
+    assert.equal(reason.status, 'error');
+    assert.match(reason.error!, /governance DENY/);
+    assert.equal(reason.governance!.decision, 'DENY');
+    // Benign steps still executed through the gate.
+    const retrieve = result.steps.find((s) => s.kind === 'retrieve')!;
+    assert.equal(retrieve.status, 'success');
+    assert.equal(retrieve.governance!.decision, 'ALLOW');
+  });
+
+  it('blocks deploy steps (sensitive default-deny even without an explicit policy)', async () => {
+    const r = compileSource('DEPLOY "release"');
+    assert.ok(r.ok && r.plan);
+    const result = await orch.execute(r.plan!, {});
+    const deploy = result.steps.find((s) => s.kind === 'deploy')!;
+    assert.equal(deploy.status, 'error');
+    assert.match(deploy.error!, /governance DENY/);
   });
 });

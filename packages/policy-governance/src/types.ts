@@ -120,6 +120,8 @@ export interface EvaluationResult {
   policyVersion?: number;
   simulated: boolean;
   ts: number;
+  /** Evaluation duration in ms (observability). */
+  durationMs?: number;
 }
 
 export interface PolicyOverride {

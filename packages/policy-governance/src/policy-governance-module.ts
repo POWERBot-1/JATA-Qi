@@ -167,15 +167,25 @@ export class PolicyGovernanceModule implements IModule {
   // --- evaluation ----------------------------------------------------------
 
   async evaluate(subject: PolicySubject, action: string, context: PolicyContext = {}): Promise<EvaluationResult> {
+    const t0 = Date.now();
     const policies = await this.policies.all();
     const overrides = await this.overrides.all();
     const result = evaluatePolicies(policies, overrides, subject, action, { ...context, mode: context.mode ?? 'ENFORCE' });
+    result.durationMs = Date.now() - t0;
+
+    // Observability: count every enforced decision by outcome.
+    if (!result.simulated) {
+      try {
+        const metrics = this.api.getModule('metrics') as unknown as { registry: { counter: (n: string) => { inc: (n?: number, l?: Record<string, string>) => void } } } | undefined;
+        metrics?.registry.counter('jataqi_governance_decisions_total').inc(1, { decision: result.decision });
+      } catch { /* metrics optional */ }
+    }
 
     if (result.simulated) return result; // dry-run: no side effects
 
     // Persist evaluation record + audit + targeted notifications.
     await this.evaluations.put({ ...result, id: result.evaluationId, actor: subject.userId, action });
-    await this.audit(subject.userId, 'policy.evaluated', { action, decision: result.decision, evaluationId: result.evaluationId });
+    await this.audit(subject.userId, 'policy.evaluated', { action, decision: result.decision, evaluationId: result.evaluationId, durationMs: result.durationMs });
 
     if (result.decision === 'DENY') {
       await this.api.bus.emit(GovernanceEvents.PolicyDenied, { actor: subject.userId, action });

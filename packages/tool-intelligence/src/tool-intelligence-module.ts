@@ -210,7 +210,10 @@ export class ToolIntelligenceModule implements IModule {
       if (needsApproval(tool)) continue; // never auto-invoke high-risk tools
       if (!this.adapters.has(tool.id)) continue;
       try {
-        return await this.invoke(tool.id, input, principal);
+        const res = await this.invoke(tool.id, input, principal);
+        if (res.status === 'success') return res;
+        // Governance denials / pending approvals / failures → try next tool.
+        failures.push({ toolId: tool.id, error: res.error ?? res.status });
       } catch (err) {
         failures.push({ toolId: tool.id, error: (err as Error).message });
       }
@@ -242,7 +245,23 @@ export class ToolIntelligenceModule implements IModule {
       if (err) throw new Error(`tool-intelligence: invalid input — ${err}`);
     }
 
-    // High-risk gating (tool directive #10/#17/#19).
+    // MANDATORY governance gate (policy-governance). Enforced when registered;
+    // skipped gracefully when absent. Sits before the risk-class security gate.
+    const gate = await this.governanceGate(tool, principal);
+    if (gate && !gate.allowed) {
+      const status: InvocationResult['status'] = gate.decision === 'REQUIRES_APPROVAL' || gate.decision === 'REQUIRES_HUMAN_REVIEW' ? 'pending_approval' : 'denied';
+      const result: InvocationResult = {
+        requestId: randomUUID(),
+        toolId,
+        status,
+        error: `governance ${gate.decision}: ${gate.reason}`,
+        durationMs: Date.now() - t0,
+        ...(gate.evaluationId ? { governance: { decision: gate.decision, evaluationId: gate.evaluationId } } : {}),
+      };
+      return result;
+    }
+
+    // High-risk gating (tool directive #10/#17/#19) — preserved security layer.
     if (needsApproval(tool)) {
       const req = approvalRequestId ? this.approvals.get(approvalRequestId) : undefined;
       if (!req || req.toolId !== toolId || req.status !== 'approved') {
@@ -299,9 +318,32 @@ export class ToolIntelligenceModule implements IModule {
       cost,
       durationMs: Date.now() - t0,
       ...(auditRecordId ? { auditRecordId } : {}),
+      ...(gate ? { governance: { decision: gate.decision, ...(gate.evaluationId ? { evaluationId: gate.evaluationId } : {}) } } : {}),
     };
     await this.api.bus.emit(ToolEvents.ToolInvoked, { toolId, status: 'success' });
     return result;
+  }
+
+  /**
+   * Mandatory governance gate. Evaluates 'tool.invoke' (with the tool's risk
+   * level) via policy-governance when registered. Returns undefined when
+   * governance is absent (gate skipped), or a decision object.
+   */
+  private async governanceGate(tool: ToolEntity, principal?: InvocationContext['principal']): Promise<{ allowed: boolean; decision: string; reason: string; evaluationId?: string } | undefined> {
+    let gov: { evaluate: (s: { userId: string; roles?: string[] }, a: string, c: Record<string, unknown>) => Promise<{ decision: string; reason: string; evaluationId: string }> };
+    try {
+      gov = this.api.getModule('policy-governance') as unknown as typeof gov;
+    } catch {
+      return undefined;
+    }
+    const risk = Number.parseInt((tool.riskClass ?? 'R0').replace('R', ''), 10) || 0;
+    const subject = { userId: principal?.userId ?? 'anonymous', roles: principal?.roles };
+    try {
+      const res = await gov.evaluate(subject, 'tool.invoke', { toolId: tool.id, risk });
+      return { allowed: res.decision === 'ALLOW', decision: res.decision, reason: res.reason, evaluationId: res.evaluationId };
+    } catch (err) {
+      return { allowed: true, decision: 'ALLOW', reason: `governance eval error: ${(err as Error).message}` };
+    }
   }
 
   private trySecurity(): { audit: (rec: Record<string, unknown>) => Promise<{ id: string }> } | undefined {

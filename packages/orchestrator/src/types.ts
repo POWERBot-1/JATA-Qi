@@ -16,6 +16,8 @@ export interface StepResult {
   output?: unknown;
   error?: string;
   durationMs: number;
+  /** Governance decision recorded by the mandatory pre-execution gate. */
+  governance?: { decision: string; evaluationId?: string; reason?: string };
 }
 
 export interface ExecutionResult {

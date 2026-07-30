@@ -1,9 +1,11 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { ToolIntelligenceModule } from '../src/index.js';
+import { PolicyGovernanceModule } from '@jataqi/policy-governance';
+import { MetricsModule } from '@jataqi/metrics';
 import type { ToolAdapter, ToolEntity } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
 
@@ -110,5 +112,67 @@ describe('ToolIntelligenceModule (kernel integration)', () => {
     await ti.recordEvaluation(b.id, 'quality', 95);
     const ranked = await ti.rankForCapability('c');
     assert.equal((ranked[0] as ToolEntity).id, b.id);
+  });
+});
+
+describe('Tool-intelligence — mandatory governance enforcement', () => {
+  let kernel: Kernel;
+  let ti: ToolIntelligenceModule;
+  let gov: PolicyGovernanceModule;
+  let metrics: MetricsModule;
+  let toolId: string;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new MetricsModule());
+    kernel.register(new PolicyGovernanceModule());
+    kernel.register(new ToolIntelligenceModule());
+    await kernel.boot();
+    ti = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+    gov = kernel.getModule<PolicyGovernanceModule>('policy-governance');
+    metrics = kernel.getModule<MetricsModule>('metrics');
+    const tool = await ti.register({ canonicalName: 'echo', provider: 'jataqi', version: '1.0.0', category: 'util', capabilities: ['echo'], protocol: 'function', riskClass: 'R0', status: 'ACTIVE' });
+    toolId = tool.id;
+    ti.registerAdapter(echoAdapter(toolId, ['echo']));
+  });
+  afterEach(async () => { await kernel.shutdown(); });
+
+  it('allows invocation through the gate when governance permits', async () => {
+    const res = await ti.invoke(toolId, { msg: 'hi' }, { userId: 'u', username: 'ada', roles: ['developer'] });
+    assert.equal(res.status, 'success');
+    assert.ok(res.governance && res.governance.decision === 'ALLOW');
+  });
+
+  it('denies invocation when governance denies tool.invoke', async () => {
+    await gov.createPolicy({ name: 'deny all tools', category: 'TOOL', scope: 'GLOBAL', effect: 'DENY', action: 'tool.invoke' }, 'admin');
+    const res = await ti.invoke(toolId, { msg: 'hi' }, { userId: 'u', username: 'ada', roles: ['developer'] });
+    assert.equal(res.status, 'denied');
+    assert.match(res.error!, /governance DENY/);
+    assert.equal(res.governance!.decision, 'DENY');
+  });
+
+  it('surfaces a governance approval requirement as pending_approval', async () => {
+    await gov.createPolicy({ name: 'approve tools', category: 'TOOL', scope: 'GLOBAL', effect: 'REQUIRE_APPROVAL', action: 'tool.invoke' }, 'admin');
+    const res = await ti.invoke(toolId, { msg: 'hi' }, { userId: 'u', username: 'ada', roles: ['developer'] });
+    assert.equal(res.status, 'pending_approval');
+    assert.match(res.error!, /REQUIRES_APPROVAL/);
+  });
+
+  it('counts every governance decision in observability metrics', async () => {
+    await ti.invoke(toolId, { msg: 'a' }); // ALLOW
+    await gov.createPolicy({ name: 'deny', category: 'TOOL', scope: 'GLOBAL', effect: 'DENY', action: 'tool.invoke' }, 'admin');
+    await ti.invoke(toolId, { msg: 'b' }); // DENY
+    const allowed = metrics.registry.counter('jataqi_governance_decisions_total').get({ decision: 'ALLOW' });
+    const denied = metrics.registry.counter('jataqi_governance_decisions_total').get({ decision: 'DENY' });
+    assert.ok(allowed >= 1, `allowed=${allowed}`);
+    assert.ok(denied >= 1, `denied=${denied}`);
+  });
+
+  it('fallback skips a governance-denied tool and still records the decision', async () => {
+    await gov.createPolicy({ name: 'deny', category: 'TOOL', scope: 'GLOBAL', effect: 'DENY', action: 'tool.invoke' }, 'admin');
+    const res = await ti.invokeWithFallback('echo', { msg: 'x' });
+    // The only tool is denied → fallback reports failure.
+    assert.equal(res.status, 'failure');
   });
 });

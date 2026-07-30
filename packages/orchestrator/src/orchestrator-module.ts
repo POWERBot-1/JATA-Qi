@@ -19,6 +19,17 @@ import type { INamespace } from '@jataqi/storage';
 import { OrchestratorEvents } from './types.js';
 import type { ExecutionResult, ExecuteOptions, StepResult } from './types.js';
 
+/** Map each workflow step kind to the governance action evaluated before it runs. */
+const GOV_ACTION_FOR_STEP: Record<string, string> = {
+  retrieve: 'knowledge.retrieve',
+  reason: 'agent.run', analyze: 'agent.run', plan: 'agent.run',
+  synthesize: 'agent.run', verify: 'agent.run', optimize: 'agent.run',
+  report: 'workflow.report', audit: 'workflow.audit',
+  execute: 'workflow.execute', deploy: 'deploy.application',
+  observe: 'workflow.observe', learn: 'workflow.learn', simulate: 'workflow.simulate',
+  stop: 'workflow.stop',
+};
+
 export class OrchestratorModule implements IModule {
   readonly id = 'orchestrator';
   readonly tags = ['core', 'orchestration'] as const;
@@ -73,6 +84,20 @@ export class OrchestratorModule implements IModule {
       const t0 = Date.now();
       const result: StepResult = { stepId: step.id, kind: step.kind, keyword: step.keyword, status: 'success', durationMs: 0 };
       try {
+        // MANDATORY pre-execution governance gate (enforced when policy-governance
+        // is registered; skipped gracefully when absent).
+        const gate = await this.governanceGate(opts, step);
+        if (gate && !gate.allowed) {
+          result.status = 'error';
+          result.error = `governance ${gate.decision}: ${gate.reason}`;
+          result.governance = { decision: gate.decision, ...(gate.evaluationId ? { evaluationId: gate.evaluationId } : {}), reason: gate.reason };
+          result.durationMs = Date.now() - t0;
+          results.push(result);
+          await this.api.bus.emit(OrchestratorEvents.StepCompleted, { planId: plan.id, stepId: step.id, status: 'error' });
+          continue;
+        } else if (gate) {
+          result.governance = { decision: gate.decision, ...(gate.evaluationId ? { evaluationId: gate.evaluationId } : {}) };
+        }
         switch (step.kind) {
           case 'retrieve': {
             const query = step.argument ?? step.label ?? '';
@@ -258,6 +283,29 @@ export class OrchestratorModule implements IModule {
       detail: { argument: step.argument },
     });
     return true;
+  }
+
+  /**
+   * Mandatory governance gate. Maps each step to a governance action and
+   * evaluates it via policy-governance when that module is registered. Returns
+   * undefined when governance is absent (gate skipped), or a decision object.
+   */
+  private async governanceGate(opts: ExecuteOptions, step: PlanStep): Promise<{ allowed: boolean; decision: string; reason: string; evaluationId?: string } | undefined> {
+    let gov: { evaluate: (s: { userId: string; roles?: string[] }, a: string, c?: Record<string, unknown>) => Promise<{ decision: string; reason: string; evaluationId: string }> };
+    try {
+      gov = this.api.getModule('policy-governance') as unknown as typeof gov;
+    } catch {
+      return undefined; // governance not registered → no gate
+    }
+    const action = GOV_ACTION_FOR_STEP[step.kind] ?? 'workflow.step';
+    const subject = { userId: opts.principal?.userId ?? 'anonymous', roles: opts.principal?.roles };
+    try {
+      const res = await gov.evaluate(subject, action);
+      return { allowed: res.decision === 'ALLOW', decision: res.decision, reason: res.reason, evaluationId: res.evaluationId };
+    } catch (err) {
+      // Fail-open only on unexpected governance errors (audit still records).
+      return { allowed: true, decision: 'ALLOW', reason: `governance eval error: ${(err as Error).message}` };
+    }
   }
 
   /** Resolve the security module if it is registered (optional dependency). */
