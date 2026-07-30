@@ -59,7 +59,12 @@ import { BusinessIntelligenceModule } from '@jataqi/business-intelligence';
 import { WebUIModule } from '@jataqi/web-ui';
 import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
+import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
 import { readConfig } from './config.js';
+
+function readConfigEnv(key: string): string | undefined {
+  return process.env[key];
+}
 
 /** A small default model catalog, seeded into the registry at boot. */
 const DEFAULT_MODELS = [
@@ -163,6 +168,22 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new WebUIModule());
   kernel.register(new MultimodalModule());
   kernel.register(new SovereignModule());
+  kernel.register(new LLMGatewayModule());
+
+  // Register LLM providers based on environment configuration.
+  const llmGateway = kernel.getModule<LLMGatewayModule>('llm-gateway');
+  const llmChoice = (readConfigEnv('AGENT_LLM') ?? 'echo');
+  if (llmChoice === 'openai' && readConfigEnv('OPENAI_API_KEY')) {
+    llmGateway.registerProvider(openaiProvider({
+      apiKey: readConfigEnv('OPENAI_API_KEY'),
+      model: readConfigEnv('OPENAI_CHAT_MODEL') ?? 'gpt-4o-mini',
+    }));
+    kernel.logger.info('LLM gateway: OpenAI provider registered');
+  } else if (llmChoice !== 'echo') {
+    // Register the mock provider as a non-echo default for non-openai configs.
+    llmGateway.registerProvider(mockProvider({ tier: 'primary', priority: 1 }));
+    kernel.logger.info('LLM gateway: mock provider registered (set AGENT_LLM=openai + OPENAI_API_KEY for production)');
+  }
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

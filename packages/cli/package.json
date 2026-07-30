@@ -69,7 +69,8 @@
     "@jataqi/business-intelligence": "0.1.0",
     "@jataqi/web-ui": "0.1.0",
     "@jataqi/multimodal": "0.1.0",
-    "@jataqi/sovereign": "0.1.0"
+    "@jataqi/sovereign": "0.1.0",
+    "@jataqi/llm-gateway": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
