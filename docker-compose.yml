@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  jataqi:
+    build: .
+    ports:
+      - "7400:7400"
+    environment:
+      - LOG_LEVEL=info
+      - STORAGE_DRIVER=memory
+      - VECTOR_MODEL=hash
+      - AGENT_LLM=echo
+      - JATAQI_GATEWAY_PORT=7400
+      - JATAQI_GATEWAY_HOST=0.0.0.0
+      # For production:
+      # - STORAGE_DRIVER=filesystem
+      # - STORAGE_FS_ROOT=/data/storage
+      # - VECTOR_MODEL=openai
+      # - OPENAI_API_KEY=sk-...
+      # - AGENT_LLM=openai
+      # - OPENAI_CHAT_MODEL=gpt-4o-mini
+      # - JATAQI_ADMIN_USERNAME=admin
+      # - JATAQI_ADMIN_PASSWORD=changeme
+    volumes:
+      # - jataqi-data:/data
+      - ./provenance:/app/provenance:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7400/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# volumes:
+#   jataqi-data:
