@@ -5,6 +5,7 @@ import { JataQiClient, JataQiError } from '../src/index.js';
 
 // We test against a real server by importing the bootstrap from the CLI workspace.
 // The CLI package's main is a script; bootstrap is a separate file.
+type CreateJataQi = (cfg?: Record<string, unknown>) => Promise<{ gateway?: { listen(opts?: { port?: number }): Promise<{ port: number; close(): Promise<void> }> }; shutdown(): Promise<void> }>;
 
 describe('JataQiClient (HTTP SDK against real server)', () => {
   let qi: { gateway?: { listen(opts?: { port?: number }): Promise<{ port: number; close(): Promise<void> }> }; shutdown(): Promise<void> };
@@ -13,8 +14,11 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
   let closeHandle: () => Promise<void>;
 
   before(async () => {
-    const { createJataQi } = await import('@jataqi/cli/dist/src/bootstrap.js');
-    qi = await createJataQi({ security: { bootstrapAdmin: { username: 'admin', password: 'admin' } } });
+    // Dynamic import of the CLI bootstrap from the workspace (runtime path).
+    // Uses import.meta.url so it resolves correctly from dist/test/.
+    const bootstrapPath = new URL('../../../cli/dist/src/bootstrap.js', import.meta.url).href;
+    const mod = await import(bootstrapPath) as unknown as { createJataQi: CreateJataQi };
+    qi = await mod.createJataQi({ security: { bootstrapAdmin: { username: 'admin', password: 'admin' } } });
     const handle = await qi.gateway!.listen({ port: 0 });
     port = handle.port;
     closeHandle = handle.close;

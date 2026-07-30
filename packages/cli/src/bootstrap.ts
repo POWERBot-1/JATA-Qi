@@ -57,6 +57,7 @@ import { OptimizationModule } from '@jataqi/optimization';
 import { SyntheticDataModule } from '@jataqi/synthetic-data';
 import { BusinessIntelligenceModule } from '@jataqi/business-intelligence';
 import { WebUIModule } from '@jataqi/web-ui';
+import { MultimodalModule } from '@jataqi/multimodal';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -159,6 +160,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new SyntheticDataModule());
   kernel.register(new BusinessIntelligenceModule());
   kernel.register(new WebUIModule());
+  kernel.register(new MultimodalModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 
