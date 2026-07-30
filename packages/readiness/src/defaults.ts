@@ -89,5 +89,5 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   // --- Frontier (P8) — research/simulation only ---
   cap({ id: 'quantum', name: 'Quantum computing integration', category: 'frontier', status: 'RESEARCH_ONLY', notes: 'scheduler models a quantum target tag; no real quantum hardware' }),
   cap({ id: 'space', name: 'Space / interplanetary intelligence', category: 'frontier', status: 'RESEARCH_ONLY' }),
-  cap({ id: 'self-evolution', name: 'Self-evolution engine', category: 'frontier', status: 'NOT_IMPLEMENTED', notes: 'gated by governance per spec' }),
+  cap({ id: 'self-evolution', name: 'Self-evolution engine (observation, analysis, proposals, experiments, governed autonomous optimization)', category: 'frontier', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/self-evolution', evidence: ['observation engine, analysis, proposal planner, experiment engine (AB/canary/shadow/sim), governance approval gate, rollback, lessons learned, explainability, cycle cap safety — 16 tests'], notes: 'no production code modification (proposals only); no real A/B infrastructure; no live model retraining; cycle-capped + human-governed' }),
 ];

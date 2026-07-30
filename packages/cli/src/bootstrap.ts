@@ -42,6 +42,7 @@ import { CommunicationModule } from '@jataqi/communication';
 import { ResearchModule } from '@jataqi/research';
 import { EducationModule } from '@jataqi/education';
 import { HealthModule } from '@jataqi/health';
+import { SelfEvolutionModule } from '@jataqi/self-evolution';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -129,6 +130,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new ResearchModule());
   kernel.register(new EducationModule());
   kernel.register(new HealthModule());
+  kernel.register(new SelfEvolutionModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 
