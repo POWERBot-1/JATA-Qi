@@ -38,6 +38,8 @@ import { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import { MultimediaModule } from '@jataqi/multimedia';
 import { EvalsModule } from '@jataqi/evals';
 import { FinanceModule } from '@jataqi/finance';
+import { CommunicationModule } from '@jataqi/communication';
+import { ResearchModule } from '@jataqi/research';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -121,6 +123,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new MultimediaModule());
   kernel.register(new EvalsModule());
   kernel.register(new FinanceModule());
+  kernel.register(new CommunicationModule());
+  kernel.register(new ResearchModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 
