@@ -49,6 +49,12 @@ export class StorageModule implements IModule {
         case 'fs':
           this.driver = new FsDriver({ root: this.opts.fsRoot ?? kernel.config.get('storage.fsRoot', undefined) });
           break;
+        case 'sqlite': {
+          const { SqliteDriver } = await import('./drivers/sqlite.js');
+          const dbPath = this.opts.fsRoot ?? kernel.config.get('storage.sqlitePath', undefined) ?? './.jataqi/jataqi.db';
+          this.driver = new SqliteDriver({ path: dbPath });
+          break;
+        }
         default:
           throw new Error(`Storage: unknown driver "${driverName}"`);
       }
