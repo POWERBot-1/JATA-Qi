@@ -84,7 +84,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   // --- Global / sovereign (P7) ---
   cap({ id: 'sovereign', name: 'Sovereign / government deployment', category: 'global', status: 'NOT_IMPLEMENTED' }),
   cap({ id: 'localization', name: 'Localization (locales, currencies, translations)', category: 'global', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/localization', evidence: ['locales, currencies, translation CRUD with variable interpolation, money formatting — 5 tests'], notes: 'no ICU/CLDR integration; no RTL rendering' }),
-  cap({ id: 'disaster-recovery', name: 'Disaster recovery & backups', category: 'global', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'disaster-recovery', name: 'Disaster recovery (snapshots, restore, verification)', category: 'global', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/disaster-recovery', evidence: ['point-in-time snapshots of storage namespaces, restore with hash verification, retention — 4 tests'], notes: 'no automated scheduling, no cross-region replication, no streaming backup' }),
 
   // --- Frontier (P8) — research/simulation only ---
   cap({ id: 'quantum', name: 'Quantum computing integration', category: 'frontier', status: 'RESEARCH_ONLY', notes: 'scheduler models a quantum target tag; no real quantum hardware' }),

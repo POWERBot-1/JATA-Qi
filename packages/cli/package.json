@@ -62,7 +62,11 @@
     "@jataqi/cloud-devops": "0.1.0",
     "@jataqi/localization": "0.1.0",
     "@jataqi/enterprise": "0.1.0",
-    "@jataqi/mfa": "0.1.0"
+    "@jataqi/mfa": "0.1.0",
+    "@jataqi/disaster-recovery": "0.1.0",
+    "@jataqi/optimization": "0.1.0",
+    "@jataqi/synthetic-data": "0.1.0",
+    "@jataqi/business-intelligence": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

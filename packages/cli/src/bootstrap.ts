@@ -52,6 +52,10 @@ import { CloudDevopsModule } from '@jataqi/cloud-devops';
 import { LocalizationModule } from '@jataqi/localization';
 import { EnterpriseModule } from '@jataqi/enterprise';
 import { MFAModule } from '@jataqi/mfa';
+import { DisasterRecoveryModule } from '@jataqi/disaster-recovery';
+import { OptimizationModule } from '@jataqi/optimization';
+import { SyntheticDataModule } from '@jataqi/synthetic-data';
+import { BusinessIntelligenceModule } from '@jataqi/business-intelligence';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -149,6 +153,10 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new LocalizationModule());
   kernel.register(new EnterpriseModule());
   kernel.register(new MFAModule());
+  kernel.register(new DisasterRecoveryModule());
+  kernel.register(new OptimizationModule());
+  kernel.register(new SyntheticDataModule());
+  kernel.register(new BusinessIntelligenceModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 
