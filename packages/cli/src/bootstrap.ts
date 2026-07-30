@@ -35,6 +35,7 @@ import { PoliciesModule } from '@jataqi/policies';
 import { FeatureFlagsModule } from '@jataqi/feature-flags';
 import { PrivacyModule } from '@jataqi/privacy';
 import { PolicyGovernanceModule } from '@jataqi/policy-governance';
+import { MultimediaModule } from '@jataqi/multimedia';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -115,6 +116,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new FeatureFlagsModule());
   kernel.register(new PrivacyModule());
   kernel.register(new PolicyGovernanceModule());
+  kernel.register(new MultimediaModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

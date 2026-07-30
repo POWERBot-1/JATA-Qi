@@ -45,7 +45,8 @@
     "@jataqi/policies": "0.1.0",
     "@jataqi/feature-flags": "0.1.0",
     "@jataqi/privacy": "0.1.0",
-    "@jataqi/policy-governance": "0.1.0"
+    "@jataqi/policy-governance": "0.1.0",
+    "@jataqi/multimedia": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

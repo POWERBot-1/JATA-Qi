@@ -58,7 +58,8 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'health', name: 'Health intelligence', category: 'domain', status: 'NOT_IMPLEMENTED', notes: 'clinical use requires validation & oversight — not built' }),
   cap({ id: 'research', name: 'Research & scientific discovery', category: 'domain', status: 'NOT_IMPLEMENTED' }),
   cap({ id: 'communication', name: 'Communication intelligence (email/messaging/voice)', category: 'domain', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'creative', name: 'Creative intelligence (image/video/audio gen)', category: 'domain', status: 'NOT_IMPLEMENTED', notes: 'no real generative providers connected' }),
+  cap({ id: 'multimedia', name: 'Multimedia Intelligence Suite (music, story, image, video, film)', category: 'domain', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/multimedia', evidence: ['projects, creative jobs, async rendering queue, versioned assets, licensing/watermark/provenance, voice-clone consent, governance gate, marketplace publish — 13 tests'], notes: 'text-based creative output (lyrics/story/screenplay) works end-to-end; audio/video/image synthesis requires external Renderer adapters (none wired by default — abstraction only)' }),
+  cap({ id: 'creative', name: 'Creative intelligence (image/video/audio gen)', category: 'domain', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/multimedia', notes: 'rendering pipeline + asset model implemented; no live generative model providers connected' }),
   cap({ id: 'multimodal', name: 'Multimodal (vision/audio/video) models', category: 'domain', status: 'NOT_IMPLEMENTED', notes: 'model-registry catalogs capabilities; no live multimodal backends' }),
 
   // --- Physical / infrastructure (P6) ---
