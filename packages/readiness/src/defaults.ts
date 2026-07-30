@@ -40,7 +40,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   // --- Developer (P2) ---
   cap({ id: 'cli', name: 'Developer CLI', category: 'developer', status: 'TESTED', module: '@jataqi/cli', evidence: ['serve, ask, models, simulate, plugins'] }),
   cap({ id: 'sdk', name: 'SDKs (Python/TS)', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'TypeScript library API only; no published SDKs' }),
-  cap({ id: 'evals', name: 'AI evaluation platform', category: 'developer', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'evals', name: 'AI evaluation platform (suites, metrics, regression)', category: 'developer', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/evals', evidence: ['eval suites, built-in metrics (exact/contains/token-overlap/regex), run scoring, regression comparison — 7 tests'], notes: 'no bias/safety/hallucination-specific evaluators yet; no scheduled evals; no dashboard' }),
   cap({ id: 'web-ui', name: 'Web/mobile dashboards & consoles', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'HTTP API only; no UI' }),
 
   // --- Commercial (P3) ---
@@ -50,7 +50,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
 
   // --- Enterprise (P4) ---
   cap({ id: 'enterprise', name: 'Enterprise OS (CRM/ERP/HR/Finance)', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'finance', name: 'Financial intelligence (wallets/ledgers/payments)', category: 'enterprise', status: 'NOT_IMPLEMENTED', notes: 'requires regulated providers; not built' }),
+  cap({ id: 'finance', name: 'Financial intelligence (wallets, ledgers, transactions, reconciliation)', category: 'enterprise', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/finance', evidence: ['immutable append-only ledger, wallets, credit/debit/transfer/reverse, reconciliation, governance-gated — 12 tests'], notes: 'real ledger engine; no real payment provider integration; no FX/multi-currency conversion; no regulated financial services' }),
   cap({ id: 'supply-chain', name: 'Supply chain intelligence', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
 
   // --- Domain intelligence (P5) ---
