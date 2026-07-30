@@ -18,6 +18,30 @@ export interface EnvConfig {
   JATAQI_ADMIN_PASSWORD?: string;
   JATAQI_GATEWAY_PORT?: number;
   JATAQI_GATEWAY_HOST?: string;
+  // --- Security hardening (PR4) ---
+  /** Comma-separated allowed CORS origins, or '*'. Empty disables CORS. */
+  CORS_ORIGINS?: string;
+  /** Allow cookies/credentials in CORS (true/false). */
+  CORS_CREDENTIALS?: boolean;
+  /** API version segment (default 'v1'). Set to 'false' to disable. */
+  API_VERSION?: string;
+  /** Path to a PEM TLS certificate file. Enables HTTPS when paired with TLS_KEY_PATH. */
+  TLS_CERT_PATH?: string;
+  /** Path to a PEM TLS private key file. */
+  TLS_KEY_PATH?: string;
+  /** Path to a PEM CA bundle (for mutual TLS). */
+  TLS_CA_PATH?: string;
+  /** Minimum TLS version (default 'TLSv1.2'). */
+  TLS_MIN_VERSION?: string;
+  /** Whether to persist auth sessions to durable storage (default true). */
+  SECURITY_PERSIST_SESSIONS?: boolean;
+  // --- Scheduled backups (PR4 — automated DR) ---
+  /** Comma-separated storage namespaces to back up on a schedule. */
+  BACKUP_NAMESPACES?: string;
+  /** Backup interval in ms (default 6h). */
+  BACKUP_INTERVAL_MS?: number;
+  /** Snapshots to retain per namespace (default 10). */
+  BACKUP_RETENTION?: number;
 }
 
 /** Parse a .env file into an object (KEY=VALUE lines, ignores comments/blanks). */
@@ -53,6 +77,10 @@ export function loadEnv(filePath = '.env'): Record<string, string> {
 }
 
 export function readConfig(): EnvConfig {
+  const bool = (v: string | undefined): boolean | undefined => {
+    if (v === undefined) return undefined;
+    return /^(1|true|yes|on)$/i.test(v);
+  };
   return {
     LOG_LEVEL: process.env.LOG_LEVEL,
     STORAGE_DRIVER: process.env.STORAGE_DRIVER as EnvConfig['STORAGE_DRIVER'],
@@ -68,5 +96,16 @@ export function readConfig(): EnvConfig {
     JATAQI_ADMIN_PASSWORD: process.env.JATAQI_ADMIN_PASSWORD,
     JATAQI_GATEWAY_PORT: process.env.JATAQI_GATEWAY_PORT ? Number(process.env.JATAQI_GATEWAY_PORT) : undefined,
     JATAQI_GATEWAY_HOST: process.env.JATAQI_GATEWAY_HOST,
+    CORS_ORIGINS: process.env.CORS_ORIGINS,
+    CORS_CREDENTIALS: bool(process.env.CORS_CREDENTIALS),
+    API_VERSION: process.env.API_VERSION,
+    TLS_CERT_PATH: process.env.TLS_CERT_PATH,
+    TLS_KEY_PATH: process.env.TLS_KEY_PATH,
+    TLS_CA_PATH: process.env.TLS_CA_PATH,
+    TLS_MIN_VERSION: process.env.TLS_MIN_VERSION,
+    SECURITY_PERSIST_SESSIONS: bool(process.env.SECURITY_PERSIST_SESSIONS),
+    BACKUP_NAMESPACES: process.env.BACKUP_NAMESPACES,
+    BACKUP_INTERVAL_MS: process.env.BACKUP_INTERVAL_MS ? Number(process.env.BACKUP_INTERVAL_MS) : undefined,
+    BACKUP_RETENTION: process.env.BACKUP_RETENTION ? Number(process.env.BACKUP_RETENTION) : undefined,
   };
 }

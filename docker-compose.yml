@@ -5,27 +5,6 @@ services:
     build: .
     ports:
       - "7400:7400"
-    environment:
-      - LOG_LEVEL=info
-      - STORAGE_DRIVER=sqlite
-      - STORAGE_FS_ROOT=/data/jataqi.db
-      - VECTOR_MODEL=hash
-      - AGENT_LLM=echo
-      - JATAQI_GATEWAY_PORT=7400
-      - JATAQI_GATEWAY_HOST=0.0.0.0
-      # For production:
-      # - VECTOR_MODEL=openai
-      # - OPENAI_API_KEY=sk-...
-      # - AGENT_LLM=openai
-      # - OPENAI_CHAT_MODEL=gpt-4o-mini
-      # - JATAQI_ADMIN_USERNAME=admin
-      # - JATAQI_ADMIN_PASSWORD=changeme
-    volumes:
-      - jataqi-data:/data
-      - ./provenance:/app/provenance:ro
-
-volumes:
-  jataqi-data:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7400/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
@@ -33,6 +12,45 @@ volumes:
       timeout: 5s
       retries: 3
       start_period: 10s
+    environment:
+      - LOG_LEVEL=info
+      # Persistent storage (survives restarts).
+      - STORAGE_DRIVER=sqlite
+      - STORAGE_FS_ROOT=/data/jataqi.db
+      - SECURITY_PERSIST_SESSIONS=true
+      # API versioning (default v1; routes reachable at /v1/* and legacy /*).
+      - API_VERSION=v1
+      # Vector / LLM (defaults are local/deterministic; switch to openai for production).
+      - VECTOR_MODEL=hash
+      - AGENT_LLM=echo
+      # Gateway.
+      - JATAQI_GATEWAY_PORT=7400
+      - JATAQI_GATEWAY_HOST=0.0.0.0
+      # Scheduled backups of the audit + snapshot namespaces (every 6h, retain 10).
+      - BACKUP_NAMESPACES=security.audit,dr.snapshots
+      - BACKUP_INTERVAL_MS=21600000
+      - BACKUP_RETENTION=10
+      # --- Production hardening (uncomment + configure) ---
+      # CORS allow-list (comma-separated origins):
+      # - CORS_ORIGINS=https://app.example.com
+      # - CORS_CREDENTIALS=true
+      # TLS/HTTPS (mount cert+key and set both paths to enable HTTPS + HSTS):
+      # - TLS_CERT_PATH=/certs/cert.pem
+      # - TLS_KEY_PATH=/certs/key.pem
+      # - TLS_MIN_VERSION=TLSv1.2
+      # Bootstrap admin:
+      # - JATAQI_ADMIN_USERNAME=admin
+      # - JATAQI_ADMIN_PASSWORD=changeme
+      # Real providers:
+      # - VECTOR_MODEL=openai
+      # - OPENAI_API_KEY=sk-...
+      # - AGENT_LLM=openai
+      # - OPENAI_CHAT_MODEL=gpt-4o-mini
+    volumes:
+      - jataqi-data:/data
+      - ./provenance:/app/provenance:ro
+      # Mount TLS material read-only when TLS_*_PATH is set:
+      # - ./certs:/certs:ro
 
-# volumes:
-#   jataqi-data:
+volumes:
+  jataqi-data:

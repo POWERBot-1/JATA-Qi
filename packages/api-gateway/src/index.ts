@@ -7,4 +7,7 @@ export type {
   GatewayRequest,
   GatewayResponse,
   RouteHandler,
+  TlsConfig,
+  CorsConfig,
+  ResolvedCorsPolicy,
 } from './types.js';

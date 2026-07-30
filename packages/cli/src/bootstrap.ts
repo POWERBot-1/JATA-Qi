@@ -219,6 +219,34 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   };
 }
 
+/**
+ * Optionally start an automated backup scheduler from environment config
+ * (PR4 — scheduled backups). No-op when BACKUP_NAMESPACES is unset.
+ */
+export function startScheduledBackupsFromEnv(
+  kernel: Kernel,
+  env: ReturnType<typeof readConfig> = readConfig(),
+): { stop?: () => void } {
+  if (!env.BACKUP_NAMESPACES) return {};
+  const namespaces = String(env.BACKUP_NAMESPACES).split(',').map((s) => s.trim()).filter(Boolean);
+  if (namespaces.length === 0) return {};
+  const intervalMs = env.BACKUP_INTERVAL_MS && Number(env.BACKUP_INTERVAL_MS) > 0 ? Number(env.BACKUP_INTERVAL_MS) : 6 * 3600_000;
+  try {
+    const dr = kernel.getModule<DisasterRecoveryModule>('disaster-recovery');
+    const handle = dr.startScheduler({
+      namespaces,
+      intervalMs,
+      ...(env.BACKUP_RETENTION ? { retention: Number(env.BACKUP_RETENTION) } : {}),
+      createdBy: 'system',
+    });
+    kernel.logger.info(`scheduled backups enabled: every ${intervalMs}ms for [${namespaces.join(', ')}]`);
+    return { stop: () => handle.then((h) => h.stop()) };
+  } catch (err) {
+    kernel.logger.warn(`scheduled backups not started: ${(err as Error).message}`);
+    return {};
+  }
+}
+
 /** Build JATA Qi using environment variables / .env (see .env.example). */
 export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise<JataQiInstance> {
   const env = readConfig();
@@ -251,10 +279,48 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     },
     agent: { llm, ...(overrides.agent ?? {}) },
     graph: overrides.graph,
-    security: { ...(overrides.security ?? {}), ...(bootstrapAdmin ? { bootstrapAdmin } : {}) },
-    gateway: overrides.gateway,
+    security: {
+      ...(env.SECURITY_PERSIST_SESSIONS !== undefined ? { persistSessions: env.SECURITY_PERSIST_SESSIONS } : {}),
+      ...(overrides.security ?? {}),
+      ...(bootstrapAdmin ? { bootstrapAdmin } : {}),
+    },
+    gateway: { ...buildGatewayOptionsFromEnv(env), ...(overrides.gateway ?? {}) },
     kernel: overrides.kernel,
   });
+}
+
+/**
+ * Build gateway security-hardening options (TLS, CORS, API versioning) from
+ * environment config (PR4).
+ */
+function buildGatewayOptionsFromEnv(env: ReturnType<typeof readConfig>): GatewayOptions {
+  const opts: GatewayOptions = {};
+  // API versioning (default 'v1').
+  if (env.API_VERSION !== undefined) {
+    opts.apiVersion = env.API_VERSION === 'false' ? false : env.API_VERSION;
+  }
+  // TLS / HTTPS.
+  if ((env.TLS_CERT_PATH && env.TLS_KEY_PATH)) {
+    opts.tls = {
+      certPath: env.TLS_CERT_PATH,
+      keyPath: env.TLS_KEY_PATH,
+      ...(env.TLS_CA_PATH ? { caPath: env.TLS_CA_PATH } : {}),
+      ...(env.TLS_MIN_VERSION ? { minVersion: env.TLS_MIN_VERSION } : {}),
+    };
+  }
+  // CORS.
+  if (env.CORS_ORIGINS !== undefined) {
+    const origins = env.CORS_ORIGINS.trim();
+    if (origins === '*' || origins === '') {
+      opts.cors = origins === '*' ? { origins: '*' } : false;
+    } else {
+      opts.cors = {
+        origins: origins.split(',').map((o) => o.trim()).filter(Boolean),
+        ...(env.CORS_CREDENTIALS ? { credentials: true } : {}),
+      };
+    }
+  }
+  return opts;
 }
 
 export { Logger };

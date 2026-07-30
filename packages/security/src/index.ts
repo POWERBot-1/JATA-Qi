@@ -14,5 +14,6 @@ export type {
   Principal,
   Role,
   Session,
+  SessionRecord,
   User,
 } from './types.js';

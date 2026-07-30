@@ -24,10 +24,51 @@ export interface RestoreResult {
   durationMs: number;
 }
 
+/**
+ * Scheduled-backup configuration (PR4 — automated disaster recovery). The
+ * scheduler takes point-in-time snapshots of the listed namespaces on a fixed
+ * cadence and enforces a retention window so old snapshots are pruned.
+ */
+export interface BackupScheduleConfig {
+  /** Storage namespaces to snapshot on each run. */
+  namespaces: string[];
+  /** Interval between backup runs, in ms. */
+  intervalMs: number;
+  /** Snapshots to retain per namespace (older ones are pruned). Default 10. */
+  retention?: number;
+  /** Actor recorded against each backup (audit + notifications). Default 'system'. */
+  createdBy?: string;
+  /** Notification recipient for backup completion notices (default createdBy). */
+  notifyRecipient?: string;
+}
+
+export interface BackupRunResult {
+  /** Snapshot ids created this run (one per namespace). */
+  snapshotIds: string[];
+  /** Number of out-of-retention snapshots pruned this run. */
+  pruned: number;
+  ranAt: number;
+}
+
+export interface BackupScheduleHandle {
+  readonly id: string;
+  readonly config: BackupScheduleConfig;
+  /** True while the scheduler interval is active. */
+  readonly running: boolean;
+  readonly lastRunAt?: number;
+  readonly lastResult?: BackupRunResult;
+  /** Run one backup cycle immediately (used by tests / on-demand backups). */
+  runNow(): Promise<BackupRunResult>;
+  /** Stop the scheduled interval. */
+  stop(): void;
+}
+
 export const DREvents = Object.freeze({
   SnapshotCreated: 'dr.snapshot.created',
   RestoreCompleted: 'dr.restore.completed',
   RestoreFailed: 'dr.restore.failed',
+  BackupRun: 'dr.backup.run',
+  BackupScheduled: 'dr.backup.scheduled',
 } as const);
 
 function hashValue(value: unknown): string {
@@ -41,6 +82,8 @@ export class DisasterRecoveryModule implements IModule {
 
   private api!: KernelApi;
   private snapshots!: ICollection<Snapshot>;
+  /** Active backup schedulers, keyed by handle id. */
+  private readonly schedulers = new Map<string, BackupScheduleHandle & { timer: NodeJS.Timeout }>();
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -54,7 +97,118 @@ export class DisasterRecoveryModule implements IModule {
   }
 
   async start(_k: KernelApi): Promise<void> {}
-  async stop(_k: KernelApi): Promise<void> {}
+  async stop(_k: KernelApi): Promise<void> {
+    // Stop all active backup schedulers so the process can shut down cleanly.
+    for (const handle of this.schedulers.values()) {
+      handle.stop();
+    }
+    this.schedulers.clear();
+  }
+
+  // --- scheduled backups (PR4 — automated DR) -----------------------------
+
+  /**
+   * Run a single backup cycle: snapshot each configured namespace, then prune
+   * snapshots beyond the retention window. Emits an event, writes an audit
+   * record, and (when the notifications module is present) sends a notice.
+   */
+  async runBackupCycle(config: BackupScheduleConfig): Promise<BackupRunResult> {
+    if (!Array.isArray(config.namespaces) || config.namespaces.length === 0) {
+      throw new Error('dr: at least one namespace is required for a backup cycle');
+    }
+    // NOTE: intervalMs is a scheduler concern; a one-off cycle does not require it.
+    const retention = config.retention ?? 10;
+    const actor = config.createdBy ?? 'system';
+    const snapshotIds: string[] = [];
+    let pruned = 0;
+    for (const ns of config.namespaces) {
+      const snap = await this.createSnapshot(ns, actor);
+      snapshotIds.push(snap.id);
+      // Enforce retention: keep the newest `retention`, prune the rest.
+      const all = await this.listSnapshots(ns);
+      const stale = all.slice(retention); // listSnapshots is newest-first
+      for (const s of stale) {
+        await this.deleteSnapshot(s.id);
+        pruned++;
+      }
+    }
+    const result: BackupRunResult = { snapshotIds, pruned, ranAt: Date.now() };
+    await this.api.bus.emit(DREvents.BackupRun, result);
+    await this.audit(actor, 'backup_run', { namespaces: config.namespaces, created: snapshotIds.length, pruned });
+    await this.notifyBackup(config, result);
+    return result;
+  }
+
+  /**
+   * Start an automated backup scheduler. Returns a handle that can run a cycle
+   * on demand (`runNow`) and stop the interval (`stop`). Schedulers are stopped
+   * automatically when the module shuts down.
+   */
+  async startScheduler(config: BackupScheduleConfig): Promise<BackupScheduleHandle> {
+    if (!config.intervalMs || config.intervalMs <= 0) {
+      throw new Error('dr: intervalMs must be a positive number');
+    }
+    if (!Array.isArray(config.namespaces) || config.namespaces.length === 0) {
+      throw new Error('dr: at least one namespace is required for a backup cycle');
+    }
+    const moduleRef = this;
+    const id = randomUUID();
+    const state = { lastRunAt: undefined as number | undefined, lastResult: undefined as BackupRunResult | undefined, running: true };
+    const cycle = async (): Promise<BackupRunResult> => {
+      const res = await moduleRef.runBackupCycle(config);
+      state.lastResult = res;
+      state.lastRunAt = res.ranAt;
+      return res;
+    };
+    const safeCycle = async (): Promise<void> => {
+      try { await cycle(); } catch (err) {
+        moduleRef.api.logger.warn(`dr: backup cycle failed: ${(err as Error).message}`);
+      }
+    };
+    const timer = setInterval(() => { void safeCycle(); }, config.intervalMs);
+    // Node keeps the process alive for intervals; allow shutdown to proceed.
+    timer.unref?.();
+    const stop = (): void => {
+      state.running = false;
+      clearInterval(timer);
+      moduleRef.schedulers.delete(id);
+    };
+    const handle: BackupScheduleHandle & { timer: NodeJS.Timeout } = {
+      id,
+      config,
+      get running(): boolean { return state.running; },
+      get lastRunAt(): number | undefined { return state.lastRunAt; },
+      get lastResult(): BackupRunResult | undefined { return state.lastResult; },
+      runNow: cycle,
+      stop,
+      timer,
+    };
+    this.schedulers.set(id, handle);
+    await this.api.bus.emit(DREvents.BackupScheduled, { id, config });
+    await this.audit(config.createdBy ?? 'system', 'scheduler_started', { id, intervalMs: config.intervalMs, namespaces: config.namespaces });
+    return handle;
+  }
+
+  /** Active scheduler handles (for introspection / admin). */
+  listSchedulers(): Array<{ id: string; running: boolean; lastRunAt?: number }> {
+    return [...this.schedulers.values()].map((h) => ({ id: h.id, running: h.running, lastRunAt: h.lastRunAt }));
+  }
+
+  private async notifyBackup(config: BackupScheduleConfig, result: BackupRunResult): Promise<void> {
+    try {
+      const notifications = this.api.getModule('notifications') as unknown as {
+        notify: (recipient: string, payload: { type: string; title: string; body?: string; data?: Record<string, unknown> }) => Promise<unknown>;
+      } | undefined;
+      if (!notifications?.notify) return;
+      const recipient = config.notifyRecipient ?? config.createdBy ?? 'system';
+      await notifications.notify(recipient, {
+        type: 'system',
+        title: `Backup complete (${result.snapshotIds.length} snapshot(s))`,
+        body: `Pruned ${result.pruned} out-of-retention snapshot(s).`,
+        data: { ...result, namespaces: config.namespaces },
+      });
+    } catch { /* notifications are best-effort */ }
+  }
 
   /** Take a point-in-time snapshot of a storage namespace. */
   async createSnapshot(namespace: string, createdBy: string): Promise<Snapshot> {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // JATA Qi CLI — boots the OS and offers simple commands.
 
-import { createJataQiFromEnv } from './bootstrap.js';
+import { createJataQiFromEnv, startScheduledBackupsFromEnv } from './bootstrap.js';
 import { loadEnv, readConfig } from './config.js';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
@@ -57,7 +57,9 @@ async function main() {
         const host = env.JATAQI_GATEWAY_HOST ?? '0.0.0.0';
         if (!jataqi.gateway) throw new Error('API gateway module not registered');
         const handle = await jataqi.gateway.listen({ port, host });
-        console.log(`JATA Qi API gateway listening on http://${host}:${handle.port}`);
+        const scheme = handle.secure ? 'https' : 'http';
+        console.log(`JATA Qi API gateway listening on ${scheme}://${host}:${handle.port}` + (handle.secure ? ' (TLS)' : ''));
+        const backups = startScheduledBackupsFromEnv(kernel);
         console.log(`  GET  /health`);
         console.log(`  POST /auth/register  POST /auth/login`);
         console.log(`  POST /qil           (QiL program -> workflow)`);
@@ -66,6 +68,7 @@ async function main() {
         // Keep the process alive until signalled.
         const stop = async (sig: string): Promise<void> => {
           console.log(`\nreceived ${sig}, shutting down...`);
+          backups.stop?.();
           await handle.close();
           await jataqi.shutdown();
           process.exit(0);

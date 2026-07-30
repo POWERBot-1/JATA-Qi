@@ -7,6 +7,9 @@ import {
   INamespace,
   IStorageDriver,
   StorageEvents,
+  TenantScope,
+  isTenantPartition,
+  tenantPartitionName,
 } from './types.js';
 
 export interface StorageModuleConfig {
@@ -16,6 +19,33 @@ export interface StorageModuleConfig {
   fsRoot?: string;
   /** Pre-configured driver instance (overrides driver option). */
   driverInstance?: IStorageDriver;
+}
+
+/**
+ * A tenant-scoped storage facade. All collections / namespaces / blob stores it
+ * opens are physically partitioned under the tenant id, enforcing hard isolation
+ * between organizations at the storage layer (PR4 — multi-tenancy enforcement).
+ */
+export class TenantScopedStorage implements TenantScope {
+  readonly tenantId: string;
+  private readonly mod: StorageModule;
+
+  constructor(tenantId: string, mod: StorageModule) {
+    this.tenantId = tenantId;
+    this.mod = mod;
+  }
+
+  collection<T extends { id: string }>(name: string): Promise<ICollection<T>> {
+    return this.mod.collection<T>(tenantPartitionName(this.tenantId, name));
+  }
+
+  namespace(name: string): Promise<INamespace> {
+    return this.mod.namespace(tenantPartitionName(this.tenantId, name));
+  }
+
+  blobStore(name: string): Promise<IBlobStore> {
+    return this.mod.blobStore(tenantPartitionName(this.tenantId, name));
+  }
 }
 
 export class StorageModule implements IModule {
@@ -113,5 +143,21 @@ export class StorageModule implements IModule {
   /** Access the underlying driver (escape hatch). */
   getDriver(): IStorageDriver {
     return this.driver;
+  }
+
+  /**
+   * Open a tenant-scoped view of storage for the given organization id. Data
+   * written through the returned scope is partitioned under `tenant:<orgId>:`
+   * and is invisible to every other tenant (PR4 — multi-tenancy enforcement).
+   */
+  tenant(tenantId: string): TenantScope {
+    // Validate the tenant id eagerly (the helper throws on invalid ids).
+    tenantPartitionName(tenantId, 'probe');
+    return new TenantScopedStorage(tenantId, this);
+  }
+
+  /** True when a logical name resolves to a tenant partition. */
+  isTenantPartition(name: string): boolean {
+    return isTenantPartition(name);
   }
 }

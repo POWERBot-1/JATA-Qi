@@ -13,6 +13,7 @@ import type {
   Principal,
   Role,
   Session,
+  SessionRecord,
   User,
 } from './types.js';
 import { extractBearer, generateToken, hashSecret, verifySecret } from './crypto.js';
@@ -26,11 +27,20 @@ export interface SecurityModuleConfig {
   roles?: Record<string, string[]>;
   /** If set, a bootstrap admin { username, password } is created on init when absent. */
   bootstrapAdmin?: { username: string; password: string };
+  /**
+   * Persist sessions to the storage layer so they survive restarts (default true).
+   * Set to false for purely ephemeral (in-memory) sessions.
+   */
+  persistSessions?: boolean;
 }
 
 const COL_USERS = 'security.users';
 const COL_KEYS = 'security.apikeys';
+const COL_SESSIONS = 'security.sessions';
 const NS_AUDIT = 'security.audit';
+
+/** Update the persisted `lastUsedAt` at most this often (avoids write churn). */
+const LAST_USED_FLUSH_INTERVAL_MS = 60_000;
 
 export class SecurityModule implements IModule {
   readonly id = 'security';
@@ -40,16 +50,24 @@ export class SecurityModule implements IModule {
   private api!: KernelApi;
   private users!: ICollection<User>;
   private apiKeys!: ICollection<ApiKey>;
+  private sessions!: ICollection<SessionRecord>;
   private auditLog!: AuditLog;
-  private readonly sessions = new Map<string, { session: Session; principal: Principal }>();
+  /**
+   * Hot-path cache of resolved sessions. The persisted collection is the source
+   * of truth; the cache is rebuilt lazily on cache miss. Cleared on stop without
+   * deleting persisted sessions (so they survive restarts).
+   */
+  private readonly sessionCache = new Map<string, { session: Session; principal: Principal; lastUsedFlushedAt: number }>();
   private readonly policy: RolePolicy;
   private readonly sessionTtlMs: number;
   private readonly bootstrapAdmin?: { username: string; password: string };
+  private readonly persistSessions: boolean;
 
   constructor(cfg: SecurityModuleConfig = {}) {
     this.sessionTtlMs = cfg.sessionTtlMs ?? 3_600_000;
     this.policy = new RolePolicy({ ...DEFAULT_ROLE_POLICY, ...(cfg.roles ?? {}) });
     this.bootstrapAdmin = cfg.bootstrapAdmin;
+    this.persistSessions = cfg.persistSessions ?? true;
   }
 
   async init(kernel: KernelApi): Promise<void> {
@@ -60,6 +78,7 @@ export class SecurityModule implements IModule {
     };
     this.users = await storage.collection<User>(COL_USERS);
     this.apiKeys = await storage.collection<ApiKey>(COL_KEYS);
+    this.sessions = await storage.collection<SessionRecord>(COL_SESSIONS);
     this.auditLog = new AuditLog(await storage.namespace(NS_AUDIT));
     kernel.container.registerValue('security', this);
     kernel.container.registerValue('security.audit', this.auditLog);
@@ -71,13 +90,30 @@ export class SecurityModule implements IModule {
         kernel.logger.info(`security: bootstrap admin "${this.bootstrapAdmin.username}" created`);
       }
     }
+
+    // Reap expired sessions left over from a previous run, and emit a restore
+    // event per surviving session so the rest of the platform knows sessions
+    // were recovered from durable storage (PR4 — restart-safe sessions).
+    if (this.persistSessions) {
+      const restored = await this.pruneExpiredSessions();
+      const live = await this.sessions.all();
+      for (const rec of live) {
+        if (rec.revokedAt) continue;
+        await this.api.bus.emit(SecurityEvents.SessionRestored, { userId: rec.userId, token: rec.token });
+      }
+      if (restored > 0) kernel.logger.info(`security: pruned ${restored} expired persisted session(s)`);
+      kernel.logger.info(`security: ${live.filter((s) => !s.revokedAt).length} persisted session(s) restored`);
+    }
+
     kernel.logger.info('security module initialized');
   }
 
   async start(_kernel: KernelApi): Promise<void> { /* no bg work */ }
 
   async stop(_kernel: KernelApi): Promise<void> {
-    this.sessions.clear();
+    // Only clear the in-memory cache; persisted sessions are intentionally kept
+    // so they remain valid across restarts.
+    this.sessionCache.clear();
   }
 
   // --- role policy ---------------------------------------------------------
@@ -129,7 +165,7 @@ export class SecurityModule implements IModule {
 
   // --- authentication ------------------------------------------------------
 
-  async login(username: string, password: string): Promise<AuthResult> {
+  async login(username: string, password: string, opts: { remoteAddress?: string } = {}): Promise<AuthResult> {
     const user = await this.getUser(username);
     if (!user) return this.failLogin(username, 'unknown user');
     if (!user.active) return this.failLogin(username, 'inactive user');
@@ -138,7 +174,7 @@ export class SecurityModule implements IModule {
 
     const token = generateToken(32);
     const now = Date.now();
-    const session = {
+    const session: Session = {
       token,
       userId: user.id,
       username: user.username,
@@ -146,7 +182,8 @@ export class SecurityModule implements IModule {
       expiresAt: now + this.sessionTtlMs,
     };
     const principal: Principal = { userId: user.id, username: user.username, roles: [...user.roles] };
-    this.sessions.set(token, { session, principal });
+    await this.persistSession(session, principal.roles, opts.remoteAddress, now);
+    this.sessionCache.set(token, { session, principal, lastUsedFlushedAt: now });
     await this.api.bus.emit(SecurityEvents.UserLogin, { userId: user.id, username });
     await this.audit({ actor: user.id, action: 'auth.login', result: 'success' });
     return { ok: true, principal, session };
@@ -159,8 +196,9 @@ export class SecurityModule implements IModule {
   }
 
   async logout(token: string): Promise<void> {
-    const entry = this.sessions.get(token);
-    this.sessions.delete(token);
+    const entry = await this.loadSession(token);
+    this.sessionCache.delete(token);
+    if (this.persistSessions) await this.sessions.delete(token).catch(() => false);
     if (entry) {
       await this.api.bus.emit(SecurityEvents.UserLogout, { userId: entry.principal.userId });
       await this.audit({ actor: entry.principal.userId, action: 'auth.logout', result: 'success' });
@@ -171,14 +209,139 @@ export class SecurityModule implements IModule {
   async authenticate(tokenOrHeader: string | undefined | null): Promise<Principal | undefined> {
     const token = extractBearer(tokenOrHeader);
     if (!token) return undefined;
-    const entry = this.sessions.get(token);
-    if (!entry) return undefined;
-    if (entry.session.expiresAt < Date.now()) {
-      this.sessions.delete(token);
-      await this.audit({ actor: entry.principal.userId, action: 'auth.session', result: 'failure', detail: { reason: 'expired' } });
+    const cached = this.sessionCache.get(token);
+    if (cached) {
+      if (cached.session.expiresAt < Date.now()) {
+        await this.expireSession(token, cached.principal.userId);
+        return undefined;
+      }
+      this.maybeFlushLastUsed(token, cached);
+      return cached.principal;
+    }
+    // Cache miss — consult the persisted store (survives restarts).
+    const loaded = await this.loadSession(token);
+    if (!loaded) return undefined;
+    if (loaded.session.expiresAt < Date.now()) {
+      await this.expireSession(token, loaded.principal.userId);
       return undefined;
     }
-    return entry.principal;
+    const entry = { session: loaded.session, principal: loaded.principal, lastUsedFlushedAt: loaded.session.createdAt };
+    this.sessionCache.set(token, entry);
+    this.maybeFlushLastUsed(token, entry);
+    return loaded.principal;
+  }
+
+  /** Throttled persistence of lastUsedAt (avoid a write on every request). */
+  private maybeFlushLastUsed(token: string, entry: { session: Session; principal: Principal; lastUsedFlushedAt: number }): void {
+    const now = Date.now();
+    if (now - entry.lastUsedFlushedAt <= LAST_USED_FLUSH_INTERVAL_MS) return;
+    const updated = { ...entry, lastUsedFlushedAt: now };
+    this.sessionCache.set(token, updated);
+    if (!this.persistSessions) return;
+    void this.sessions.get(token).then((rec) => {
+      if (!rec) return;
+      rec.lastUsedAt = now;
+      void this.sessions.put(rec).catch(() => rec);
+    }).catch(() => undefined);
+  }
+
+  // --- session lifecycle (persistence) ------------------------------------
+
+  /** Persist (or update) a session record. No-op when persistence is disabled. */
+  private async persistSession(session: Session, roles: string[], remoteAddress: string | undefined, lastUsedAt: number): Promise<void> {
+    if (!this.persistSessions) return;
+    const rec: SessionRecord = {
+      id: session.token,
+      token: session.token,
+      userId: session.userId,
+      username: session.username,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
+      roles: [...roles],
+      lastUsedAt,
+      ...(remoteAddress ? { remoteAddress } : {}),
+    };
+    await this.sessions.put(rec);
+  }
+
+  /** Resolve a token to a cached or persisted session+principal, or undefined. */
+  private async loadSession(token: string): Promise<{ session: Session; principal: Principal } | undefined> {
+    const cached = this.sessionCache.get(token);
+    if (cached) return { session: cached.session, principal: cached.principal };
+    if (!this.persistSessions) return undefined;
+    const rec = await this.sessions.get(token).catch(() => undefined);
+    if (!rec || rec.revokedAt) return undefined;
+    const principal: Principal = { userId: rec.userId, username: rec.username, roles: [...rec.roles] };
+    const session: Session = { token: rec.token, userId: rec.userId, username: rec.username, createdAt: rec.createdAt, expiresAt: rec.expiresAt };
+    return { session, principal };
+  }
+
+  private async expireSession(token: string, userId: string): Promise<void> {
+    this.sessionCache.delete(token);
+    if (this.persistSessions) await this.sessions.delete(token).catch(() => false);
+    await this.api.bus.emit(SecurityEvents.SessionExpired, { userId, token });
+    await this.audit({ actor: userId, action: 'auth.session', result: 'failure', detail: { reason: 'expired' } });
+  }
+
+  /** Remove sessions whose TTL has elapsed. Returns the number removed. */
+  async pruneExpiredSessions(): Promise<number> {
+    if (!this.persistSessions) return 0;
+    const all = await this.sessions.all();
+    const now = Date.now();
+    let pruned = 0;
+    for (const s of all) {
+      if (s.expiresAt < now) {
+        await this.sessions.delete(s.token).catch(() => false);
+        this.sessionCache.delete(s.token);
+        pruned++;
+      }
+    }
+    return pruned;
+  }
+
+  /** List active (non-expired, non-revoked) sessions, optionally for one user. */
+  async listSessions(userId?: string): Promise<SessionRecord[]> {
+    if (!this.persistSessions) return [];
+    const now = Date.now();
+    const all = await this.sessions.all();
+    return all
+      .filter((s) => !s.revokedAt && s.expiresAt >= now && (!userId || s.userId === userId))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** Revoke a single session by token. */
+  async revokeSession(token: string): Promise<boolean> {
+    this.sessionCache.delete(token);
+    if (!this.persistSessions) return false;
+    const rec = await this.sessions.get(token).catch(() => undefined);
+    if (!rec) return false;
+    await this.sessions.delete(token).catch(() => false);
+    await this.api.bus.emit(SecurityEvents.SessionRevoked, { userId: rec.userId, token });
+    await this.audit({ actor: rec.userId, action: 'auth.session.revoke', result: 'success' });
+    return true;
+  }
+
+  /** Revoke every active session for a user (e.g. on password change). */
+  async revokeAllUserSessions(userId: string, exceptToken?: string): Promise<number> {
+    if (!this.persistSessions) {
+      let n = 0;
+      for (const [token, entry] of this.sessionCache) {
+        if (entry.principal.userId === userId && token !== exceptToken) { this.sessionCache.delete(token); n++; }
+      }
+      return n;
+    }
+    const all = await this.sessions.all();
+    let revoked = 0;
+    for (const s of all) {
+      if (s.userId === userId && s.token !== exceptToken && !s.revokedAt) {
+        await this.sessions.delete(s.token).catch(() => false);
+        this.sessionCache.delete(s.token);
+        revoked++;
+      }
+    }
+    await this.api.bus.emit(SecurityEvents.SessionRevoked, { userId, count: revoked });
+    await this.audit({ actor: userId, action: 'auth.session.revokeAll', result: 'success', detail: { count: revoked } });
+    return revoked;
   }
 
   // --- API keys ------------------------------------------------------------

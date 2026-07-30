@@ -21,6 +21,7 @@
   "license": "MIT",
   "dependencies": {
     "@jataqi/core-kernel": "0.1.0",
+    "@jataqi/storage": "0.1.0",
     "@jataqi/security": "0.1.0",
     "@jataqi/orchestrator": "0.1.0",
     "@jataqi/agent-runtime": "0.1.0",
@@ -43,7 +44,8 @@
     "@jataqi/policies": "0.1.0",
     "@jataqi/feature-flags": "0.1.0",
     "@jataqi/privacy": "0.1.0",
-    "@jataqi/policy-governance": "0.1.0"
+    "@jataqi/policy-governance": "0.1.0",
+    "@jataqi/disaster-recovery": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

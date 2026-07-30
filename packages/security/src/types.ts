@@ -26,6 +26,28 @@ export interface Session {
   expiresAt: number;
 }
 
+/**
+ * A persistable session record. Mirrors {@link Session} plus the role snapshot
+ * captured at login (so the principal can be reconstructed after a restart),
+ * a last-access timestamp, and an optional revocation marker.
+ *
+ * Stored in the `security.sessions` storage collection so sessions survive
+ * process restarts (PR4 — Security Hardening). The collection key (`id`) is the
+ * session token.
+ */
+export interface SessionRecord extends Session {
+  /** Collection key — equal to {@link Session.token}. */
+  id: string;
+  /** Roles snapshot at login — used to rebuild the Principal after restart. */
+  roles: string[];
+  /** Epoch ms of the last successful authentication with this token. */
+  lastUsedAt: number;
+  /** Originating client address (best-effort), for forensics. */
+  remoteAddress?: string;
+  /** Set when the session was explicitly revoked. */
+  revokedAt?: number;
+}
+
 /** A long-lived API key bound to a user. */
 export interface ApiKey {
   id: string;
@@ -79,6 +101,9 @@ export const SecurityEvents = Object.freeze({
   UserRegistered: 'security.user.registered',
   UserLogin: 'security.user.login',
   UserLogout: 'security.user.logout',
+  SessionRestored: 'security.session.restored',
+  SessionRevoked: 'security.session.revoked',
+  SessionExpired: 'security.session.expired',
   AuthDenied: 'security.auth.denied',
   AuditAppended: 'security.audit.appended',
 } as const);

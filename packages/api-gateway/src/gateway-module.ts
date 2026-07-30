@@ -7,9 +7,12 @@
 //   knowledge retrieved -> structured response -> auditable execution record.
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https';
+import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { SecurityModule } from '@jataqi/security';
+import type { StorageModule, TenantScope, INamespace } from '@jataqi/storage';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
 import type { KnowledgeService } from '@jataqi/knowledge-service';
@@ -33,12 +36,16 @@ import type { PoliciesModule } from '@jataqi/policies';
 import type { FeatureFlagsModule } from '@jataqi/feature-flags';
 import type { PrivacyModule } from '@jataqi/privacy';
 import type { PolicyGovernanceModule } from '@jataqi/policy-governance';
+import type { DisasterRecoveryModule } from '@jataqi/disaster-recovery';
 import type { TaskProfile } from '@jataqi/scheduler';
-import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, RouteHandler } from './types.js';
+import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, ResolvedCorsPolicy, RouteHandler, TlsConfig } from './types.js';
 import { RateLimiter } from './rate-limit.js';
 
 const BOOT_TIME = Date.now();
 const DEFAULT_RATE_LIMIT = { limit: 1000, windowMs: 60_000 };
+const DEFAULT_VERSION = 'v1';
+const SECURE_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+const SECURE_HEADERS_ALLOW = ['authorization', 'content-type', 'x-request-id', 'x-api-key'];
 
 export interface ListenOptions {
   port?: number;
@@ -73,16 +80,28 @@ export class ApiGatewayModule implements IModule {
   private featureFlags?: FeatureFlagsModule;
   private privacy?: PrivacyModule;
   private governance?: PolicyGovernanceModule;
-  private server: Server | undefined;
+  private disasterRecovery?: DisasterRecoveryModule;
+  private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
   private readonly routes = new Map<string, RouteHandler>();
   private readonly limiter: RateLimiter | undefined;
+  /** Resolved CORS policy (null = CORS disabled). */
+  private cors: ResolvedCorsPolicy | null = null;
+  /** True when the server is serving over TLS. */
+  private secure = false;
+  /** API version segment (e.g. 'v1'); null when versioning is disabled. */
+  private versionSegment: string | null = DEFAULT_VERSION;
+  private storage?: StorageModule;
 
   constructor(opts: GatewayOptions = {}) {
-    this.opts = { maxBodyBytes: 1_048_576, ...opts };
+    this.opts = { maxBodyBytes: 1_048_576, securityHeaders: true, ...opts };
     const rl = opts.rateLimit === null ? null : (opts.rateLimit ?? DEFAULT_RATE_LIMIT);
     this.limiter = rl ? new RateLimiter(rl) : undefined;
+    this.versionSegment = opts.apiVersion === false || opts.apiVersion === null || opts.apiVersion === undefined
+      ? DEFAULT_VERSION
+      : String(opts.apiVersion);
+    if (opts.apiVersion === false || opts.apiVersion === null) this.versionSegment = null;
   }
 
   async init(kernel: KernelApi): Promise<void> {
@@ -114,10 +133,32 @@ export class ApiGatewayModule implements IModule {
     this.featureFlags = this.tryModule<FeatureFlagsModule>('feature-flags');
     this.privacy = this.tryModule<PrivacyModule>('privacy');
     this.governance = this.tryModule<PolicyGovernanceModule>('policy-governance');
+    this.disasterRecovery = this.tryModule<DisasterRecoveryModule>('disaster-recovery');
+    this.storage = this.tryModule<StorageModule>('storage');
+    this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
-    this.server = createServer((req, res) => this.handle(req, res));
+
+    // Build the HTTP(S) server. When TLS material is configured we serve HTTPS
+    // with secure defaults (PR4 — native TLS termination).
+    const tlsOpts = this.buildTlsOptions();
+    this.secure = !!tlsOpts;
+    const handler = (req: IncomingMessage, res: ServerResponse): void => { void this.handle(req, res); };
+    this.server = tlsOpts ? createHttpsServer(tlsOpts, handler) : createServer(handler);
+
     this.booted = true;
-    kernel.logger.info('api-gateway module initialized (not listening)');
+    // Record an auditable boot record describing the active security posture.
+    void this.sec.audit({
+      actor: 'system',
+      action: 'gateway.start',
+      result: 'success',
+      detail: {
+        tls: this.secure,
+        cors: this.cors ? { origins: this.cors.origins === '*' ? '*' : [...this.cors.origins], credentials: this.cors.credentials } : false,
+        apiVersion: this.versionSegment ?? false,
+        tenantIsolation: !!this.storage,
+      },
+    }).catch(() => undefined);
+    kernel.logger.info(`api-gateway module initialized (transport=${this.secure ? 'https' : 'http'}, not listening)`);
   }
 
   async stop(_kernel: KernelApi): Promise<void> {
@@ -126,10 +167,11 @@ export class ApiGatewayModule implements IModule {
     }
   }
 
-  /** Begin listening. Returns a handle with the bound port. */
+  /** Begin listening. Returns a handle with the bound port and protocol. */
   listen(opts: ListenOptions = {}): Promise<GatewayHandle> {
     if (!this.server) throw new Error('api-gateway: server not started');
     const server = this.server;
+    const secure = this.secure;
     return new Promise((resolve, reject) => {
       const onError = (err: NodeJS.ErrnoException): void => {
         server.off('listening', onListening);
@@ -140,6 +182,8 @@ export class ApiGatewayModule implements IModule {
         const addr = server.address() as AddressInfo;
         resolve({
           port: addr.port,
+          protocol: secure ? 'https' : 'http',
+          secure,
           close: () => new Promise<void>((r) => server.close(() => r())),
         });
       };
@@ -147,6 +191,101 @@ export class ApiGatewayModule implements IModule {
       server.once('listening', onListening);
       server.listen(opts.port ?? 0, opts.host ?? '127.0.0.1');
     });
+  }
+
+  /** Resolve the TLS material to a Node https server options object, or undefined. */
+  private buildTlsOptions(): Record<string, unknown> | undefined {
+    const t = this.opts.tls;
+    if (!t) return undefined;
+    const cert = this.readPem(t.cert, t.certPath);
+    const key = this.readPem(t.key, t.keyPath);
+    if (!cert || !key) return undefined;
+    const ca = this.readPem(t.ca, t.caPath);
+    return {
+      cert,
+      key,
+      ...(ca ? { ca } : {}),
+      minVersion: t.minVersion ?? 'TLSv1.2',
+      ...(t.requestCert !== undefined ? { requestCert: t.requestCert } : {}),
+      ...(t.rejectUnauthorized !== undefined ? { rejectUnauthorized: t.rejectUnauthorized } : {}),
+      ...(t.handshakeTimeout !== undefined ? { handshakeTimeout: t.handshakeTimeout } : {}),
+    };
+  }
+
+  private readPem(val: string | Buffer | undefined, path: string | undefined): string | Buffer | undefined {
+    if (val) return val;
+    if (path) return readFileSync(path);
+    return undefined;
+  }
+
+  /** Normalize the configured CORS option into an internal policy (or null). */
+  private resolveCorsPolicy(): ResolvedCorsPolicy | null {
+    const opt = this.opts.cors;
+    if (!opt) return null;
+    if (opt === true) {
+      // Legacy permissive default.
+      return { origins: '*', methods: SECURE_METHODS, headers: SECURE_HEADERS_ALLOW, exposeHeaders: [], credentials: false, maxAge: 600, enabled: true };
+    }
+    const originsRaw = opt.origins ?? [];
+    const origins = originsRaw === '*' ? '*' as const : new Set(originsRaw);
+    // Credentials + '*' is invalid per the Fetch spec; downgrade to an empty allow-list.
+    const credentials = opt.credentials === true && origins !== '*';
+    return {
+      origins,
+      methods: (opt.methods ?? SECURE_METHODS).map((m) => m.toUpperCase()),
+      headers: opt.headers ?? SECURE_HEADERS_ALLOW,
+      exposeHeaders: opt.exposeHeaders ?? [],
+      credentials,
+      maxAge: opt.maxAge ?? 600,
+      enabled: (origins === '*' ? true : origins.size > 0),
+    };
+  }
+
+  /**
+   * Compute CORS response headers for a request Origin. Returns an empty object
+   * when the origin is not allowed (or CORS is disabled).
+   */
+  private corsHeadersFor(origin: string | undefined): Record<string, string> {
+    if (!this.cors || !this.cors.enabled || !origin) return {};
+    const origins = this.cors.origins;
+    const allowAll = origins === '*';
+    const allowed = allowAll || origins.has(origin);
+    if (!allowed) return {};
+    const headers: Record<string, string> = { vary: 'origin' };
+    headers['access-control-allow-origin'] = allowAll ? '*' : origin;
+    if (this.cors.credentials) headers['access-control-allow-credentials'] = 'true';
+    if (this.cors.exposeHeaders.length) headers['access-control-expose-headers'] = this.cors.exposeHeaders.join(', ');
+    return headers;
+  }
+
+  /** Preflight (OPTIONS) response headers. */
+  private corsPreflightHeaders(origin: string | undefined, reqMethod?: string): Record<string, string> {
+    const base = this.corsHeadersFor(origin);
+    if (Object.keys(base).length === 0) return {};
+    const methods = reqMethod && this.cors!.methods.includes(reqMethod.toUpperCase())
+      ? [reqMethod.toUpperCase()]
+      : this.cors!.methods;
+    return {
+      ...base,
+      'access-control-allow-methods': methods.join(', '),
+      'access-control-allow-headers': this.cors!.headers.join(', '),
+      'access-control-max-age': String(this.cors!.maxAge),
+    };
+  }
+
+  /** Standard security headers (HSTS only emitted over TLS). */
+  private securityHeaders(): Record<string, string> {
+    if (this.opts.securityHeaders === false) return {};
+    const h: Record<string, string> = {
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+      'referrer-policy': 'no-referrer',
+      'x-permitted-cross-domain-policies': 'none',
+    };
+    if (this.secure) {
+      h['strict-transport-security'] = 'max-age=31536000; includeSubDomains';
+    }
+    return h;
   }
 
   // --- routing -------------------------------------------------------------
@@ -203,6 +342,10 @@ export class ApiGatewayModule implements IModule {
     // Readiness (public for transparency).
     route('GET', '/readiness', (req) => this.readinessList(req));
     route('GET', '/readiness/summary', () => this.readinessSummary());
+    // Disaster recovery: on-demand backups + scheduler control (PR4).
+    route('GET', '/backups', auth('audit:read', (req) => this.backupsList(req)));
+    route('POST', '/backup', auth('audit:read', (req) => this.backupCreate(req)));
+    route('POST', '/backup/schedule', auth('audit:read', (req) => this.backupSchedule(req)));
     // Universal AI Tool Intelligence Layer.
     route('GET', '/tools', auth('tool:read', (req) => this.toolsList(req)));
     route('GET', '/tools/capability', auth('tool:read', (req) => this.toolsForCapability(req)));
@@ -234,6 +377,11 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/org', auth('org:read', (req) => this.orgGet(req)));
     route('POST', '/org', auth('org:read', (req) => this.orgAction(req)));
     route('GET', '/org/members', auth('org:read', (req) => this.orgMembers(req)));
+    // Tenant-scoped data store — proves multi-tenant storage isolation (PR4).
+    route('GET', '/org/data', auth('org:read', (req) => this.orgDataGet(req)));
+    route('POST', '/org/data', auth('org:read', (req) => this.orgDataMutate(req)));
+    route('GET', '/sessions', auth(null, (req) => this.sessionsList(req)));
+    route('POST', '/session/revoke', auth(null, (req) => this.sessionRevoke(req)));
     // Notifications.
     route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
     route('POST', '/notification/read', auth('notification:read', (req) => this.notificationRead(req)));
@@ -269,13 +417,14 @@ export class ApiGatewayModule implements IModule {
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const started = Date.now();
     try {
-      const url = new URL(req.url ?? '/', 'http://localhost');
+      const url = new URL(req.url ?? '/', `${this.secure ? 'https' : 'http'}://localhost`);
       const path = url.pathname;
       const method = (req.method ?? 'GET').toUpperCase();
       const query: Record<string, string> = {};
       for (const [k, v] of url.searchParams) query[k] = v;
 
       const body = method === 'POST' || method === 'PUT' || method === 'PATCH' ? await this.readBody(req) : undefined;
+      const origin = (req.headers['origin'] as string | undefined) ?? undefined;
 
       const greq: GatewayRequest = {
         method,
@@ -286,26 +435,36 @@ export class ApiGatewayModule implements IModule {
         remoteAddress: req.socket.remoteAddress,
       };
 
-      // Try API routes first.
-      const handler = this.routes.get(`${method} ${path}`);
-      let resp: GatewayResponse;
+      // CORS preflight short-circuit (must happen before auth / rate limiting).
+      if (method === 'OPTIONS' && this.cors?.enabled && origin) {
+        const preflight = this.corsPreflightHeaders(origin, req.headers['access-control-request-method'] as string | undefined);
+        if (Object.keys(preflight).length > 0) {
+          this.finish(res, greq, { status: 204, body: '', contentType: 'text/plain', headers: preflight }, origin);
+          return;
+        }
+      }
+
+      // Resolve the versioned route. `/v1/health` and `/health` resolve to the
+      // same handler; the de-versioned path is used for metrics + logging so
+      // versioned and legacy calls aggregate (PR4 — API versioning).
+      const { handler, routePath } = this.resolveRoute(method, path);
 
       // Rate limiting (keyed by token or client IP). Step 15 "API Gateway: rate limiting".
       if (this.limiter) {
         const key = greq.headers['authorization'] ?? greq.remoteAddress ?? 'anon';
         const decision = this.limiter.consume(key);
         if (!decision.allowed) {
-          resp = {
+          this.finish(res, greq, {
             status: 429,
             body: { error: 'rate limit exceeded', limit: decision.limit },
             headers: rateHeaders(decision),
-          };
-          this.send(res, resp);
-          this.metrics?.requests.inc(1, { method, path, status: '429' });
+          }, origin);
+          this.metrics?.requests.inc(1, { method, path: routePath, status: '429' });
           return;
         }
       }
 
+      let resp: GatewayResponse;
       if (!handler) {
         // Try serving static UI files (web-ui module) for /ui paths.
         if (path === '/ui' || path.startsWith('/ui/')) {
@@ -313,7 +472,8 @@ export class ApiGatewayModule implements IModule {
           if (ui) {
             const file = ui.serve(path);
             if (file) {
-              res.writeHead(200, { 'content-type': file.contentType, 'content-length': file.content.length });
+              const headers = { ...this.securityHeaders(), ...this.corsHeadersFor(origin), 'content-type': file.contentType, 'content-length': String(file.content.length) };
+              res.writeHead(200, headers);
               res.end(file.content);
               return;
             }
@@ -327,18 +487,51 @@ export class ApiGatewayModule implements IModule {
           resp = this.toErrorResponse(err);
         }
       }
-      this.send(res, resp);
-      this.metrics?.requests.inc(1, { method, path, status: String(resp.status) });
+      this.finish(res, greq, resp, origin);
+      this.metrics?.requests.inc(1, { method, path: routePath, status: String(resp.status) });
       this.api.logger.debug('gateway request', {
         method,
-        path,
+        path: routePath,
         status: resp.status,
         ms: Date.now() - started,
         actor: greq.principal?.username,
       });
     } catch (err) {
-      this.send(res, this.toErrorResponse(err));
+      this.finish(res, { headers: {} } as GatewayRequest, this.toErrorResponse(err), undefined);
     }
+  }
+
+  /**
+   * Resolve a route handler for a (method, path), honoring the API version
+   * prefix. Returns the handler (if any) and the normalized path to use for
+   * metrics/logging.
+   */
+  private resolveRoute(method: string, path: string): { handler: RouteHandler | undefined; routePath: string } {
+    const direct = this.routes.get(`${method} ${path}`);
+    if (direct) return { handler: direct, routePath: path };
+    if (this.versionSegment) {
+      const prefix = `/${this.versionSegment}`;
+      if (path === prefix) {
+        const h = this.routes.get(`${method} /`);
+        return { handler: h, routePath: '/' };
+      }
+      if (path.startsWith(prefix + '/')) {
+        const base = path.slice(prefix.length); // e.g. '/health'
+        const h = this.routes.get(`${method} ${base}`);
+        return { handler: h, routePath: base };
+      }
+    }
+    return { handler: undefined, routePath: path };
+  }
+
+  /** Apply security + CORS headers to a response and write it to the socket. */
+  private finish(res: ServerResponse, _req: GatewayRequest, resp: GatewayResponse, origin: string | undefined): void {
+    const headers: Record<string, string> = {
+      ...this.securityHeaders(),
+      ...this.corsHeadersFor(origin),
+      ...(resp.headers ?? {}),
+    };
+    this.send(res, { ...resp, headers });
   }
 
   private send(res: ServerResponse, resp: GatewayResponse): void {
@@ -348,7 +541,6 @@ export class ApiGatewayModule implements IModule {
       'content-type': resp.contentType ?? 'application/json; charset=utf-8',
       'content-length': Buffer.byteLength(payload),
       ...(resp.headers ?? {}),
-      ...(this.opts.cors ? { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' } : {}),
     });
     res.end(payload);
   }
@@ -384,6 +576,10 @@ export class ApiGatewayModule implements IModule {
       status: 'healthy',
       booted: this.booted,
       uptimeMs: Date.now() - BOOT_TIME,
+      transport: this.secure ? 'https' : 'http',
+      secure: this.secure,
+      apiVersion: this.versionSegment ?? false,
+      cors: this.cors?.enabled === true,
       modules: this.moduleIds(),
     });
   }
@@ -398,6 +594,9 @@ export class ApiGatewayModule implements IModule {
       name: 'JATA Qi API',
       version: '0.1.0',
       description: 'Modular AI Operating System — HTTP gateway',
+      apiVersion: this.versionSegment ?? null,
+      versions: this.versionSegment ? [this.versionSegment] : [],
+      ...(this.versionSegment ? { versionedBase: `/${this.versionSegment}` } : {}),
       endpoints,
       docs: '/openapi.json',
     });
@@ -463,7 +662,7 @@ export class ApiGatewayModule implements IModule {
   private async login(req: GatewayRequest): Promise<GatewayResponse> {
     const { username, password } = this.asObject(req.body);
     if (!username || !password) return json(400, { error: 'username and password are required' });
-    const res = await this.sec.login(String(username), String(password));
+    const res = await this.sec.login(String(username), String(password), { remoteAddress: req.remoteAddress });
     if (!res.ok || !res.session || !res.principal) return json(401, { error: 'invalid credentials' });
     return json(200, { token: res.session.token, expiresAt: res.session.expiresAt, principal: res.principal });
   }
@@ -796,6 +995,45 @@ export class ApiGatewayModule implements IModule {
     return json(200, this.readiness.summary());
   }
 
+  // --- disaster recovery (scheduled backups, PR4) -------------------------
+
+  private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.disasterRecovery) return json(501, { error: 'disaster-recovery module not registered' });
+    const schedulers = this.disasterRecovery.listSchedulers();
+    const snapshots = await this.disasterRecovery.listSnapshots(req.query.namespace);
+    return json(200, { schedulers, snapshots: snapshots.map((s) => ({ id: s.id, namespace: s.namespace, entryCount: s.entryCount, contentHash: s.contentHash, createdAt: s.createdAt, createdBy: s.createdBy })), count: snapshots.length });
+  }
+
+  private async backupCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.disasterRecovery) return json(501, { error: 'disaster-recovery module not registered' });
+    const b = this.asObject(req.body);
+    const namespaces = Array.isArray(b.namespaces) ? (b.namespaces as string[]) : [];
+    if (namespaces.length === 0) return json(400, { error: 'field "namespaces" (string[]) is required' });
+    const result = await this.disasterRecovery.runBackupCycle({
+      namespaces,
+      intervalMs: 0,
+      createdBy: req.principal!.userId,
+      notifyRecipient: req.principal!.userId,
+    });
+    return json(201, { result });
+  }
+
+  private async backupSchedule(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.disasterRecovery) return json(501, { error: 'disaster-recovery module not registered' });
+    const b = this.asObject(req.body);
+    const namespaces = Array.isArray(b.namespaces) ? (b.namespaces as string[]) : [];
+    const intervalMs = typeof b.intervalMs === 'number' ? b.intervalMs : 0;
+    if (namespaces.length === 0 || intervalMs <= 0) return json(400, { error: 'fields "namespaces" (string[]) and "intervalMs" (>0) are required' });
+    const handle = await this.disasterRecovery.startScheduler({
+      namespaces,
+      intervalMs,
+      ...(typeof b.retention === 'number' ? { retention: b.retention } : {}),
+      createdBy: req.principal!.userId,
+      notifyRecipient: req.principal!.userId,
+    });
+    return json(201, { scheduler: { id: handle.id, running: handle.running, config: handle.config } });
+  }
+
   // --- universal AI tool intelligence -------------------------------------
 
   private async toolsList(req: GatewayRequest): Promise<GatewayResponse> {
@@ -1059,6 +1297,95 @@ export class ApiGatewayModule implements IModule {
     if (!id) return json(400, { error: 'query parameter "id" is required' });
     await this.organizations.requireRole(id, req.principal!.userId, 'guest');
     return json(200, { members: await this.organizations.listMembers(id) });
+  }
+
+  // --- tenant-scoped data (multi-tenant isolation, PR4) -------------------
+
+  /**
+   * Resolve a tenant-scoped storage view for the caller's organization after
+   * enforcing membership. Throws a 403-style error if the user is not a member,
+   * which the router translates into a 403 response — guaranteeing one org can
+   * never touch another org's data.
+   */
+  private async requireTenantScope(req: GatewayRequest, orgId: string | undefined): Promise<{ scope: TenantScope; ns: INamespace } | GatewayResponse> {
+    if (!this.organizations) return json(501, { error: 'organizations module not registered' });
+    if (!this.storage) return json(501, { error: 'storage module not registered' });
+    if (!orgId) return json(400, { error: 'field/query "orgId" is required' });
+    try {
+      // Enforce membership at the org level before exposing the tenant scope.
+      await this.organizations.requireRole(orgId, req.principal!.userId, 'member');
+    } catch (err) {
+      return json(403, { error: (err as Error).message });
+    }
+    const scope = this.storage.tenant(orgId);
+    const ns = await scope.namespace('org.data');
+    return { scope, ns };
+  }
+
+  private async orgDataGet(req: GatewayRequest): Promise<GatewayResponse> {
+    const resolved = await this.requireTenantScope(req, req.query.orgId);
+    if ('status' in resolved) return resolved;
+    const { ns } = resolved;
+    if (req.query.id) {
+      const value = await ns.get(req.query.id);
+      return json(200, { id: req.query.id, value });
+    }
+    const result = await ns.list({ ...(req.query.prefix ? { prefix: req.query.prefix } : {}), limit: req.query.limit ? Number(req.query.limit) : 1000 });
+    return json(200, { keys: result.items.map((e) => e.meta.key), count: result.items.length });
+  }
+
+  private async orgDataMutate(req: GatewayRequest): Promise<GatewayResponse> {
+    const b = this.asObject(req.body);
+    const resolved = await this.requireTenantScope(req, typeof b.orgId === 'string' ? b.orgId : undefined);
+    if ('status' in resolved) return resolved;
+    const { ns } = resolved;
+    const action = typeof b.action === 'string' ? b.action : '';
+    const id = typeof b.id === 'string' ? b.id : '';
+    if (!id && action !== 'list') return json(400, { error: 'field "id" is required' });
+    if (action === 'set') {
+      await ns.set(id, b.value);
+      await this.sec.audit({ actor: req.principal!.userId, action: 'org.data.set', result: 'success', resource: id, detail: { orgId: b.orgId } });
+      return json(201, { ok: true, id });
+    }
+    if (action === 'get') {
+      const value = await ns.get(id);
+      return json(200, { id, value });
+    }
+    if (action === 'delete') {
+      const deleted = await ns.delete(id);
+      await this.sec.audit({ actor: req.principal!.userId, action: 'org.data.delete', result: deleted ? 'success' : 'failure', resource: id, detail: { orgId: b.orgId } });
+      return json(200, { deleted });
+    }
+    if (action === 'list') {
+      const result = await ns.list({ limit: 1000 });
+      return json(200, { keys: result.items.map((e) => e.meta.key), count: result.items.length });
+    }
+    return json(400, { error: 'unknown action (set|get|delete|list)' });
+  }
+
+  // --- session management (restart-safe sessions, PR4) -------------------
+
+  private async sessionsList(req: GatewayRequest): Promise<GatewayResponse> {
+    // Admins may list any user's sessions; others may only see their own.
+    const requested = req.query.userId;
+    const userId = requested && this.sec.authorize(req.principal!, 'audit:read') ? requested : req.principal!.userId;
+    const sessions = await this.sec.listSessions(userId);
+    // Never expose the raw token in listings (only metadata).
+    const safe = sessions.map((s) => ({ userId: s.userId, username: s.username, createdAt: s.createdAt, expiresAt: s.expiresAt, lastUsedAt: s.lastUsedAt, remoteAddress: s.remoteAddress }));
+    return json(200, { sessions: safe, count: safe.length });
+  }
+
+  private async sessionRevoke(req: GatewayRequest): Promise<GatewayResponse> {
+    const b = this.asObject(req.body);
+    const me = req.principal!.userId;
+    if (b.all === true) {
+      const currentToken = this.bearer(req);
+      const n = await this.sec.revokeAllUserSessions(me, currentToken);
+      return json(200, { revoked: n });
+    }
+    if (typeof b.token !== 'string') return json(400, { error: 'field "token" (or "all": true) is required' });
+    const ok = await this.sec.revokeSession(b.token);
+    return ok ? json(200, { revoked: true }) : json(404, { error: 'session not found' });
   }
 
   // --- notifications -------------------------------------------------------

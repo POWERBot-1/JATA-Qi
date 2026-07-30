@@ -96,6 +96,47 @@ export interface IStorageDriver {
   close(): Promise<void>;
 }
 
+/**
+ * A tenant-scoped view of storage. Every collection / namespace / blob store
+ * opened through a TenantScope is partitioned by the tenant id, so one
+ * organization can never read or write another organization's data. This is the
+ * platform-wide multi-tenancy enforcement primitive (PR4 — Security Hardening).
+ */
+export interface TenantScope {
+  /** The tenant (organization) id this scope is bound to. */
+  readonly tenantId: string;
+  collection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
+  namespace(name: string): Promise<INamespace>;
+  blobStore(name: string): Promise<IBlobStore>;
+}
+
+/**
+ * Build the physical partition name for a tenant + logical name. Tenant ids are
+ * validated and disambiguated with a reserved prefix so tenant data can never
+ * collide with global (non-tenant) collections.
+ */
+export const TENANT_PARTITION_PREFIX = 'tenant';
+
+export function tenantPartitionName(tenantId: string, name: string): string {
+  if (!tenantId || typeof tenantId !== 'string') {
+    throw new Error('storage: tenantId is required for tenant-scoped access');
+  }
+  if (name === undefined || name === null || name === '') {
+    throw new Error('storage: a collection/namespace name is required for tenant-scoped access');
+  }
+  // Reject tenant ids that could break the partition scheme (path separators,
+  // the reserved prefix, or control characters).
+  if (/[/:\\]/.test(tenantId) || tenantId === TENANT_PARTITION_PREFIX) {
+    throw new Error(`storage: invalid tenantId "${tenantId}"`);
+  }
+  return `${TENANT_PARTITION_PREFIX}:${tenantId}:${name}`;
+}
+
+/** True if a physical name lives under a tenant partition. */
+export function isTenantPartition(name: string): boolean {
+  return typeof name === 'string' && name.startsWith(`${TENANT_PARTITION_PREFIX}:`);
+}
+
 /** Events published on the kernel event bus. */
 export const StorageEvents = Object.freeze({
   NamespaceCreated: 'storage.namespace.created',
