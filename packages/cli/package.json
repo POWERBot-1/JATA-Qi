@@ -50,7 +50,9 @@
     "@jataqi/evals": "0.1.0",
     "@jataqi/finance": "0.1.0",
     "@jataqi/communication": "0.1.0",
-    "@jataqi/research": "0.1.0"
+    "@jataqi/research": "0.1.0",
+    "@jataqi/education": "0.1.0",
+    "@jataqi/health": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

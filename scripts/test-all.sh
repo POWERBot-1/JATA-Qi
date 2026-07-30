@@ -10,7 +10,7 @@ PKGS=(
   knowledge-service knowledge-graph
   model-registry scheduler plugins readiness commerce organizations notifications policies feature-flags privacy policy-governance
   agent-runtime compute teams robotics digital-twin tool-intelligence provenance
-  orchestrator multimedia evals finance communication research api-gateway cli
+  orchestrator multimedia evals finance communication research education health api-gateway cli
 )
 
 failed=0
