@@ -39,7 +39,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
 
   // --- Developer (P2) ---
   cap({ id: 'cli', name: 'Developer CLI', category: 'developer', status: 'TESTED', module: '@jataqi/cli', evidence: ['serve, ask, models, simulate, plugins'] }),
-  cap({ id: 'sdk', name: 'SDKs (Python/TS)', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'TypeScript library API only; no published SDKs' }),
+  cap({ id: 'sdk', name: 'TypeScript SDK (typed HTTP client)', category: 'developer', status: 'TESTED', module: '@jataqi/sdk', evidence: ['typed JataQiClient with 22 namespace clients covering all gateway endpoints', 'auth, health, identity, readiness, knowledge, agent, qil, workflow, tools, devices, twins, models, simulate, team, commerce, org, notifications, flags, gov, media, mfa', '22 integration tests against real server', 'examples/basic-usage.mjs'], notes: 'no Python SDK yet; no WebSocket client; local/embedded mode requires importing @jataqi/cli directly' }),
   cap({ id: 'evals', name: 'AI evaluation platform (suites, metrics, regression)', category: 'developer', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/evals', evidence: ['eval suites, built-in metrics (exact/contains/token-overlap/regex), run scoring, regression comparison — 7 tests'], notes: 'no bias/safety/hallucination-specific evaluators yet; no scheduled evals; no dashboard' }),
   cap({ id: 'web-ui', name: 'Web/mobile dashboards & consoles', category: 'developer', status: 'NOT_IMPLEMENTED', notes: 'HTTP API only; no UI' }),
 
