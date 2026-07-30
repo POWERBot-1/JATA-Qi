@@ -51,7 +51,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   // --- Enterprise (P4) ---
   cap({ id: 'enterprise', name: 'Enterprise OS (CRM/ERP/HR/Finance)', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
   cap({ id: 'finance', name: 'Financial intelligence (wallets, ledgers, transactions, reconciliation)', category: 'enterprise', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/finance', evidence: ['immutable append-only ledger, wallets, credit/debit/transfer/reverse, reconciliation, governance-gated — 12 tests'], notes: 'real ledger engine; no real payment provider integration; no FX/multi-currency conversion; no regulated financial services' }),
-  cap({ id: 'supply-chain', name: 'Supply chain intelligence', category: 'enterprise', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'supply-chain', name: 'Supply chain intelligence (suppliers, inventory, POs, deliveries)', category: 'enterprise', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/supply-chain', evidence: ['suppliers+ratings, inventory with low-stock alerts, purchase orders with approval, deliveries with auto-stock-in — 3 tests'], notes: 'no demand forecasting, no logistics optimization, no multi-warehouse' }),
 
   // --- Domain intelligence (P5) ---
   cap({ id: 'education', name: 'Education intelligence (courses, lessons, enrollments, progress, student privacy)', category: 'domain', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/education', evidence: ['courses with levels, lessons, enrollments, progress tracking with completion, auto-complete at 100% — 7 tests'], notes: 'no AI tutors, no assessment grading, no institutional dashboards' }),
@@ -68,7 +68,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'iot', name: 'IoT / sensor ingestion', category: 'physical', status: 'NOT_IMPLEMENTED' }),
   cap({ id: 'cloud-devops', name: 'Autonomous cloud & DevOps', category: 'physical', status: 'NOT_IMPLEMENTED' }),
   cap({ id: 'smart-cities', name: 'Smart cities', category: 'physical', status: 'NOT_IMPLEMENTED' }),
-  cap({ id: 'environment', name: 'Environmental intelligence', category: 'physical', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'environment', name: 'Environmental intelligence (monitoring, alerts, sustainability)', category: 'physical', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/environment', evidence: ['monitoring stations, readings with threshold alerts (severity-scaled), sustainability metrics — 4 tests'], notes: 'no real sensor integration, no satellite data, no climate modeling' }),
 
   // --- Governance & safety ---
   cap({ id: 'notifications', name: 'Notification engine (in-app, webhook, preferences, rate limits)', category: 'foundation', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/notifications', evidence: ['multi-channel delivery, inbox, preferences, rate limits, event-driven — 6 tests'], notes: 'email/SMS are adapter abstractions (no real provider wired); no portal UI' }),
@@ -79,7 +79,7 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'human-oversight', name: 'Human approval engine (high-risk actions)', category: 'governance', status: 'TESTED', module: '@jataqi/tool-intelligence', evidence: ['approval gating for R4/R5 tools'] }),
   cap({ id: 'provenance', name: 'Creator identity & cryptographic provenance (JQ-CIP)', category: 'governance', status: 'TESTED', module: '@jataqi/provenance', evidence: ['Ed25519 signed root manifest', 'append-only hash-chained ledger', 'tamper detection', 'key rotation/revocation'], notes: 'creator = GITANYA K; private signing key kept out of the repo' }),
   cap({ id: 'ai-safety', name: 'AI safety framework (injection defenses, loop limits)', category: 'governance', status: 'PARTIALLY_IMPLEMENTED', notes: 'agent max-iterations + tool risk gating; no prompt-injection scanner' }),
-  cap({ id: 'cyberdefense', name: 'Cybersecurity & threat defense', category: 'governance', status: 'NOT_IMPLEMENTED' }),
+  cap({ id: 'cyberdefense', name: 'Cybersecurity & threat defense (indicators, vulnerabilities, incidents)', category: 'governance', status: 'PARTIALLY_IMPLEMENTED', module: '@jataqi/cyberdefense', evidence: ['threat indicators with value-checking, vulnerability lifecycle (open→remediated), incident management (open→resolved), security event log — 4 tests'], notes: 'no real SIEM integration, no automated remediation, no SOC dashboard' }),
 
   // --- Global / sovereign (P7) ---
   cap({ id: 'sovereign', name: 'Sovereign / government deployment', category: 'global', status: 'NOT_IMPLEMENTED' }),
