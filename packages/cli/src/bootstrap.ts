@@ -51,6 +51,7 @@ import { SmartCitiesModule } from '@jataqi/smart-cities';
 import { CloudDevopsModule } from '@jataqi/cloud-devops';
 import { LocalizationModule } from '@jataqi/localization';
 import { EnterpriseModule } from '@jataqi/enterprise';
+import { MFAModule } from '@jataqi/mfa';
 import { readConfig } from './config.js';
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -147,6 +148,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new CloudDevopsModule());
   kernel.register(new LocalizationModule());
   kernel.register(new EnterpriseModule());
+  kernel.register(new MFAModule());
   const gateway = new ApiGatewayModule(cfg.gateway);
   kernel.register(gateway);
 

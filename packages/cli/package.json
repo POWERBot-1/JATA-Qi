@@ -61,7 +61,8 @@
     "@jataqi/smart-cities": "0.1.0",
     "@jataqi/cloud-devops": "0.1.0",
     "@jataqi/localization": "0.1.0",
-    "@jataqi/enterprise": "0.1.0"
+    "@jataqi/enterprise": "0.1.0",
+    "@jataqi/mfa": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
