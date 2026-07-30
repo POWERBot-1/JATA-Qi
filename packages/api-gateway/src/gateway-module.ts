@@ -286,6 +286,7 @@ export class ApiGatewayModule implements IModule {
         remoteAddress: req.socket.remoteAddress,
       };
 
+      // Try API routes first.
       const handler = this.routes.get(`${method} ${path}`);
       let resp: GatewayResponse;
 
@@ -306,6 +307,18 @@ export class ApiGatewayModule implements IModule {
       }
 
       if (!handler) {
+        // Try serving static UI files (web-ui module) for /ui paths.
+        if (path === '/ui' || path.startsWith('/ui/')) {
+          const ui = this.tryModule<import('@jataqi/core-kernel').IModule & { serve(p: string): { content: Buffer; contentType: string } | undefined }>('web-ui');
+          if (ui) {
+            const file = ui.serve(path);
+            if (file) {
+              res.writeHead(200, { 'content-type': file.contentType, 'content-length': file.content.length });
+              res.end(file.content);
+              return;
+            }
+          }
+        }
         resp = json(404, { error: 'not found', path });
       } else {
         try {
