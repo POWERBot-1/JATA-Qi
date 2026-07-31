@@ -209,10 +209,10 @@ via `scripts/build-all.sh`.
 
 ```
 Packages:              56
-Tests:                 816 (100% pass)
+Tests:                 830 (100% pass)
 Gateway endpoints:      99
 Kernel modules:         56
-Readiness capabilities: 77 (41 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
+Readiness capabilities: 78 (42 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
 Governance-gated paths: 2 (orchestrator + tool-intelligence)
 Audit-logging packages: 23+
 Zero external deps:     ✅ (Node.js built-ins only)
@@ -221,6 +221,7 @@ P0 blockers resolved:   6/6 (PR2 + PR3 + PR4)
 P1 risks resolved:      CORS, versioning, size-limits, encryption-at-rest, horizontal scaling + multi-writer, distributed tracing (PR4-PR9)
 Deployment artifacts:   Kubernetes (Kustomize + Helm), Prometheus/Grafana monitoring (PR5)
 Quality assurance:      E2E + performance + security + chaos suites (PR6)
+Real-time:              WebSocket (RFC 6455) server + event broadcast (PR10)
 Production-ready:       0 capabilities (ALPHA — by design, no PRODUCTION_READY claims)
 ```
 
@@ -596,7 +597,36 @@ Readiness: 76 → 77 capabilities (40 → 41 TESTED); added `observability.traci
 
 ---
 
-## 18. Recommendation
+## 18. PR10 — WebSocket real-time server (complete)
+
+**Branch**: `arena/019f94a7-jata-qi` · **Phase**: PR10 · **Status**: ✅ Complete
+
+PR10 adds a from-scratch WebSocket (RFC 6455) server in pure Node — the last
+"no WebSocket" P1 gap. The gateway now accepts real-time connections at `/ws`.
+
+### 18.1 `@jataqi/realtime` package
+- **`ws-codec.ts`** — frame encode/decode (FIN, opcodes, masking, 7/16/64-bit
+  lengths, fragmentation, ping/pong/close) — streaming-safe.
+- **`websocket.ts`** — connection wrapper (fragment reassembly, control-frame
+  handling, close handshake, auto ping→pong).
+- **`ws-handshake.ts`** — HTTP upgrade (`Sec-WebSocket-Accept` = SHA-1(key + GUID)).
+- **`realtime-module.ts`** — kernel module: attaches to the gateway's HTTP server,
+  authenticates via session token (query param or subprotocol), broadcasts kernel
+  bus events to connected clients, supports client-side topic subscription.
+
+### 18.2 Gateway integration
+The gateway auto-detects `RealtimeModule` and calls `attach(server, { authenticate })`
+on start. `/ws?token=<bearer>` upgrades to a WebSocket; unauthenticated upgrades
+get 401.
+
+### 18.3 Tests
+- `ws-codec.test.ts` (9): text/binary/masked/large/fragmented/partial/multi/binary.
+- `realtime-module.test.ts` (5): auth rejection, authenticated upgrade, broadcast,
+  topic subscription, client count. **14 tests total.**
+
+---
+
+## 19. Recommendation
 
 **JATA Qi is architecturally production-grade but operationally not yet production-ready.**
 The modular design, governance enforcement, cryptographic provenance, comprehensive
@@ -614,7 +644,8 @@ horizontal scaling) are closed. The path to a production release is now:
 6. ~~**PR7**: Storage quotas + encryption at rest~~ ✅
 7. ~~**PR8**: PostgreSQL driver (multi-writer horizontal scaling)~~ ✅
 8. ~~**PR9**: OpenTelemetry distributed tracing~~ ✅
-9. **Remaining (P1 / stretch)**: real payment/email/SMS providers, WebSocket, CI workflow push (GitHub App permissions), Terraform
+9. ~~**PR10**: WebSocket real-time~~ ✅
+10. **Remaining (P1 / stretch)**: real payment/email/SMS providers, CI workflow push (GitHub App permissions), Terraform
 
 Estimated time to production: **2-3 weeks** with a focused team (P0 blockers, confidence baseline, storage hardening, multi-writer scaling, and distributed tracing all done; remaining work is P1 third-party providers + real-time + CI push).
 

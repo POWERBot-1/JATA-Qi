@@ -39,6 +39,7 @@ import type { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import type { DisasterRecoveryModule } from '@jataqi/disaster-recovery';
 import type { TracingModule } from '@jataqi/tracing';
 import type { Span } from '@jataqi/tracing';
+import type { RealtimeModule } from '@jataqi/realtime';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, ResolvedCorsPolicy, RouteHandler, TlsConfig } from './types.js';
@@ -85,6 +86,7 @@ export class ApiGatewayModule implements IModule {
   private governance?: PolicyGovernanceModule;
   private disasterRecovery?: DisasterRecoveryModule;
   private tracing?: TracingModule;
+  private realtime?: RealtimeModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -139,6 +141,7 @@ export class ApiGatewayModule implements IModule {
     this.governance = this.tryModule<PolicyGovernanceModule>('policy-governance');
     this.disasterRecovery = this.tryModule<DisasterRecoveryModule>('disaster-recovery');
     this.tracing = this.tryModule<TracingModule>('tracing');
+    this.realtime = this.tryModule<RealtimeModule>('realtime');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -150,6 +153,10 @@ export class ApiGatewayModule implements IModule {
     const handler = (req: IncomingMessage, res: ServerResponse): void => { void this.handle(req, res); };
     this.server = tlsOpts ? createHttpsServer(tlsOpts, handler) : createServer(handler);
 
+    // Attach the WebSocket real-time server if present (PR10).
+    if (this.realtime && this.server) {
+      this.realtime.attach(this.server, { authenticate: (token) => this.sec.authenticate(token ?? undefined) });
+    }
     this.booted = true;
     // Record an auditable boot record describing the active security posture.
     void this.sec.audit({
