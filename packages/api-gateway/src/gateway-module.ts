@@ -568,13 +568,21 @@ export class ApiGatewayModule implements IModule {
 
   private async readBody(req: IncomingMessage): Promise<unknown> {
     const max = this.opts.maxBodyBytes ?? 1_048_576;
+    // Drain cap: once a body exceeds the limit we keep reading (up to a small
+    // multiple of the limit) so the underlying connection stream is fully
+    // consumed — otherwise a rejected oversized body corrupts the keep-alive
+    // connection and breaks subsequent requests on it.
+    const drainCap = max * 10;
     const chunks: Buffer[] = [];
     let size = 0;
+    let tooLarge = false;
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > max) throw Object.assign(new Error('request body too large'), { status: 413 });
-      chunks.push(chunk as Buffer);
+      if (!tooLarge && size > max) tooLarge = true;
+      if (size > drainCap) break; // stop a runaway drain
+      if (!tooLarge) chunks.push(chunk as Buffer);
     }
+    if (tooLarge) throw Object.assign(new Error('request body too large'), { status: 413 });
     const text = Buffer.concat(chunks).toString('utf8');
     if (!text) return undefined;
     try {
