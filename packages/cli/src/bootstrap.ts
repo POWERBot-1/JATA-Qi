@@ -60,6 +60,7 @@ import { WebUIModule } from '@jataqi/web-ui';
 import { TracingModule } from '@jataqi/tracing';
 import { RealtimeModule } from '@jataqi/realtime';
 import { PaymentsModule } from '@jataqi/payments';
+import { MessagingModule } from '@jataqi/messaging';
 import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
@@ -189,6 +190,15 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 
   kernel.register(new TracingModule(readTracingConfigFromEnv()));
   kernel.register(new RealtimeModule());
+  kernel.register(new MessagingModule({
+    ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
+    ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {
+      twilio: { accountSid: process.env.TWILIO_ACCOUNT_SID, authToken: process.env.TWILIO_AUTH_TOKEN, fromNumber: process.env.TWILIO_FROM_NUMBER ?? '' },
+    } : {}),
+    ...(process.env.AFRICAS_TALKING_API_KEY ? {
+      africasTalking: { apiKey: process.env.AFRICAS_TALKING_API_KEY, username: process.env.AFRICAS_TALKING_USERNAME ?? 'sandbox', ...(process.env.AFRICAS_TALKING_SENDER_ID ? { senderId: process.env.AFRICAS_TALKING_SENDER_ID } : {}) },
+    } : {}),
+  }));
   kernel.register(new PaymentsModule(process.env.STRIPE_SECRET_KEY ? {
     stripe: {
       secretKey: process.env.STRIPE_SECRET_KEY,
