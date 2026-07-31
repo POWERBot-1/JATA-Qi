@@ -1,0 +1,28 @@
+# JATA Qi — Prometheus Operator ServiceMonitor. Scrapes the /metrics endpoint
+# (Prometheus text exposition) from every gateway pod. Requires the Prometheus
+# Operator (kube-prometheus-stack). For standalone Prometheus see prometheus.yml.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+    release: prometheus   # match your kube-prometheus-stack release name
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jataqi
+  namespaceSelector:
+    matchNames: [jataqi]
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+      # /metrics requires the metrics:read permission — inject a token via a
+      # ServiceAccount-backed Secret, or expose a public /metrics behind auth.
+      bearerTokenSecret:
+        name: jataqi-scrape-token
+        key: token
+        optional: true

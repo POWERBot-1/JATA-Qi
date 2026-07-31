@@ -5,6 +5,10 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import { MetricsRegistry } from './registry.js';
 import { MetricsEvents } from './types.js';
+import { DEFAULT_BUCKETS } from './types.js';
+
+/** Latency histogram buckets in milliseconds (HTTP request durations). */
+export const LATENCY_BUCKETS_MS = Object.freeze([1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000] as const);
 
 export class MetricsModule implements IModule {
   readonly id = 'metrics';
@@ -16,6 +20,8 @@ export class MetricsModule implements IModule {
 
   // Platform-wide instruments, created lazily on init.
   readonly requests = this.registry.counter('jataqi_requests_total', 'Total HTTP requests handled');
+  readonly requestDuration = this.registry.histogram('jataqi_request_duration_ms', 'HTTP request duration in ms', LATENCY_BUCKETS_MS);
+  readonly requestsInFlight = this.registry.gauge('jataqi_requests_in_flight', 'HTTP requests currently being handled');
   readonly workflowRuns = this.registry.counter('jataqi_workflow_runs_total', 'Total orchestrator workflow runs');
   readonly workflowDuration = this.registry.histogram('jataqi_workflow_duration_ms', 'Workflow execution duration');
   readonly auditEvents = this.registry.counter('jataqi_audit_events_total', 'Total audit records appended');

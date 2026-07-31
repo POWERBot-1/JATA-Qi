@@ -1,0 +1,31 @@
+# JATA Qi — Ingress with TLS termination. Scale the gateway behind a load
+# balancer / ingress controller; prefer terminating TLS at the edge and also
+# enabling the gateway's native TLS (TLS_CERT_PATH/TLS_KEY_PATH) for end-to-end.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    # Reflect the gateway's own CORS policy at the edge too.
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["jataqi.example.com"]
+      secretName: jataqi-ingress-tls
+  rules:
+    - host: jataqi.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jataqi-cluster
+                port:
+                  name: http

@@ -9,14 +9,16 @@
 
 ## 1. Executive Summary
 
-JATA Qi is a modular AI operating system with **56 packages**, **634 automated tests**
-(0 failures), **~20,300 lines of TypeScript source**, and **~7,900 lines of tests**.
+JATA Qi is a modular AI operating system with **56 packages**, **700 automated tests**
+(0 failures), **~20,300 lines of TypeScript source**, and **~8,600 lines of tests**.
 The architecture is sound: modular kernel, event-driven, API-first, governance-gated,
-tenant-isolated, TLS-hardened, and cryptographically provenanced. After PR2–PR4,
-**all six P0 production blockers are resolved** (persistent storage, real LLM,
-restart-safe sessions, TLS/HTTPS, multi-tenant isolation, scheduled backups). Remaining
-gaps are P1 provider integrations (payments, email/SMS) and operational infrastructure
-(Kubernetes, monitoring).
+tenant-isolated, TLS-hardened, observability-instrumented, and cryptographically
+provenanced. After PR2–PR5, **all six P0 production blockers are resolved** (persistent
+storage, real LLM, restart-safe sessions, TLS/HTTPS, multi-tenant isolation, scheduled
+backups) and the platform ships production Kubernetes (Kustomize + Helm) and
+Prometheus/Grafana monitoring. Remaining gaps are P1 provider integrations (payments,
+email/SMS), multi-writer horizontal scaling (Postgres driver), and the CI workflow
+push (GitHub App permissions).
 
 **Capability status**: 30 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY,
 0 NOT_IMPLEMENTED, **0 PRODUCTION_READY** (no false claims, by design).
@@ -156,9 +158,12 @@ via `scripts/build-all.sh`.
 | docker-compose.yml | ✅ Created (with volumes, healthcheck, restart) |
 | .dockerignore | ✅ Created |
 | .env.example | ✅ Exists (all config documented) |
+| Kubernetes manifests | ✅ `deploy/k8s/` (Kustomize base, PR5) |
+| Helm chart | ✅ `deploy/helm/jataqi/` (PR5) |
+| Monitoring stack | ✅ `deploy/monitoring/` (Prometheus + Grafana, PR5) |
+| deploy/README.md | ✅ Deployment guide (PR5) |
 | CI workflow | ⚠️ Exists but not pushed (GitHub App permissions) |
 | Terraform | ❌ Not created |
-| Kubernetes manifests | ❌ Not created |
 
 ---
 
@@ -185,12 +190,12 @@ via `scripts/build-all.sh`.
 - [x] Scheduled backup automation — interval scheduler + retention + notifications
 - [ ] Integrate Vault/KMS for secret management — deferred (P1); TLS key path shipped in PR4
 
-### Phase PR5: Operational Infrastructure (1-2 weeks)
-- [ ] Add Kubernetes manifests (Deployment, Service, Ingress, HPA)
-- [ ] Add Prometheus/Grafana monitoring stack
-- [ ] Add horizontal scaling support (stateless gateway + shared storage)
-- [ ] Push CI workflow (requires GitHub permissions fix)
-- [ ] Add API documentation generation to CI
+### Phase PR5: Operational Infrastructure (1-2 weeks) — ✅ COMPLETE
+- [x] Add Kubernetes manifests (StatefulSet, Service, Ingress, HPA, PDB, NetworkPolicy, ConfigMap/Secret, SA+RBAC, Kustomize) — ✅ PR5
+- [x] Add Prometheus/Grafana monitoring stack (ServiceMonitor, alert rules, RED dashboard) — ✅ PR5
+- [x] Add horizontal scaling support (stateless gateway + shared store, proven across instances) — ✅ PR5
+- [ ] Push CI workflow (requires GitHub permissions fix) — still blocked (GitHub App lacks workflows scope)
+- [x] Add API documentation generation (OpenAPI at /openapi.json, deployment-artifact validation in CI test) — ✅ PR5
 
 ### Phase PR6: Quality Assurance (1 week)
 - [ ] Add E2E test suite covering the full vertical slice
@@ -204,21 +209,101 @@ via `scripts/build-all.sh`.
 
 ```
 Packages:              56
-Tests:                 634 (100% pass)
-Gateway endpoints:      96
+Tests:                 700 (100% pass)
+Gateway endpoints:      99
 Kernel modules:         56
-Readiness capabilities: 66 (30 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
+Readiness capabilities: 69 (33 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
 Governance-gated paths: 2 (orchestrator + tool-intelligence)
 Audit-logging packages: 23+
 Zero external deps:     ✅ (Node.js built-ins only)
 Creator identity:       GITANYA K (Ed25519 verified)
 P0 blockers resolved:   6/6 (PR2 + PR3 + PR4)
+Deployment artifacts:   Kubernetes (Kustomize + Helm), Prometheus/Grafana monitoring (PR5)
 Production-ready:       0 capabilities (ALPHA — by design, no PRODUCTION_READY claims)
 ```
 
 ---
 
-## 12. PR4 — Security Hardening (complete)
+## 12. PR5 — Operational Infrastructure (complete)
+
+**Branch**: `arena/019f94a7-jata-qi` · **Phase**: PR5 · **Status**: ✅ Complete (0 build errors, 0 test failures)
+
+PR5 delivers the operational baseline: Kubernetes deployment, Prometheus/Grafana
+monitoring, a stateless horizontally-scalable gateway, and the observability
+metrics that drive them. Zero external runtime dependencies; all artifacts are
+structurally validated by an automated test.
+
+### 12.1 Enhanced gateway metrics (RED)
+
+`@jataqi/metrics` now exposes request **latency** (`jataqi_request_duration_ms`
+histogram, ms buckets) and **concurrency** (`jataqi_requests_in_flight` gauge),
+alongside the existing `jataqi_requests_total{method,path,status}` counter. The
+gateway records duration + in-flight on every request (incl. the catch/finally
+path). **Bug fixed:** the gateway now writes any `text/*` response verbatim —
+previously Prometheus metrics (`text/plain; version=0.0.4`) were silently
+JSON-quoted, breaking scraping.
+
+### 12.2 Kubernetes probes
+
+New `/livez` (liveness — process alive) and `/readyz` (readiness — storage +
+security dependency checks) endpoints, plus the existing `/health`. The
+StatefulSet wires all three (liveness, readiness, startup) so a load balancer
+only routes to healthy, dependency-ready pods.
+
+### 12.3 Kubernetes manifests (`deploy/k8s/`)
+
+Production-grade, Kustomize-ready: Namespace, ConfigMap, Secret template,
+ServiceAccount + RBAC, **StatefulSet** (non-root, `ALL` capabilities dropped,
+`readOnlyRootFilesystem`, resource requests/limits, PVC, probes), headless +
+cluster Services, TLS Ingress, HPA, PodDisruptionBudget, and a default-deny
+NetworkPolicy. `kubectl apply -k deploy/k8s`.
+
+### 12.4 Helm chart (`deploy/helm/jataqi/`)
+
+Parameterized chart (`values.yaml` + helpers + 8 templates + NOTES) exposing
+replica count, storage driver/size/access mode, TLS, CORS, backups, autoscaling,
+ingress, network policy, and monitoring toggles. `helm install jataqi deploy/helm/jataqi`.
+
+### 12.5 Monitoring stack (`deploy/monitoring/`)
+
+Prometheus Operator **ServiceMonitor** (scrapes `/metrics`), **alert rules**
+(5xx error rate, p95 latency, pod-not-ready, readiness failures), a **Grafana
+RED dashboard** (JSON), standalone `prometheus.yml`, and datasource provisioning.
+
+### 12.6 Horizontal scaling (stateless gateway)
+
+The gateway is **stateless**: sessions, users, API keys, and tenant data live in
+the shared storage layer, so any replica authenticates any request. The
+`horizontal-scaling.test.ts` suite proves two instances sharing a SQLite
+database (WAL) authenticate each other's sessions, honor each other's API keys,
+share org tenant data, and — because persistent-mode authentication now reads
+the store on every call — propagate **session revocation immediately** across
+instances. Scale-out beyond a single writer awaits a networked DB driver
+(Postgres); SQLite default is single-writer / vertically scalable.
+
+### 12.7 Deployment validation
+
+`packages/cli/test/deployment-artifacts.test.ts` structurally validates every
+manifest (50 checks: presence, no tabs, apiVersion+kind on resource docs,
+standard labels, workload hardening, probe paths, NetworkPolicy/HPA/Ingress
+shape, valid Grafana JSON, Helm template/render shape).
+
+### 12.8 Test evidence (PR5)
+
+| Suite | Tests | Package |
+|---|---|---|
+| Observability (probes + metrics) | 5 | `@jataqi/api-gateway` |
+| Horizontal scaling (2 instances) | 7 | `@jataqi/api-gateway` |
+| Deployment-artifact validation | 50 | `@jataqi/cli` |
+| **PR5 total** | **62** (+ existing suites green) | (638 → 700 platform tests, 0 failures) |
+
+> Plus a backward-compatible security refactor: persistent-mode authentication is
+> now stateless (reads the shared store every call) and Bearer `jqk_` API keys
+> are honored by the gateway auth path.
+
+---
+
+## 13. PR4 — Security Hardening (complete)
 
 **Branch**: `arena/019f94a7-jata-qi` · **Phase**: PR4 · **Status**: ✅ Complete (0 build errors, 0 test failures)
 
@@ -226,7 +311,7 @@ PR4 closes every remaining P0 production blocker by hardening the transport,
 session, tenancy, and disaster-recovery layers — all production-grade, zero
 external runtime dependencies, fully backward compatible.
 
-### 12.1 Restart-safe session persistence
+### 13.1 Restart-safe session persistence
 
 Sessions are now persisted to the `security.sessions` storage collection (works
 with every driver; durable across restarts on filesystem/SQLite).
@@ -242,7 +327,7 @@ with every driver; durable across restarts on filesystem/SQLite).
   expired sessions pruned on boot; revoke/list; remote-address forensics;
   lifecycle events; ephemeral mode.
 
-### 12.2 Native HTTPS/TLS termination
+### 13.2 Native HTTPS/TLS termination
 
 - **`@jataqi/api-gateway`**: `GatewayOptions.tls` (cert/key inline **or** file
   paths, optional CA for mTLS, `requestCert`, `minVersion`, `handshakeTimeout`).
@@ -251,7 +336,7 @@ with every driver; durable across restarts on filesystem/SQLite).
 - `GatewayHandle` now reports `protocol` (`http`/`https`) and `secure`.
 - `GET /health` reports `transport` + `secure`.
 
-### 12.3 Configurable CORS
+### 13.3 Configurable CORS
 
 - `GatewayOptions.cors` accepts `true` (legacy permissive) or a `CorsConfig`
   (`origins` allow-list / `*`, `methods`, `headers`, `exposeHeaders`,
@@ -259,7 +344,7 @@ with every driver; durable across restarts on filesystem/SQLite).
   invalid `credentials + *` combination is auto-guarded. OPTIONS preflight
   returns `204` with `Access-Control-Allow-Methods/Headers/Max-Age`.
 
-### 12.4 API versioning (`/v1`)
+### 13.4 API versioning (`/v1`)
 
 - Every route is reachable at `/v1/<path>` **and** the legacy `/<path>`
   (backward compatible). Configurable via `apiVersion` (disable with `false`).
@@ -267,7 +352,7 @@ with every driver; durable across restarts on filesystem/SQLite).
   aggregate. `/v1` resolves to the root index, which now advertises
   `apiVersion` / `versionedBase` / `versions`.
 
-### 12.5 Multi-tenant storage isolation
+### 13.5 Multi-tenant storage isolation
 
 - **`@jataqi/storage`**: new `TenantScope` + `StorageModule.tenant(orgId)`.
   Every collection/namespace/blob-store opened through a scope is partitioned
@@ -279,7 +364,7 @@ with every driver; durable across restarts on filesystem/SQLite).
 - **Tests**: 8 storage + 6 HTTP isolation scenarios (cross-tenant invisibility,
   403 for non-members, restart persistence).
 
-### 12.6 Scheduled backup automation
+### 13.6 Scheduled backup automation
 
 - **`@jataqi/disaster-recovery`**: `runBackupCycle(config)`,
   `startScheduler(config)` (interval + retention + `runNow`), `listSchedulers()`.
@@ -292,7 +377,7 @@ with every driver; durable across restarts on filesystem/SQLite).
 - **Tests**: 7 — cycle counts, retention pruning, `runNow`, event + audit,
   notifications, shutdown cleanup, invalid config.
 
-### 12.7 Security headers & audit posture
+### 13.7 Security headers & audit posture
 
 - Every response now carries `X-Content-Type-Options: nosniff`,
   `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`,
@@ -300,13 +385,13 @@ with every driver; durable across restarts on filesystem/SQLite).
 - Gateway emits an auditable `gateway.start` record describing the active
   posture (tls/cors/apiVersion/tenantIsolation) on boot.
 
-### 12.8 New env vars (`.env.example`)
+### 13.8 New env vars (`.env.example`)
 
 `CORS_ORIGINS`, `CORS_CREDENTIALS`, `API_VERSION`, `TLS_CERT_PATH`,
 `TLS_KEY_PATH`, `TLS_CA_PATH`, `TLS_MIN_VERSION`, `SECURITY_PERSIST_SESSIONS`,
 `BACKUP_NAMESPACES`, `BACKUP_INTERVAL_MS`, `BACKUP_RETENTION`.
 
-### 12.9 Test evidence (PR4)
+### 13.9 Test evidence (PR4)
 
 | Suite | Tests | Package |
 |---|---|---|
@@ -318,21 +403,24 @@ with every driver; durable across restarts on filesystem/SQLite).
 
 ---
 
-## 13. Recommendation
+## 14. Recommendation
 
 **JATA Qi is architecturally production-grade but operationally not yet production-ready.**
-The modular design, governance enforcement, cryptographic provenance, and comprehensive
-test coverage are excellent foundations. With PR2–PR4 complete, **all six P0 blockers are
-resolved**: persistence, real LLM, restart-safe sessions, TLS, tenant isolation, and
-scheduled backups are all implemented and tested. The path to a production release is now:
+The modular design, governance enforcement, cryptographic provenance, comprehensive
+test coverage, Kubernetes deployment, and observability stack are excellent foundations.
+With PR2–PR5 complete, **all six P0 blockers are resolved** (persistence, real LLM,
+restart-safe sessions, TLS, tenant isolation, scheduled backups) and the operational
+baseline (Kubernetes + Prometheus/Grafana + stateless horizontal scaling) is in place.
+The path to a production release is now:
 
 1. ~~**PR2**: Persistent storage (SQLite)~~ ✅
 2. ~~**PR3**: Real LLM integration~~ ✅
 3. ~~**PR4**: TLS + CORS + versioning + sessions + tenancy + backups~~ ✅
-4. **PR5**: Kubernetes + monitoring — operational baseline (next)
-5. **PR6**: E2E + benchmarks — confidence baseline
+4. ~~**PR5**: Kubernetes + monitoring + horizontal scaling~~ ✅
+5. **PR6**: E2E + benchmarks + security/chaos testing — confidence baseline (next)
+6. **Stretch**: Postgres driver (multi-writer scale-out), payment/email/SMS providers, OpenTelemetry tracing
 
-Estimated time to production: **6-10 weeks** with a focused team of 2-3 engineers.
+Estimated time to production: **4-8 weeks** with a focused team of 2-3 engineers (P0 blockers resolved; remaining work is P1 providers + multi-writer scale + confidence testing).
 
 ---
 

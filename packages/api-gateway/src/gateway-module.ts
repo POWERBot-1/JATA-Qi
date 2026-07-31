@@ -306,6 +306,8 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/', () => this.apiIndex());
     route('GET', '/openapi.json', () => this.openapi());
     route('GET', '/health', () => this.health());
+    route('GET', '/livez', () => this.livez());
+    route('GET', '/readyz', () => this.readyz());
     route('POST', '/auth/register', (req) => this.register(req));
     route('POST', '/auth/login', (req) => this.login(req));
 
@@ -416,6 +418,7 @@ export class ApiGatewayModule implements IModule {
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const started = Date.now();
+    this.metrics?.requestsInFlight.inc();
     try {
       const url = new URL(req.url ?? '/', `${this.secure ? 'https' : 'http'}://localhost`);
       const path = url.pathname;
@@ -460,6 +463,7 @@ export class ApiGatewayModule implements IModule {
             headers: rateHeaders(decision),
           }, origin);
           this.metrics?.requests.inc(1, { method, path: routePath, status: '429' });
+          this.metrics?.requestDuration.observe(Date.now() - started, { method, path: routePath, status: '429' });
           return;
         }
       }
@@ -489,6 +493,7 @@ export class ApiGatewayModule implements IModule {
       }
       this.finish(res, greq, resp, origin);
       this.metrics?.requests.inc(1, { method, path: routePath, status: String(resp.status) });
+      this.metrics?.requestDuration.observe(Date.now() - started, { method, path: routePath, status: String(resp.status) });
       this.api.logger.debug('gateway request', {
         method,
         path: routePath,
@@ -497,7 +502,12 @@ export class ApiGatewayModule implements IModule {
         actor: greq.principal?.username,
       });
     } catch (err) {
-      this.finish(res, { headers: {} } as GatewayRequest, this.toErrorResponse(err), undefined);
+      const resp = this.toErrorResponse(err);
+      this.finish(res, { headers: {} } as GatewayRequest, resp, undefined);
+      this.metrics?.requests.inc(1, { method: 'UNKNOWN', path: 'unknown', status: String(resp.status) });
+      this.metrics?.requestDuration.observe(Date.now() - started, { method: 'UNKNOWN', path: 'unknown', status: String(resp.status) });
+    } finally {
+      this.metrics?.requestsInFlight.dec();
     }
   }
 
@@ -535,10 +545,15 @@ export class ApiGatewayModule implements IModule {
   }
 
   private send(res: ServerResponse, resp: GatewayResponse): void {
-    const isText = resp.contentType === 'text/plain';
+    const contentType = resp.contentType ?? 'application/json; charset=utf-8';
+    // Any text/* content type (e.g. Prometheus "text/plain; version=0.0.4") is
+    // written verbatim; everything else is JSON-encoded. Previously only an
+    // exact "text/plain" match was treated as text, which silently JSON-quoted
+    // the metrics exposition and broke Prometheus scraping.
+    const isText = contentType.startsWith('text/');
     const payload = isText ? String(resp.body) : JSON.stringify(resp.body);
     res.writeHead(resp.status, {
-      'content-type': resp.contentType ?? 'application/json; charset=utf-8',
+      'content-type': contentType,
       'content-length': Buffer.byteLength(payload),
       ...(resp.headers ?? {}),
     });
@@ -582,6 +597,44 @@ export class ApiGatewayModule implements IModule {
       cors: this.cors?.enabled === true,
       modules: this.moduleIds(),
     });
+  }
+
+  /**
+   * Liveness probe (Kubernetes): a cheap "is the process alive and serving?"
+   * check. Returns 200 once the server is booted. Never performs dependency
+   * checks so a flaky downstream cannot kill a healthy pod.
+   */
+  private livez(): GatewayResponse {
+    return this.booted ? json(200, { status: 'alive' }) : json(503, { status: 'starting' });
+  }
+
+  /**
+   * Readiness probe (Kubernetes): returns 200 only when the gateway can serve
+   * traffic — booted AND its hard dependencies (storage driver, security) are
+   * reachable. Returns 503 otherwise so a load balancer stops sending requests.
+   */
+  private async readyz(): Promise<GatewayResponse> {
+    const checks: Record<string, boolean> = { booted: this.booted };
+    // Verify the storage driver is open (write+read a probe key).
+    if (this.storage) {
+      try {
+        const ns = await this.storage.namespace('system.health');
+        await ns.set('__readyz__', Date.now());
+        checks.storage = (await ns.get<number>('__readyz__')) !== undefined;
+      } catch {
+        checks.storage = false;
+      }
+    } else {
+      checks.storage = true; // no storage module => nothing to verify
+    }
+    // Verify the security module can authenticate (no throw on the module itself).
+    try {
+      checks.security = typeof this.sec.authenticate === 'function';
+    } catch {
+      checks.security = false;
+    }
+    const ready = Object.values(checks).every(Boolean);
+    return ready ? json(200, { status: 'ready', checks }) : json(503, { status: 'not ready', checks });
   }
 
   /** Self-describing index of all routes (Step 15 API reference / discovery). */

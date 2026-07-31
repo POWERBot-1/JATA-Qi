@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    {{- include "jataqi.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.jataqi.logLevel | quote }}
+  STORAGE_DRIVER: {{ .Values.jataqi.storage.driver | quote }}
+  STORAGE_FS_ROOT: {{ .Values.jataqi.storage.fsRoot | quote }}
+  SECURITY_PERSIST_SESSIONS: {{ .Values.jataqi.security.persistSessions | quote }}
+  API_VERSION: {{ .Values.jataqi.apiVersion | quote }}
+  VECTOR_MODEL: {{ .Values.jataqi.vector.model | quote }}
+  AGENT_LLM: {{ .Values.jataqi.llm.provider | quote }}
+  OPENAI_CHAT_MODEL: {{ .Values.jataqi.llm.openai.chatModel | quote }}
+  JATAQI_GATEWAY_PORT: {{ .Values.jataqi.port | quote }}
+  JATAQI_GATEWAY_HOST: {{ .Values.jataqi.host | quote }}
+  BACKUP_NAMESPACES: {{ .Values.jataqi.backups.namespaces | quote }}
+  BACKUP_INTERVAL_MS: {{ .Values.jataqi.backups.intervalMs | quote }}
+  BACKUP_RETENTION: {{ .Values.jataqi.backups.retention | quote }}
+  {{- if .Values.jataqi.cors.enabled }}
+  CORS_ORIGINS: {{ join "," .Values.jataqi.cors.origins | quote }}
+  CORS_CREDENTIALS: {{ .Values.jataqi.cors.credentials | quote }}
+  {{- end }}
+  {{- if .Values.jataqi.tls.enabled }}
+  TLS_CERT_PATH: {{ .Values.jataqi.tls.certPath | quote }}
+  TLS_KEY_PATH: {{ .Values.jataqi.tls.keyPath | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .Release.Name }}-secrets
+  labels:
+    {{- include "jataqi.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  JATAQI_ADMIN_USERNAME: {{ .Values.jataqi.security.bootstrapAdmin.username | quote }}
+  JATAQI_ADMIN_PASSWORD: {{ .Values.jataqi.security.bootstrapAdmin.password | quote }}
+  {{- if .Values.jataqi.llm.openai.apiKey }}
+  OPENAI_API_KEY: {{ .Values.jataqi.llm.openai.apiKey | quote }}
+  {{- end }}

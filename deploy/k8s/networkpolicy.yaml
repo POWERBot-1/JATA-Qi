@@ -1,0 +1,31 @@
+# JATA Qi — NetworkPolicy: deny all ingress/egress by default, then allow only
+# what the gateway needs (ingress on 7400, egress DNS + HTTPS for providers).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jataqi
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: TCP, port: 7400 }
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # HTTPS to external providers (OpenAI, embedding, etc.).
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - { protocol: TCP, port: 443 }

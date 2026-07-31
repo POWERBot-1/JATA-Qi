@@ -1,5 +1,5 @@
 // Public API for @jataqi/metrics.
-export { MetricsModule } from './metrics-module.js';
+export { MetricsModule, LATENCY_BUCKETS_MS } from './metrics-module.js';
 export { MetricsRegistry } from './registry.js';
 export { Counter, Gauge, Histogram, labelKey } from './instruments.js';
 export { DEFAULT_BUCKETS, MetricsEvents } from './types.js';

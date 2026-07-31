@@ -69,10 +69,12 @@ export class MetricsRegistry {
       lines.push(`# TYPE ${h.name} histogram`);
       for (const s of h.samples()) {
         const snap = s.histogram!;
+        // Merge `le` into the label set so each bucket line is well-formed
+        // Prometheus (e.g. name_bucket{le="1",method="GET"} 3).
         for (const b of snap.buckets) {
-          lines.push(`${h.name}_bucket{le="${b.le}"${labelStr(s.labels, ',')}} ${b.count}`);
+          lines.push(`${h.name}_bucket${labelStr({ ...s.labels, le: String(b.le) })} ${b.count}`);
         }
-        lines.push(`${h.name}_bucket{le="+Inf"${labelStr(s.labels, ',')}} ${snap.count}`);
+        lines.push(`${h.name}_bucket${labelStr({ ...s.labels, le: '+Inf' })} ${snap.count}`);
         lines.push(`${h.name}_sum${labelStr(s.labels)} ${snap.sum}`);
         lines.push(`${h.name}_count${labelStr(s.labels)} ${snap.count}`);
       }

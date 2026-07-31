@@ -1,0 +1,16 @@
+apiVersion: v2
+name: jataqi
+description: JATA Qi — Universal AI Operating System. Horizontally-scalable, governance-gated, TLS-hardened gateway.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - ai-operating-system
+  - agent
+  - llm
+  - gateway
+home: https://github.com/POWERBot-1/JATA-Qi
+maintainers:
+  - name: GITANYA K
+icon: ""
