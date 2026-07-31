@@ -121,6 +121,36 @@ describe('monitoring stack — shape', () => {
   });
 });
 
+
+describe('Terraform — valid configuration', () => {
+  it('main.tf uses required providers + modules', () => {
+    const text = read('terraform/main.tf');
+    assert.match(text, /required_providers/, 'must declare required providers');
+    assert.match(text, /terraform-aws-modules\/eks/, 'must use the EKS module');
+    assert.match(text, /terraform-aws-modules\/vpc/, 'must use the VPC module');
+    assert.match(text, /aws_db_instance/, 'must provision RDS PostgreSQL');
+    assert.match(text, /aws_s3_bucket.*backups/, 'must provision a backup bucket');
+    assert.match(text, /storage_encrypted.*=.*true/, 'RDS must encrypt storage');
+  });
+  it('variables.tf has sensible defaults', () => {
+    const text = read('terraform/variables.tf');
+    for (const v of ['project_name', 'aws_region', 'postgres_version', 'db_instance_class', 'node_desired_size']) {
+      assert.ok(text.includes(`variable "${v}"`), `variables.tf must declare ${v}`);
+    }
+  });
+  it('outputs.tf exposes the cluster + database endpoints', () => {
+    const text = read('terraform/outputs.tf');
+    assert.match(text, /output "cluster_endpoint"/);
+    assert.match(text, /output "database_endpoint"/);
+    assert.match(text, /output "backup_bucket"/);
+  });
+  it('terraform.tfvars.example exists with production defaults', () => {
+    const text = read('terraform/terraform.tfvars.example');
+    assert.match(text, /db_multi_az.*=.*true/);
+    assert.match(text, /backup_retention_days/);
+  });
+});
+
 describe('Helm chart — renderable shape', () => {
   it('Chart.yaml declares name, version, appVersion', () => {
     const text = read('helm/jataqi/Chart.yaml');

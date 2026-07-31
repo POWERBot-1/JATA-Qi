@@ -212,7 +212,7 @@ Packages:              56
 Tests:                 830 (100% pass)
 Gateway endpoints:      99
 Kernel modules:         56
-Readiness capabilities: 78 (42 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
+Readiness capabilities: 79 (43 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
 Governance-gated paths: 2 (orchestrator + tool-intelligence)
 Audit-logging packages: 23+
 Zero external deps:     ✅ (Node.js built-ins only)

@@ -1,0 +1,19 @@
+# Example variable values. Copy to terraform.tfvars and edit.
+# Usage: terraform init && terraform plan -var-file=terraform.tfvars
+
+project_name     = "jataqi"
+aws_region       = "us-east-1"
+kubernetes_version = "1.30"
+node_instance_type = "t3.medium"
+node_desired_size  = 2
+single_nat_gateway = true
+
+# PostgreSQL (multi-writer storage, PR8)
+postgres_version    = "16"
+db_instance_class   = "db.t3.small"
+db_storage_gb       = 50
+db_multi_az         = true
+
+# Backups
+backup_retention_days = 30
+db_backup_retention_days = 14

@@ -111,3 +111,21 @@ helm upgrade jataqi deploy/helm/jataqi --set jataqi.tls.enabled=true
 
 The gateway then serves HTTPS with HSTS (`max-age=31536000; includeSubDomains`)
 and `minVersion: TLSv1.2`.
+
+## Terraform (AWS infrastructure)
+
+```bash
+cd deploy/terraform
+cp terraform.tfvars.example terraform.tfvars   # edit for your environment
+terraform init
+terraform plan
+terraform apply
+```
+
+Provisions:
+- **EKS cluster** (managed node groups, IRSA for service accounts)
+- **RDS PostgreSQL** (Multi-AZ, encrypted storage, automated backups) — the multi-writer backend for PR8
+- **S3 backup bucket** (versioned, lifecycle expiration)
+- **Secrets Manager** for application secrets (Stripe, SendGrid, etc.)
+
+Outputs: `cluster_endpoint`, `database_endpoint`, `backup_bucket`, `secrets_arn`.
