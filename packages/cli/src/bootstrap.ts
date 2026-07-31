@@ -267,6 +267,16 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
       driver: env.STORAGE_DRIVER as any ?? 'memory',
       fsRoot: env.STORAGE_FS_ROOT,
       ...(env.STORAGE_ENCRYPTION_KEY ? { encryptionKey: env.STORAGE_ENCRYPTION_KEY } : {}),
+      ...((env.STORAGE_DRIVER === 'postgres' || env.STORAGE_DRIVER === 'postgresql') ? {
+        postgres: {
+          ...(env.PGHOST ? { host: env.PGHOST } : {}),
+          ...(env.PGPORT ? { port: env.PGPORT } : {}),
+          ...(env.PGUSER ? { user: env.PGUSER } : {}),
+          ...(env.PGPASSWORD ? { password: env.PGPASSWORD } : {}),
+          ...(env.PGDATABASE ? { database: env.PGDATABASE } : {}),
+          ...(env.PGSSLMODE ? { ssl: env.PGSSLMODE } : {}),
+        },
+      } : {}),
       ...(env.STORAGE_DEFAULT_QUOTA_BYTES ? { defaultQuotaBytes: env.STORAGE_DEFAULT_QUOTA_BYTES } : {}),
       ...(env.STORAGE_QUOTAS ? { quotas: safeParseQuotas(env.STORAGE_QUOTAS) } : {}),
       ...(overrides.storage ?? {}),

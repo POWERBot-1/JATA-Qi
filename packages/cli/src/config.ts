@@ -5,8 +5,15 @@ import * as path from 'node:path';
 
 export interface EnvConfig {
   LOG_LEVEL?: string;
-  STORAGE_DRIVER?: 'memory' | 'filesystem';
+  STORAGE_DRIVER?: 'memory' | 'filesystem' | 'sqlite' | 'postgres' | 'postgresql';
   STORAGE_FS_ROOT?: string;
+  /** PostgreSQL connection (multi-writer horizontal scaling, PR8). */
+  PGHOST?: string;
+  PGPORT?: number;
+  PGUSER?: string;
+  PGPASSWORD?: string;
+  PGDATABASE?: string;
+  PGSSLMODE?: 'disable' | 'prefer' | 'require';
   /** Base64/hex/passphrase AES-256-GCM key for encryption at rest (PR7). */
   STORAGE_ENCRYPTION_KEY?: string;
   /** Default per-namespace/collection byte quota (PR7). */
@@ -91,6 +98,12 @@ export function readConfig(): EnvConfig {
     LOG_LEVEL: process.env.LOG_LEVEL,
     STORAGE_DRIVER: process.env.STORAGE_DRIVER as EnvConfig['STORAGE_DRIVER'],
     STORAGE_FS_ROOT: process.env.STORAGE_FS_ROOT,
+    PGHOST: process.env.PGHOST,
+    PGPORT: process.env.PGPORT ? Number(process.env.PGPORT) : undefined,
+    PGUSER: process.env.PGUSER,
+    PGPASSWORD: process.env.PGPASSWORD,
+    PGDATABASE: process.env.PGDATABASE,
+    PGSSLMODE: process.env.PGSSLMODE as EnvConfig['PGSSLMODE'],
     STORAGE_ENCRYPTION_KEY: process.env.STORAGE_ENCRYPTION_KEY,
     STORAGE_DEFAULT_QUOTA_BYTES: process.env.STORAGE_DEFAULT_QUOTA_BYTES ? Number(process.env.STORAGE_DEFAULT_QUOTA_BYTES) : undefined,
     STORAGE_QUOTAS: process.env.STORAGE_QUOTAS,

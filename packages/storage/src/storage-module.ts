@@ -3,6 +3,7 @@ import { MemoryDriver } from './drivers/memory.js';
 import { FsDriver } from './drivers/filesystem.js';
 import { EncryptedDriver } from './drivers/encrypted.js';
 import { QuotaDriver } from './drivers/quota.js';
+import type { PostgresConnectOptions } from './drivers/pg/connection.js';
 import {
   IBlobStore,
   ICollection,
@@ -31,6 +32,8 @@ export interface StorageModuleConfig {
   quotas?: Record<string, number>;
   /** Default byte quota applied to any name without an explicit entry. PR7. */
   defaultQuotaBytes?: number;
+  /** PostgreSQL connection options (multi-writer horizontal scaling). PR8. */
+  postgres?: PostgresConnectOptions;
 }
 
 /**
@@ -95,6 +98,20 @@ export class StorageModule implements IModule {
           const { SqliteDriver } = await import('./drivers/sqlite.js');
           const dbPath = this.opts.fsRoot ?? kernel.config.get('storage.sqlitePath', undefined) ?? './.jataqi/jataqi.db';
           this.driver = new SqliteDriver({ path: dbPath });
+          break;
+        }
+        case 'postgres':
+        case 'postgresql': {
+          const { PostgresDriver } = await import('./drivers/postgres.js');
+          const connect = this.opts.postgres ?? {
+            host: kernel.config.get('storage.pgHost', undefined) ?? '127.0.0.1',
+            port: kernel.config.get('storage.pgPort', undefined) ?? 5432,
+            user: kernel.config.get('storage.pgUser', undefined) ?? 'postgres',
+            password: kernel.config.get('storage.pgPassword', undefined) ?? '',
+            database: kernel.config.get('storage.pgDatabase', undefined) ?? 'postgres',
+            ssl: kernel.config.get('storage.pgSsl', undefined),
+          };
+          this.driver = new PostgresDriver({ connect });
           break;
         }
         default:

@@ -209,16 +209,16 @@ via `scripts/build-all.sh`.
 
 ```
 Packages:              56
-Tests:                 766 (100% pass)
+Tests:                 788 (100% pass)
 Gateway endpoints:      99
 Kernel modules:         56
-Readiness capabilities: 75 (39 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
+Readiness capabilities: 76 (40 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
 Governance-gated paths: 2 (orchestrator + tool-intelligence)
 Audit-logging packages: 23+
 Zero external deps:     ✅ (Node.js built-ins only)
 Creator identity:       GITANYA K (Ed25519 verified)
 P0 blockers resolved:   6/6 (PR2 + PR3 + PR4)
-P1 risks resolved:      CORS, versioning, size-limits, encryption-at-rest, horizontal scaling (PR4/PR5/PR7)
+P1 risks resolved:      CORS, versioning, size-limits, encryption-at-rest, horizontal scaling + multi-writer (PR4/PR5/PR7/PR8)
 Deployment artifacts:   Kubernetes (Kustomize + Helm), Prometheus/Grafana monitoring (PR5)
 Quality assurance:      E2E + performance + security + chaos suites (PR6)
 Production-ready:       0 capabilities (ALPHA — by design, no PRODUCTION_READY claims)
@@ -516,7 +516,37 @@ and `storage.quotas`, refreshed `storage`.
 
 ---
 
-## 16. Recommendation
+## 16. PR8 — PostgreSQL networked driver (multi-writer horizontal scaling) (complete)
+
+**Branch**: `arena/019f94a7-jata-qi` · **Phase**: PR8 · **Status**: ✅ Complete (0 build errors, 0 test failures)
+
+PR8 adds a production PostgreSQL storage driver implemented as a **from-scratch
+PostgreSQL v3 wire-protocol client** in pure Node (`node:net` + `node:crypto`) —
+preserving the project's zero-external-runtime-dependency invariant. Multiple
+gateway instances now connect to one shared Postgres for true **ACID multi-writer
+horizontal scale-out** (MVCC), unblocking `replicas > 1`.
+
+### 16.1 What was built
+- `drivers/pg/codec.ts` — frontend/backend message encode/decode (startup, Parse/Bind/Describe/Execute/Sync, RowDescription/DataRow/CommandComplete/ReadyForQuery, ErrorResponse, auth).
+- `drivers/pg/auth.ts` — MD5 + **SCRAM-SHA-256** (RFC 5802/7677) via `node:crypto`.
+- `drivers/pg/connection.ts` — `PostgresConnection`: handshake (trust/cleartext/md5/SCRAM + optional TLS upgrade), serialized extended-query protocol, sanitized `PostgresError`.
+- `drivers/postgres.ts` — `PostgresDriver` implementing `IStorageDriver` over the same schema as SQLite; composes with the PR7 encryption + quota decorators.
+
+### 16.2 Wiring & env
+`STORAGE_DRIVER=postgres` + `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/PGSSLMODE`. Composes with encryption-at-rest and quotas (`QuotaDriver(EncryptedDriver(PostgresDriver))`).
+
+### 16.3 Testing (no external Postgres available in CI)
+- Pure codec unit tests (message round-trips, partial-message buffering).
+- SCRAM/MD5 auth unit tests verified against an independent RFC-style recomputation.
+- An **in-test mock Postgres server** (pure `node:net`, speaks the real wire protocol + a mini-SQL engine) drives the real connection + driver end-to-end, covering all three auth modes, error propagation, CRUD, **multi-writer visibility (two connections sharing one server)**, and the StorageModule wiring.
+- 22 new tests (7 codec + 5 auth + 10 end-to-end/wiring).
+
+Readiness: 75 → 76 capabilities (39 → 40 TESTED); added `storage.postgres`;
+`horizontal-scaling` note updated (multi-writer now supported).
+
+---
+
+## 17. Recommendation
 
 **JATA Qi is architecturally production-grade but operationally not yet production-ready.**
 The modular design, governance enforcement, cryptographic provenance, comprehensive
@@ -532,9 +562,10 @@ horizontal scaling) are closed. The path to a production release is now:
 4. ~~**PR5**: Kubernetes + monitoring + horizontal scaling~~ ✅
 5. ~~**PR6**: E2E + benchmarks + security/chaos testing~~ ✅
 6. ~~**PR7**: Storage quotas + encryption at rest~~ ✅
-7. **Remaining (P1 / stretch)**: Postgres driver (multi-writer scale-out), real payment/email/SMS providers, OpenTelemetry tracing, WebSocket, CI workflow push (GitHub App permissions), Terraform
+7. ~~**PR8**: PostgreSQL driver (multi-writer horizontal scaling)~~ ✅
+8. **Remaining (P1 / stretch)**: real payment/email/SMS providers, OpenTelemetry tracing, WebSocket, CI workflow push (GitHub App permissions), Terraform
 
-Estimated time to production: **2-5 weeks** with a focused team (P0 blockers + confidence baseline + storage hardening done; remaining work is P1 third-party providers + multi-writer scale + real-time).
+Estimated time to production: **2-4 weeks** with a focused team (P0 blockers, confidence baseline, storage hardening, and multi-writer scaling all done; remaining work is P1 third-party providers + real-time + CI push).
 
 ---
 
