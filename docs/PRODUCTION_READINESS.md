@@ -209,16 +209,16 @@ via `scripts/build-all.sh`.
 
 ```
 Packages:              56
-Tests:                 788 (100% pass)
+Tests:                 816 (100% pass)
 Gateway endpoints:      99
 Kernel modules:         56
-Readiness capabilities: 76 (40 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
+Readiness capabilities: 77 (41 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
 Governance-gated paths: 2 (orchestrator + tool-intelligence)
 Audit-logging packages: 23+
 Zero external deps:     ✅ (Node.js built-ins only)
 Creator identity:       GITANYA K (Ed25519 verified)
 P0 blockers resolved:   6/6 (PR2 + PR3 + PR4)
-P1 risks resolved:      CORS, versioning, size-limits, encryption-at-rest, horizontal scaling + multi-writer (PR4/PR5/PR7/PR8)
+P1 risks resolved:      CORS, versioning, size-limits, encryption-at-rest, horizontal scaling + multi-writer, distributed tracing (PR4-PR9)
 Deployment artifacts:   Kubernetes (Kustomize + Helm), Prometheus/Grafana monitoring (PR5)
 Quality assurance:      E2E + performance + security + chaos suites (PR6)
 Production-ready:       0 capabilities (ALPHA — by design, no PRODUCTION_READY claims)
@@ -546,7 +546,57 @@ Readiness: 75 → 76 capabilities (39 → 40 TESTED); added `storage.postgres`;
 
 ---
 
-## 17. Recommendation
+## 17. PR9 — OpenTelemetry distributed tracing (complete)
+
+**Branch**: `arena/019f94a7-jata-qi` · **Phase**: PR9 · **Status**: ✅ Complete (0 build errors, 0 test failures)
+
+PR9 closes the last observability gap (the readiness note "no distributed
+tracing") with an **OpenTelemetry-compatible tracing SDK** built from scratch in
+pure Node (`node:crypto`) — zero external dependencies.
+
+### 17.1 `@jataqi/tracing` package
+- **Spans** with attributes, events, status (ok/error/unset), kind
+  (server/client/internal/producer/consumer), links, and exception recording.
+- **Samplers**: always-on, always-off, trace-id-ratio (deterministic), and
+  parent-based (the OTel default).
+- **Processors**: simple (export on end) and batch (queue + scheduled flush,
+  `unref`'d so it never blocks shutdown).
+- **W3C Trace Context**: parse/format `traceparent` + `tracestate`, case-insensitive
+  extract/inject — so JATA Qi traces correlate with any W3C-compliant service.
+- **Exporters**: OTLP/HTTP JSON (POST to a collector via `fetch`, with retry that
+  **never throws** — tracing must not break the app), plus in-memory and console.
+
+### 17.2 Gateway integration
+The gateway auto-detects `TracingModule` and records a **server span per
+request** named `HTTP <method> <route>`, with `http.method/route/target/scheme`,
+`http.status_code`, `http.duration_ms`, and ok/error status. An incoming
+`traceparent` header is honored as the parent, so a request traced by an
+upstream service continues the same trace through JATA Qi.
+
+### 17.3 Wiring & env
+`createJataQi` registers a `TracingModule`; env configures it:
+`OTEL_SERVICE_NAME`, `OTEL_TRACES_EXPORTER` (none/console/otlp),
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_TRACES_SAMPLER`,
+`OTEL_TRACES_SAMPLER_ARG`. Disabled by default (opt-in) — backward compatible.
+
+### 17.4 Test evidence (PR9)
+
+| Suite | Tests | Package |
+|---|---|---|
+| Spans, samplers, processors | 9 | `@jataqi/tracing` |
+| W3C propagation | 7 | `@jataqi/tracing` |
+| OTLP JSON conversion | 3 | `@jataqi/tracing` |
+| Exporters (in-memory + OTLP/HTTP vs mock collector) | 3 | `@jataqi/tracing` |
+| TracingModule kernel | 3 | `@jataqi/tracing` |
+| Gateway tracing (server span, parent, backward-compat) | 3 | `@jataqi/api-gateway` |
+| **PR9 total** | **28** (+ existing suites green) | (788 → 816 platform tests, 0 failures) |
+
+Readiness: 76 → 77 capabilities (40 → 41 TESTED); added `observability.tracing`;
+`observability` note updated.
+
+---
+
+## 18. Recommendation
 
 **JATA Qi is architecturally production-grade but operationally not yet production-ready.**
 The modular design, governance enforcement, cryptographic provenance, comprehensive
@@ -563,9 +613,10 @@ horizontal scaling) are closed. The path to a production release is now:
 5. ~~**PR6**: E2E + benchmarks + security/chaos testing~~ ✅
 6. ~~**PR7**: Storage quotas + encryption at rest~~ ✅
 7. ~~**PR8**: PostgreSQL driver (multi-writer horizontal scaling)~~ ✅
-8. **Remaining (P1 / stretch)**: real payment/email/SMS providers, OpenTelemetry tracing, WebSocket, CI workflow push (GitHub App permissions), Terraform
+8. ~~**PR9**: OpenTelemetry distributed tracing~~ ✅
+9. **Remaining (P1 / stretch)**: real payment/email/SMS providers, WebSocket, CI workflow push (GitHub App permissions), Terraform
 
-Estimated time to production: **2-4 weeks** with a focused team (P0 blockers, confidence baseline, storage hardening, and multi-writer scaling all done; remaining work is P1 third-party providers + real-time + CI push).
+Estimated time to production: **2-3 weeks** with a focused team (P0 blockers, confidence baseline, storage hardening, multi-writer scaling, and distributed tracing all done; remaining work is P1 third-party providers + real-time + CI push).
 
 ---
 

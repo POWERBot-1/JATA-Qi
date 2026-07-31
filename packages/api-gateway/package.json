@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/api-gateway",
   "version": "0.1.0",
-  "description": "JATA Qi API Gateway — HTTP entrypoint exposing auth, QiL, orchestration and audit",
+  "description": "JATA Qi API Gateway \u2014 HTTP entrypoint exposing auth, QiL, orchestration and audit",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -17,7 +17,10 @@
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
     "@jataqi/core-kernel": "0.1.0",
@@ -45,7 +48,8 @@
     "@jataqi/feature-flags": "0.1.0",
     "@jataqi/privacy": "0.1.0",
     "@jataqi/policy-governance": "0.1.0",
-    "@jataqi/disaster-recovery": "0.1.0"
+    "@jataqi/disaster-recovery": "0.1.0",
+    "@jataqi/tracing": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

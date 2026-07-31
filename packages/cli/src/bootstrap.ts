@@ -57,6 +57,7 @@ import { OptimizationModule } from '@jataqi/optimization';
 import { SyntheticDataModule } from '@jataqi/synthetic-data';
 import { BusinessIntelligenceModule } from '@jataqi/business-intelligence';
 import { WebUIModule } from '@jataqi/web-ui';
+import { TracingModule } from '@jataqi/tracing';
 import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
@@ -64,6 +65,20 @@ import { readConfig } from './config.js';
 
 function readConfigEnv(key: string): string | undefined {
   return process.env[key];
+}
+
+/** Build tracing (OpenTelemetry) config from environment (PR9). */
+function readTracingConfigFromEnv(): import('@jataqi/tracing').TracingModuleConfig {
+  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT;
+  const exporter = (process.env.OTEL_TRACES_EXPORTER ?? (endpoint ? 'otlp' : 'none')) as 'none' | 'memory' | 'console' | 'otlp';
+  const sampler = (process.env.OTEL_TRACES_SAMPLER ?? 'parentbased_always_on') as 'always_on' | 'always_off' | 'traceidratio' | 'parentbased_always_on';
+  return {
+    serviceName: process.env.OTEL_SERVICE_NAME,
+    exporter,
+    ...(endpoint ? { otlpEndpoint: endpoint } : {}),
+    sampler,
+    ...(process.env.OTEL_TRACES_SAMPLER_ARG ? { ratio: Number(process.env.OTEL_TRACES_SAMPLER_ARG) } : {}),
+  };
 }
 
 /** A small default model catalog, seeded into the registry at boot. */
@@ -169,6 +184,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new MultimodalModule());
   kernel.register(new SovereignModule());
   kernel.register(new LLMGatewayModule());
+
+  kernel.register(new TracingModule(readTracingConfigFromEnv()));
 
   // Register LLM providers based on environment configuration.
   const llmGateway = kernel.getModule<LLMGatewayModule>('llm-gateway');

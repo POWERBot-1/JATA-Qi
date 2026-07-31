@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 PKGS=(
   core-kernel storage vector-search
-  qil security metrics simulation
+  qil security metrics simulation tracing
   knowledge-service knowledge-graph
   model-registry scheduler plugins readiness commerce organizations notifications policies feature-flags privacy policy-governance
   agent-runtime compute teams robotics digital-twin tool-intelligence provenance

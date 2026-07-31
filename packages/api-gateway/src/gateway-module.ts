@@ -37,6 +37,9 @@ import type { FeatureFlagsModule } from '@jataqi/feature-flags';
 import type { PrivacyModule } from '@jataqi/privacy';
 import type { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import type { DisasterRecoveryModule } from '@jataqi/disaster-recovery';
+import type { TracingModule } from '@jataqi/tracing';
+import type { Span } from '@jataqi/tracing';
+import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, ResolvedCorsPolicy, RouteHandler, TlsConfig } from './types.js';
 import { RateLimiter } from './rate-limit.js';
@@ -81,6 +84,7 @@ export class ApiGatewayModule implements IModule {
   private privacy?: PrivacyModule;
   private governance?: PolicyGovernanceModule;
   private disasterRecovery?: DisasterRecoveryModule;
+  private tracing?: TracingModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -134,6 +138,7 @@ export class ApiGatewayModule implements IModule {
     this.privacy = this.tryModule<PrivacyModule>('privacy');
     this.governance = this.tryModule<PolicyGovernanceModule>('policy-governance');
     this.disasterRecovery = this.tryModule<DisasterRecoveryModule>('disaster-recovery');
+    this.tracing = this.tryModule<TracingModule>('tracing');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -418,6 +423,8 @@ export class ApiGatewayModule implements IModule {
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const started = Date.now();
+    let span: Span | undefined;
+    let httpStatus = 0;
     this.metrics?.requestsInFlight.inc();
     try {
       const url = new URL(req.url ?? '/', `${this.secure ? 'https' : 'http'}://localhost`);
@@ -452,6 +459,18 @@ export class ApiGatewayModule implements IModule {
       // versioned and legacy calls aggregate (PR4 — API versioning).
       const { handler, routePath } = this.resolveRoute(method, path);
 
+      // Start a distributed-tracing SERVER span if tracing is configured, as a
+      // child of any incoming W3C traceparent (PR9 — OpenTelemetry tracing).
+      if (this.tracing) {
+        const parent = extractTraceContext(greq.headers);
+        span = this.tracing.getTracer('api-gateway').startSpan(`HTTP ${method} ${routePath}`, {
+          kind: 'server', parent, attributes: {
+            'http.method': method, 'http.route': routePath, 'http.target': path,
+            'http.scheme': this.secure ? 'https' : 'http', 'http.flavor': '1.1',
+          },
+        });
+      }
+
       // Rate limiting (keyed by token or client IP). Step 15 "API Gateway: rate limiting".
       if (this.limiter) {
         const key = greq.headers['authorization'] ?? greq.remoteAddress ?? 'anon';
@@ -464,6 +483,7 @@ export class ApiGatewayModule implements IModule {
           }, origin);
           this.metrics?.requests.inc(1, { method, path: routePath, status: '429' });
           this.metrics?.requestDuration.observe(Date.now() - started, { method, path: routePath, status: '429' });
+          httpStatus = 429;
           return;
         }
       }
@@ -479,6 +499,7 @@ export class ApiGatewayModule implements IModule {
               const headers = { ...this.securityHeaders(), ...this.corsHeadersFor(origin), 'content-type': file.contentType, 'content-length': String(file.content.length) };
               res.writeHead(200, headers);
               res.end(file.content);
+              httpStatus = 200;
               return;
             }
           }
@@ -492,6 +513,7 @@ export class ApiGatewayModule implements IModule {
         }
       }
       this.finish(res, greq, resp, origin);
+      httpStatus = resp.status;
       this.metrics?.requests.inc(1, { method, path: routePath, status: String(resp.status) });
       this.metrics?.requestDuration.observe(Date.now() - started, { method, path: routePath, status: String(resp.status) });
       this.api.logger.debug('gateway request', {
@@ -503,10 +525,17 @@ export class ApiGatewayModule implements IModule {
       });
     } catch (err) {
       const resp = this.toErrorResponse(err);
+      httpStatus = resp.status;
       this.finish(res, { headers: {} } as GatewayRequest, resp, undefined);
       this.metrics?.requests.inc(1, { method: 'UNKNOWN', path: 'unknown', status: String(resp.status) });
       this.metrics?.requestDuration.observe(Date.now() - started, { method: 'UNKNOWN', path: 'unknown', status: String(resp.status) });
     } finally {
+      if (span && span.isRecording()) {
+        span.setAttribute('http.status_code', httpStatus);
+        span.setAttribute('http.duration_ms', Date.now() - started);
+        span.setStatus(httpStatus >= 500 ? 'error' : 'ok');
+        span.end();
+      }
       this.metrics?.requestsInFlight.dec();
     }
   }
