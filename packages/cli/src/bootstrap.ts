@@ -59,6 +59,7 @@ import { BusinessIntelligenceModule } from '@jataqi/business-intelligence';
 import { WebUIModule } from '@jataqi/web-ui';
 import { TracingModule } from '@jataqi/tracing';
 import { RealtimeModule } from '@jataqi/realtime';
+import { PaymentsModule } from '@jataqi/payments';
 import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
@@ -188,6 +189,12 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 
   kernel.register(new TracingModule(readTracingConfigFromEnv()));
   kernel.register(new RealtimeModule());
+  kernel.register(new PaymentsModule(process.env.STRIPE_SECRET_KEY ? {
+    stripe: {
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      ...(process.env.STRIPE_WEBHOOK_SECRET ? { webhookSecret: process.env.STRIPE_WEBHOOK_SECRET } : {}),
+    },
+  } : {}));
 
   // Register LLM providers based on environment configuration.
   const llmGateway = kernel.getModule<LLMGatewayModule>('llm-gateway');
