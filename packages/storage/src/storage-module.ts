@@ -1,6 +1,8 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import { MemoryDriver } from './drivers/memory.js';
 import { FsDriver } from './drivers/filesystem.js';
+import { EncryptedDriver } from './drivers/encrypted.js';
+import { QuotaDriver } from './drivers/quota.js';
 import {
   IBlobStore,
   ICollection,
@@ -19,6 +21,16 @@ export interface StorageModuleConfig {
   fsRoot?: string;
   /** Pre-configured driver instance (overrides driver option). */
   driverInstance?: IStorageDriver;
+  /**
+   * Encryption-at-rest key (AES-256-GCM). When set, all values/docs/blobs are
+   * transparently encrypted before reaching the underlying driver (PR7).
+   * Accepts a 44-char base64 string, 64-char hex string, Buffer, or passphrase.
+   */
+  encryptionKey?: string | Buffer;
+  /** Per-name byte quotas (namespace/collection name -> max bytes). PR7. */
+  quotas?: Record<string, number>;
+  /** Default byte quota applied to any name without an explicit entry. PR7. */
+  defaultQuotaBytes?: number;
 }
 
 /**
@@ -88,6 +100,20 @@ export class StorageModule implements IModule {
         default:
           throw new Error(`Storage: unknown driver "${driverName}"`);
       }
+    }
+    // Compose hardening decorators over the base driver. Order is
+    // QuotaDriver(EncryptedDriver(base)) so quotas count logical (pre-encryption)
+    // size and encryption is applied just above the physical store (PR7).
+    if (this.opts.encryptionKey) {
+      this.driver = new EncryptedDriver(this.driver, { key: this.opts.encryptionKey });
+      kernel.logger.info('storage: encryption at rest ENABLED (AES-256-GCM)');
+    }
+    if (this.opts.quotas || this.opts.defaultQuotaBytes !== undefined) {
+      this.driver = new QuotaDriver(this.driver, {
+        ...(this.opts.quotas ? { quotas: this.opts.quotas } : {}),
+        ...(this.opts.defaultQuotaBytes !== undefined ? { defaultQuotaBytes: this.opts.defaultQuotaBytes } : {}),
+      });
+      kernel.logger.info(`storage: quota enforcement ENABLED (default=${this.opts.defaultQuotaBytes ?? 'unlimited'})`);
     }
     kernel.container.registerValue('storage.driver', this.driver);
     kernel.container.registerValue('storage.module', this);

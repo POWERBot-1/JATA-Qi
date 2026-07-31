@@ -7,6 +7,12 @@ export interface EnvConfig {
   LOG_LEVEL?: string;
   STORAGE_DRIVER?: 'memory' | 'filesystem';
   STORAGE_FS_ROOT?: string;
+  /** Base64/hex/passphrase AES-256-GCM key for encryption at rest (PR7). */
+  STORAGE_ENCRYPTION_KEY?: string;
+  /** Default per-namespace/collection byte quota (PR7). */
+  STORAGE_DEFAULT_QUOTA_BYTES?: number;
+  /** JSON map of per-name byte quotas, e.g. {"security.audit":10485760} (PR7). */
+  STORAGE_QUOTAS?: string;
   VECTOR_MODEL?: 'hash' | 'openai';
   VECTOR_HASH_DIM?: number;
   VECTOR_METRIC?: 'cosine' | 'euclidean' | 'dot';
@@ -85,6 +91,9 @@ export function readConfig(): EnvConfig {
     LOG_LEVEL: process.env.LOG_LEVEL,
     STORAGE_DRIVER: process.env.STORAGE_DRIVER as EnvConfig['STORAGE_DRIVER'],
     STORAGE_FS_ROOT: process.env.STORAGE_FS_ROOT,
+    STORAGE_ENCRYPTION_KEY: process.env.STORAGE_ENCRYPTION_KEY,
+    STORAGE_DEFAULT_QUOTA_BYTES: process.env.STORAGE_DEFAULT_QUOTA_BYTES ? Number(process.env.STORAGE_DEFAULT_QUOTA_BYTES) : undefined,
+    STORAGE_QUOTAS: process.env.STORAGE_QUOTAS,
     VECTOR_MODEL: process.env.VECTOR_MODEL as EnvConfig['VECTOR_MODEL'],
     VECTOR_HASH_DIM: process.env.VECTOR_HASH_DIM ? Number(process.env.VECTOR_HASH_DIM) : undefined,
     VECTOR_METRIC: process.env.VECTOR_METRIC as EnvConfig['VECTOR_METRIC'],

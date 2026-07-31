@@ -2,7 +2,7 @@
 // authorization (RBAC), API keys and the audit ledger together. Backed by the
 // storage layer so users, api keys and audit records persist across restarts.
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { ICollection } from '@jataqi/storage';
 import { DEFAULT_ROLE_POLICY, SecurityEvents } from './types.js';
@@ -41,6 +41,16 @@ const NS_AUDIT = 'security.audit';
 
 /** Update the persisted `lastUsedAt` at most this often (avoids write churn). */
 const LAST_USED_FLUSH_INTERVAL_MS = 60_000;
+
+/**
+ * Derive the storage key for a session token. We never store the raw bearer
+ * token as the collection primary key (which would be plaintext on disk even
+ * with encryption at rest); instead we store it under a non-reversible SHA-256
+ * digest. The raw token only ever lives inside the (encrypted) document body.
+ */
+function sessionKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
 
 export class SecurityModule implements IModule {
   readonly id = 'security';
@@ -100,14 +110,20 @@ export class SecurityModule implements IModule {
     // event per surviving session so the rest of the platform knows sessions
     // were recovered from durable storage (PR4 — restart-safe sessions).
     if (this.persistSessions) {
-      const restored = await this.pruneExpiredSessions();
-      const live = await this.sessions.all();
-      for (const rec of live) {
-        if (rec.revokedAt) continue;
-        await this.api.bus.emit(SecurityEvents.SessionRestored, { userId: rec.userId, token: rec.token });
+      try {
+        const restored = await this.pruneExpiredSessions();
+        const live = await this.sessions.all();
+        for (const rec of live) {
+          if (rec.revokedAt) continue;
+          await this.api.bus.emit(SecurityEvents.SessionRestored, { userId: rec.userId, token: rec.token });
+        }
+        if (restored > 0) kernel.logger.info(`security: pruned ${restored} expired persisted session(s)`);
+        kernel.logger.info(`security: ${live.filter((s) => !s.revokedAt).length} persisted session(s) restored`);
+      } catch (err) {
+        // An undecryptable store (e.g. encryption-key mismatch or corruption)
+        // must NOT crash boot — affected sessions simply fail to authenticate.
+        kernel.logger.warn(`security: could not restore persisted sessions (possible key mismatch/corruption): ${(err as Error).message}`);
       }
-      if (restored > 0) kernel.logger.info(`security: pruned ${restored} expired persisted session(s)`);
-      kernel.logger.info(`security: ${live.filter((s) => !s.revokedAt).length} persisted session(s) restored`);
     }
 
     kernel.logger.info('security module initialized');
@@ -240,7 +256,7 @@ export class SecurityModule implements IModule {
   /** Build a SessionRecord from a session + role snapshot. */
   private buildSessionRecord(session: Session, roles: string[], remoteAddress: string | undefined, lastUsedAt: number): SessionRecord {
     return {
-      id: session.token,
+      id: sessionKey(session.token),
       token: session.token,
       userId: session.userId,
       username: session.username,
@@ -256,21 +272,23 @@ export class SecurityModule implements IModule {
   private async storeSession(session: Session, roles: string[], remoteAddress: string | undefined, lastUsedAt: number): Promise<SessionRecord> {
     const rec = this.buildSessionRecord(session, roles, remoteAddress, lastUsedAt);
     if (this.persistSessions) await this.sessions.put(rec);
-    else this.sessionCache.set(rec.token, rec);
+    else this.sessionCache.set(rec.id, rec); // keyed by the hash (matches readSession/destroySession)
     return rec;
   }
 
   /** Read a session record from the authoritative store for the active mode. */
   private async readSession(token: string): Promise<SessionRecord | undefined> {
-    if (this.persistSessions) return this.sessions.get(token).catch(() => undefined);
-    return this.sessionCache.get(token);
+    const key = sessionKey(token);
+    if (this.persistSessions) return this.sessions.get(key).catch(() => undefined);
+    return this.sessionCache.get(key);
   }
 
   /** Delete a session from both the store and the in-memory map. */
   private async destroySession(token: string): Promise<void> {
-    this.sessionCache.delete(token);
+    const key = sessionKey(token);
+    this.sessionCache.delete(key);
     this.lastUsedFlushedAt.delete(token);
-    if (this.persistSessions) await this.sessions.delete(token).catch(() => false);
+    if (this.persistSessions) await this.sessions.delete(key).catch(() => false);
   }
 
   /** Throttled persistence of lastUsedAt (avoid a write on every request). */
@@ -280,7 +298,8 @@ export class SecurityModule implements IModule {
     const last = this.lastUsedFlushedAt.get(token) ?? 0;
     if (now - last <= LAST_USED_FLUSH_INTERVAL_MS) return;
     this.lastUsedFlushedAt.set(token, now);
-    void this.sessions.get(token).then((rec) => {
+    const key = sessionKey(token);
+    void this.sessions.get(key).then((rec) => {
       if (!rec) return;
       rec.lastUsedAt = now;
       void this.sessions.put(rec).catch(() => undefined);

@@ -266,6 +266,9 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     storage: {
       driver: env.STORAGE_DRIVER as any ?? 'memory',
       fsRoot: env.STORAGE_FS_ROOT,
+      ...(env.STORAGE_ENCRYPTION_KEY ? { encryptionKey: env.STORAGE_ENCRYPTION_KEY } : {}),
+      ...(env.STORAGE_DEFAULT_QUOTA_BYTES ? { defaultQuotaBytes: env.STORAGE_DEFAULT_QUOTA_BYTES } : {}),
+      ...(env.STORAGE_QUOTAS ? { quotas: safeParseQuotas(env.STORAGE_QUOTAS) } : {}),
       ...(overrides.storage ?? {}),
     },
     vector: {
@@ -287,6 +290,24 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     gateway: { ...buildGatewayOptionsFromEnv(env), ...(overrides.gateway ?? {}) },
     kernel: overrides.kernel,
   });
+}
+
+/**
+ * Parse a JSON map of name->bytes quotas from the STORAGE_QUOTAS env var.
+ * Returns undefined on malformed input so a bad config never crashes boot.
+ */
+function safeParseQuotas(raw: string): Record<string, number> | undefined {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: Record<string, number> = {};
+      for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof v === 'number' && v > 0) out[k] = v;
+      }
+      return out;
+    }
+  } catch { /* fall through */ }
+  return undefined;
 }
 
 /**

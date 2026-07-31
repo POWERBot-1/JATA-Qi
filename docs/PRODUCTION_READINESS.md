@@ -141,12 +141,12 @@ via `scripts/build-all.sh`.
 1. **Payment providers are abstractions** — no real Stripe/PayPal/M-Pesa integration
 2. **Email/SMS are abstractions** — no real SendGrid/Twilio/Africa's Talking
 3. ~~**No CORS configuration**~~ ✅ RESOLVED (PR4) — configurable `CorsConfig` (origins/methods/headers/credentials + preflight)
-4. **No input size limits on storage** — namespaces can grow unbounded
+4. ~~**No input size limits on storage**~~ ✅ RESOLVED (PR7) — `QuotaDriver` enforces per-namespace/collection byte quotas
 5. ~~**No API versioning**~~ ✅ RESOLVED (PR4) — `/v1` versioning with full backward compatibility
 6. **No WebSocket** — real-time collaboration not possible
-7. **No load balancer / horizontal scaling config** — single-process only
-8. **No secrets encryption at rest** — storage is plaintext
-9. **Secret management** — no Vault/KMS; TLS keys read from disk/env (PR4 ships the TLS path, not a KMS)
+7. ~~**No load balancer / horizontal scaling config**~~ ✅ RESOLVED (PR5) — Kubernetes (StatefulSet/HPA/Ingress) + stateless gateway proven across instances
+8. ~~**No secrets encryption at rest**~~ ✅ RESOLVED (PR7) — AES-256-GCM encryption-at-rest driver decorator; session tokens stored under a SHA-256 digest
+9. **Secret management** — no Vault/KMS; TLS + encryption keys read from disk/env (PR4/PR7 ship the crypto path, not a KMS)
 
 ---
 
@@ -209,15 +209,16 @@ via `scripts/build-all.sh`.
 
 ```
 Packages:              56
-Tests:                 742 (100% pass)
+Tests:                 766 (100% pass)
 Gateway endpoints:      99
 Kernel modules:         56
-Readiness capabilities: 73 (37 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
+Readiness capabilities: 75 (39 TESTED, 34 PARTIALLY_IMPLEMENTED, 2 RESEARCH_ONLY, 0 PRODUCTION_READY)
 Governance-gated paths: 2 (orchestrator + tool-intelligence)
 Audit-logging packages: 23+
 Zero external deps:     ✅ (Node.js built-ins only)
 Creator identity:       GITANYA K (Ed25519 verified)
 P0 blockers resolved:   6/6 (PR2 + PR3 + PR4)
+P1 risks resolved:      CORS, versioning, size-limits, encryption-at-rest, horizontal scaling (PR4/PR5/PR7)
 Deployment artifacts:   Kubernetes (Kustomize + Helm), Prometheus/Grafana monitoring (PR5)
 Quality assurance:      E2E + performance + security + chaos suites (PR6)
 Production-ready:       0 capabilities (ALPHA — by design, no PRODUCTION_READY claims)
@@ -465,23 +466,75 @@ Readiness: 69 → 73 capabilities (33 → 37 TESTED); added `quality.e2e`,
 
 ---
 
-## 15. Recommendation
+## 15. PR7 — Storage Hardening: quotas + encryption at rest (complete)
+
+**Branch**: `arena/019f94a7-jata-qi` · **Phase**: PR7 · **Status**: ✅ Complete (0 build errors, 0 test failures)
+
+PR7 closes two P1 production risks (§8 #4 unbounded storage growth, §8 #8 no
+encryption at rest) with transparent, composable storage decorators — zero
+external dependencies (`node:crypto` AES-256-GCM).
+
+### 15.1 Encryption at rest (`EncryptedDriver`)
+A decorator that wraps any `IStorageDriver` and seals every namespace value,
+collection document, and blob with **AES-256-GCM** (random per-write nonce,
+authenticated). The underlying driver only ever sees ciphertext. Features:
+tamper detection, wrong-key rejection, ciphertext persists across restarts, and
+graceful degradation on key mismatch (boot does NOT crash; affected sessions
+just fail to authenticate).
+
+### 15.2 Storage quotas (`QuotaDriver`)
+A decorator enforcing per-namespace/collection **byte quotas** with lazy size
+accounting (accurate across restarts). Over-quota writes throw
+`QuotaExceededError`; updates and deletes reconcile correctly. Composes with
+encryption as `QuotaDriver(EncryptedDriver(base))` so quotas count logical size.
+
+### 15.3 Security fix found by PR7
+Session tokens were previously stored as the collection primary key — i.e. in
+**plaintext on disk**, defeating encryption at rest. Fixed: sessions are now
+stored under a non-reversible **SHA-256 digest** of the token; the raw token
+only ever lives inside the encrypted document. The security module's `init()`
+is now resilient to an undecryptable store (logs a warning, continues).
+
+### 15.4 Wiring & env
+`StorageModule` config: `encryptionKey`, `quotas`, `defaultQuotaBytes`. Env
+(required by `createJataQiFromEnv`): `STORAGE_ENCRYPTION_KEY`,
+`STORAGE_DEFAULT_QUOTA_BYTES`, `STORAGE_QUOTAS` (JSON map). All opt-in;
+default behavior unchanged (backward compatible).
+
+### 15.5 Test evidence (PR7)
+
+| Suite | Tests | Package |
+|---|---|---|
+| Cipher (AES-256-GCM) | 8 | `@jataqi/storage` |
+| Hardened driver (encrypted + quota + composition) | 11 | `@jataqi/storage` |
+| StorageModule hardening (kernel integration) | 3 | `@jataqi/storage` |
+| Encrypted sessions + restart/key-mismatch | 2 | `@jataqi/security` |
+| **PR7 total** | **24** (+ existing suites green) | (742 → 766 platform tests, 0 failures) |
+
+Readiness: 73 → 75 capabilities (37 → 39 TESTED); added `storage.encryption`
+and `storage.quotas`, refreshed `storage`.
+
+---
+
+## 16. Recommendation
 
 **JATA Qi is architecturally production-grade but operationally not yet production-ready.**
 The modular design, governance enforcement, cryptographic provenance, comprehensive
-test coverage (742 automated tests incl. E2E + security + chaos), Kubernetes
-deployment, and observability stack are excellent foundations. With **PR2–PR6
-complete**, all six P0 blockers are resolved and the full confidence baseline
-(E2E, performance, security, chaos) is green. The path to a production release is now:
+test coverage (766 automated tests incl. E2E + security + chaos), Kubernetes
+deployment, observability stack, and storage hardening (encryption at rest +
+quotas) are excellent foundations. With **PR2–PR7 complete**, all six P0 blockers
+are resolved and most P1 risks (CORS, versioning, size-limits, encryption-at-rest,
+horizontal scaling) are closed. The path to a production release is now:
 
 1. ~~**PR2**: Persistent storage (SQLite)~~ ✅
 2. ~~**PR3**: Real LLM integration~~ ✅
 3. ~~**PR4**: TLS + CORS + versioning + sessions + tenancy + backups~~ ✅
 4. ~~**PR5**: Kubernetes + monitoring + horizontal scaling~~ ✅
 5. ~~**PR6**: E2E + benchmarks + security/chaos testing~~ ✅
-6. **Remaining (P1 / stretch)**: Postgres driver (multi-writer scale-out), real payment/email/SMS providers, OpenTelemetry tracing, CI workflow push (GitHub App permissions), Terraform
+6. ~~**PR7**: Storage quotas + encryption at rest~~ ✅
+7. **Remaining (P1 / stretch)**: Postgres driver (multi-writer scale-out), real payment/email/SMS providers, OpenTelemetry tracing, WebSocket, CI workflow push (GitHub App permissions), Terraform
 
-Estimated time to production: **3-6 weeks** with a focused team (P0 blockers + confidence baseline done; remaining work is P1 third-party providers + multi-writer scale).
+Estimated time to production: **2-5 weeks** with a focused team (P0 blockers + confidence baseline + storage hardening done; remaining work is P1 third-party providers + multi-writer scale + real-time).
 
 ---
 
