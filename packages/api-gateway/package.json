@@ -52,6 +52,8 @@
     "@jataqi/tracing": "0.1.0",
     "@jataqi/realtime": "0.1.0",
     "@jataqi/conversations": "0.1.0",
+    "@jataqi/accreditation": "0.1.0",
+    "@jataqi/dns": "0.1.0",
     "@jataqi/model-runtime": "0.1.0",
     "@jataqi/ai-safety": "0.1.0"
   },

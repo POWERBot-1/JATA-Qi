@@ -41,6 +41,8 @@ import type { TracingModule } from '@jataqi/tracing';
 import type { Span } from '@jataqi/tracing';
 import type { RealtimeModule } from '@jataqi/realtime';
 import type { ConversationsModule } from '@jataqi/conversations';
+import type { AccreditationModule } from '@jataqi/accreditation';
+import type { DnsModule } from '@jataqi/dns';
 import type { ModelRuntimeModule } from '@jataqi/model-runtime';
 import type { AiSafetyModule } from '@jataqi/ai-safety';
 import { extract as extractTraceContext } from '@jataqi/tracing';
@@ -93,6 +95,8 @@ export class ApiGatewayModule implements IModule {
   private conversations?: ConversationsModule;
   private modelRuntime?: ModelRuntimeModule;
   private aiSafety?: AiSafetyModule;
+  private accreditation?: AccreditationModule;
+  private dns?: DnsModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -151,6 +155,8 @@ export class ApiGatewayModule implements IModule {
     this.conversations = this.tryModule<ConversationsModule>('conversations');
     this.modelRuntime = this.tryModule<ModelRuntimeModule>('model-runtime');
     this.aiSafety = this.tryModule<AiSafetyModule>('ai-safety');
+    this.accreditation = this.tryModule<AccreditationModule>('accreditation');
+    this.dns = this.tryModule<DnsModule>('dns');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -452,6 +458,27 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/gov/evaluations', auth('policy:audit', (req) => this.govEvaluations(req)));
     route('POST', '/gov/agent', auth('policy:read', (req) => this.govSetAgent(req)));
     route('POST', '/gov/agent/check', auth('policy:evaluate', (req) => this.govCheckAgent(req)));
+    // PRX Part L — Legal Operation Mode + accreditation (public posture; mutations
+    // are governance-gated). Public read endpoints let auditors verify the
+    // platform never claims accreditation it has not earned.
+    route('GET', '/accreditation/status', () => this.accreditationStatus());
+    route('GET', '/accreditation/domains', () => this.accreditationDomains());
+    route('GET', '/accreditation/compliance', auth('audit:read', () => this.accreditationCompliance()));
+    route('GET', '/accreditation/grants', auth('audit:read', (req) => this.accreditationGrants(req)));
+    route('GET', '/accreditation/ledger', auth('audit:read', () => this.accreditationLedger()));
+    route('GET', '/accreditation/verify-claim', (req) => this.accreditationVerifyClaim(req));
+    route('POST', '/accreditation/grant', auth('policy:audit', (req) => this.accreditationRecordGrant(req)));
+    route('POST', '/accreditation/grant/status', auth('policy:audit', (req) => this.accreditationSetGrantStatus(req)));
+    route('POST', '/accreditation/mode', auth('policy:audit', (req) => this.accreditationSetMode(req)));
+    // PRX Part D — Global DNS platform: zones, RDAP/WHOIS, resolution, analytics.
+    route('GET', '/dns/zones', auth('audit:read', () => this.dnsZones()));
+    route('GET', '/dns/zone', auth('audit:read', (req) => this.dnsZoneGet(req)));
+    route('POST', '/dns/zone', auth('policy:audit', (req) => this.dnsZoneCreate(req)));
+    route('POST', '/dns/records', auth('policy:audit', (req) => this.dnsRecordsAdd(req)));
+    route('POST', '/dns/sign', auth('policy:audit', (req) => this.dnsSign(req)));
+    route('GET', '/dns/resolve', auth('audit:read', (req) => this.dnsResolve(req)));
+    route('GET', '/dns/rdap', (req) => this.dnsRdap(req));
+    route('GET', '/dns/analytics', auth('metrics:read', () => this.dnsAnalytics()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1118,7 +1145,176 @@ export class ApiGatewayModule implements IModule {
     return json(200, this.readiness.summary());
   }
 
-  // --- disaster recovery (scheduled backups, PR4) -------------------------
+  // --- PRX Part L: accreditation & legal operation mode -------------------
+
+  private accreditationStatus(): GatewayResponse {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    const report = this.accreditation.complianceReport();
+    const activeGrants = report.filter((r) => r.activeGrant).map((r) => r.domain);
+    return json(200, {
+      mode: this.accreditation.getMode(),
+      activeAccreditations: activeGrants,
+      ledgerRootHash: this.accreditation.ledgerRootHash(),
+      ledgerIntact: this.accreditation.verifyLedger(),
+      grantsIntegrity: this.accreditation.verifyAllGrants(),
+      // Honest self-description: the platform is NEVER an accredited authority
+      // unless verified grants + production mode are present.
+      claims: {
+        accreditedRegistry: this.accreditation.verifyClaim('JATA Qi is an accredited registry operator').honest,
+        accreditedRegistrar: this.accreditation.verifyClaim('JATA Qi is an accredited registrar').honest,
+        publicCertificateAuthority: this.accreditation.verifyClaim('JATA Qi is a publicly trusted certificate authority').honest,
+        delegatedDnsAuthority: this.accreditation.verifyClaim('JATA Qi is a delegated DNS authority').honest,
+      },
+    });
+  }
+
+  private accreditationDomains(): GatewayResponse {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    return json(200, { domains: this.accreditation.listDomains() });
+  }
+
+  private accreditationCompliance(): GatewayResponse {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    return json(200, { report: this.accreditation.complianceReport() });
+  }
+
+  private accreditationGrants(req: GatewayRequest): GatewayResponse {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    return json(200, { grants: this.accreditation.listGrants(req.query.domain) });
+  }
+
+  private accreditationLedger(): GatewayResponse {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    return json(200, { entries: this.accreditation.ledgerEntries(), intact: this.accreditation.verifyLedger() });
+  }
+
+  private accreditationVerifyClaim(req: GatewayRequest): GatewayResponse {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    const claim = typeof req.query.claim === 'string' ? req.query.claim : '';
+    if (!claim) return json(400, { error: 'query parameter "claim" is required' });
+    return json(200, this.accreditation.verifyClaim(claim));
+  }
+
+  private async accreditationRecordGrant(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    const b = this.asObject(req.body);
+    const { domain, issuedBy, scope, validFrom, validUntil } = b;
+    if (typeof domain !== 'string' || typeof issuedBy !== 'string' || typeof scope !== 'string') {
+      return json(400, { error: 'fields domain, issuedBy, scope are required' });
+    }
+    const grant = this.accreditation.recordGrant({
+      domain, issuedBy, scope,
+      ...(typeof b.externalRef === 'string' ? { externalRef: b.externalRef } : {}),
+      validFrom: typeof validFrom === 'number' ? validFrom : Date.now(),
+      validUntil: typeof validUntil === 'number' ? validUntil : 0,
+      recordedBy: req.principal?.username ?? 'system',
+      ...(Array.isArray(b.evidence) ? { evidence: b.evidence.map(String) } : {}),
+    });
+    return json(201, { grant });
+  }
+
+  private async accreditationSetGrantStatus(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : '';
+    const status = typeof b.status === 'string' ? b.status : '';
+    if (!id || !['ACTIVE', 'SUSPENDED', 'REVOKED', 'EXPIRED', 'PENDING'].includes(status)) {
+      return json(400, { error: 'fields id, status (ACTIVE|SUSPENDED|REVOKED|EXPIRED|PENDING) required' });
+    }
+    const grant = this.accreditation.setGrantStatus(id, status as never, req.principal?.username ?? 'system');
+    return json(200, { grant });
+  }
+
+  private async accreditationSetMode(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.accreditation) return json(501, { error: 'accreditation module not registered' });
+    const b = this.asObject(req.body);
+    const mode = typeof b.mode === 'string' ? b.mode : '';
+    if (!['DEVELOPMENT', 'PRIVATE_INFRASTRUCTURE', 'ACCREDITED_PRODUCTION'].includes(mode)) {
+      return json(400, { error: 'field mode (DEVELOPMENT|PRIVATE_INFRASTRUCTURE|ACCREDITED_PRODUCTION) required' });
+    }
+    this.accreditation.setMode(mode as never);
+    return json(200, { mode });
+  }
+
+  // --- PRX Part D: DNS platform (zones, RDAP, resolve, analytics) ---------
+
+  private dnsZones(): GatewayResponse {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    return json(200, { zones: this.dns.listZones().map((z) => ({ origin: z.origin, dnssec: !!z.dnssec, recordCount: z.records.length })) });
+  }
+
+  private dnsZoneGet(req: GatewayRequest): GatewayResponse {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    const origin = typeof req.query.origin === 'string' ? req.query.origin : '';
+    if (!origin) return json(400, { error: 'query parameter "origin" is required' });
+    const z = this.dns.getZone(origin);
+    if (!z) return json(404, { error: 'zone not found' });
+    return json(200, { zone: z });
+  }
+
+  private async dnsZoneCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    const b = this.asObject(req.body);
+    const origin = typeof b.origin === 'string' ? b.origin : '';
+    if (!origin) return json(400, { error: 'field "origin" is required' });
+    const soa = typeof b.soa === 'object' && b.soa ? b.soa : {
+      mname: `ns1.${origin}`, rname: `hostmaster.${origin}`, serial: 1, refresh: 3600, retry: 900, expire: 604800, minimum: 86400,
+    };
+    this.dns.addZone({ origin, soa: soa as never, records: Array.isArray(b.records) ? b.records as never[] : [] });
+    return json(201, { origin });
+  }
+
+  private async dnsRecordsAdd(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    const b = this.asObject(req.body);
+    const origin = typeof b.origin === 'string' ? b.origin : '';
+    const records = Array.isArray(b.records) ? b.records : [];
+    if (!origin || records.length === 0) return json(400, { error: 'fields origin and records[] are required' });
+    this.dns.addRecords(origin, records as never);
+    return json(200, { added: records.length, serial: this.dns.store.soaSerial(this.dns.getZone(origin)!) });
+  }
+
+  private async dnsSign(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    const b = this.asObject(req.body);
+    const origin = typeof b.origin === 'string' ? b.origin : '';
+    if (!origin) return json(400, { error: 'field "origin" is required' });
+    const result = this.dns.signZone(origin);
+    return json(200, { origin, keyTag: result.ksk.keyTag, ds: result.ds });
+  }
+
+  private async dnsResolve(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    const type = typeof req.query.type === 'string' ? req.query.type : 'A';
+    if (!name) return json(400, { error: 'query parameter "name" is required' });
+    const qtype = dnsTypeFromString(type);
+    // Prefer the local authoritative store; fall back to the recursive resolver
+    // (real network) only when recursive resolution is enabled.
+    const local = this.dns.resolveLocal(name, qtype, { dnssec: true, do: true });
+    if (local.rcode !== 5) return json(200, { source: 'authoritative', ...local });
+    try {
+      const resp = await this.dns.resolve(name, qtype);
+      return json(200, { source: 'recursive', rcode: resp.header.rcode, answers: resp.answers });
+    } catch {
+      return json(200, { source: 'authoritative', rcode: 5, answers: [], aa: false });
+    }
+  }
+
+  private dnsRdap(req: GatewayRequest): GatewayResponse {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    if (!name) return json(400, { error: 'query parameter "name" is required' });
+    const result = this.dns.rdapLookup(name);
+    const status = result.notFound ? 404 : 200;
+    return json(status, result);
+  }
+
+  private dnsAnalytics(): GatewayResponse {
+    if (!this.dns) return json(501, { error: 'dns module not registered' });
+    return json(200, { analytics: this.dns.analytics() ?? { totalQueries: 0, byKey: {}, topQnames: [] }, address: this.dns.address });
+  }
+
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.disasterRecovery) return json(501, { error: 'disaster-recovery module not registered' });
@@ -2023,6 +2219,16 @@ export class ApiGatewayModule implements IModule {
 
 function json(status: number, body: unknown): GatewayResponse {
   return { status, body };
+}
+
+/** Map a DNS type name (case-insensitive) to its numeric code. */
+function dnsTypeFromString(name: string): number {
+  const n = name.toUpperCase();
+  const map: Record<string, number> = {
+    A: 1, NS: 2, CNAME: 5, SOA: 6, PTR: 12, MX: 15, TXT: 16, AAAA: 28,
+    SRV: 33, DS: 43, RRSIG: 46, NSEC: 47, DNSKEY: 48, CAA: 257, ANY: 255,
+  };
+  return map[n] ?? 1;
 }
 
 function rateHeaders(d: { limit: number; remaining: number; resetAt: number; retryAfterSec: number }): Record<string, string> {

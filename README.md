@@ -72,6 +72,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/feature-flags` | Deployment/testing rollout switches (deterministic % rollout; separate from entitlements) |
 | `@jataqi/privacy` | Data privacy — classification, retention, consent, subject-access requests, AI-context restriction |
 | `@jataqi/policy-governance` | Policy & governance control plane — versioned, tenant-aware, precedence-based engine; agent/tool/autonomy governance |
+| `@jataqi/accreditation` | **PRX Part L** — Legal Operation Mode + accreditation governance: gates public-trust capabilities (registry, registrar, DNS authority, CA, RIR, cloud, hosting, IdP, CDN, marketplace) behind verified Ed25519-signed grants; SHA-256-chained immutable ledger; honest claim verification |
+| `@jataqi/dns` | **PRX Part D** — Global DNS platform: RFC 1035 wire codec, authoritative UDP/TCP server, recursive resolver, DNSSEC (ECDSA P-256, RRSIG/DNSKEY/DS/NSEC), GeoDNS views, AXFR, RDAP |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 

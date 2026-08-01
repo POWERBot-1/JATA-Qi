@@ -65,6 +65,8 @@ import { AiSafetyModule } from '@jataqi/ai-safety';
 import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
+import { AccreditationModule, type OperationMode } from '@jataqi/accreditation';
+import { DnsModule } from '@jataqi/dns';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -157,6 +159,18 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new ToolIntelligenceModule());
   kernel.register(new ReadinessModule());
   kernel.register(new ProvenanceModule());
+  // PRX Part L: Legal Operation Mode + accreditation governance.
+  kernel.register(new AccreditationModule({
+    mode: (process.env.JATAQI_OPERATION_MODE as OperationMode | undefined) ?? 'DEVELOPMENT',
+    governancePrivateKey: process.env.JATAQI_GOVERNANCE_KEY,
+  }));
+  // PRX Part D: Global DNS platform.
+  kernel.register(new DnsModule({
+    serve: process.env.JATAQI_DNS_SERVE === '1',
+    port: process.env.JATAQI_DNS_PORT ? Number(process.env.JATAQI_DNS_PORT) : 8053,
+    host: process.env.JATAQI_DNS_HOST ?? '127.0.0.1',
+    recursive: process.env.JATAQI_DNS_RECURSIVE === '1',
+  }));
   kernel.register(new CommerceModule());
   kernel.register(new OrganizationsModule());
   kernel.register(new NotificationsModule());
