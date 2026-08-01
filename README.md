@@ -76,6 +76,10 @@ structured response → produce an auditable execution record.
 | `@jataqi/dns` | **PRX Part D** — Global DNS platform: RFC 1035 wire codec, authoritative UDP/TCP server, recursive resolver, DNSSEC (ECDSA P-256, RRSIG/DNSKEY/DS/NSEC), GeoDNS views, AXFR, RDAP |
 | `@jataqi/registry` | **PRX Part A** — TLD Registry platform: domain lifecycle (ICANN grace periods), EPP (RFC 5730–5734 XML codec + TCP/TLS server/client), RDAP/WHOIS, DNSSEC DS delegation, data escrow (RFC 8909), premium/reserved/sunrise/trademark-claims, transfers |
 | `@jataqi/registrar` | **PRX Part B** — Registrar platform: search/register/renew/transfer/restore, bulk registration, portfolio, pricing engine, billing (via commerce), KYC identity, compliance engine (reserved/claims/abuse) |
+| `@jataqi/game-engine` | **NOVA §3** — Universal ECS game-engine core: entity-component-system, deterministic fixed-timestep simulation loop, math (Vec3/Quaternion/Mat4), built-in systems (kinematics, lifetime, transform hierarchy) |
+| `@jataqi/game-world` | **NOVA §5** — Procedural world generation: seeded PRNG, Perlin/value noise, fBm, heightmaps + biomes, settlements (villages/towns/cities), MST road networks |
+| `@jataqi/game-physics` | **NOVA §7** — 3D rigid-body physics: sphere/AABB colliders, impulse collision resolution + positional correction, gravity, distance constraints, raycasting |
+| `@jataqi/game-architect` | **NOVA §2/§19** — AI game creation: natural-language prompt → game design document + 5 AI dev agents (Director/World/Character/Programmer/Tester) + autonomous build pipeline |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
