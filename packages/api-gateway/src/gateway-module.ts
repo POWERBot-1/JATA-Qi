@@ -40,6 +40,9 @@ import type { DisasterRecoveryModule } from '@jataqi/disaster-recovery';
 import type { TracingModule } from '@jataqi/tracing';
 import type { Span } from '@jataqi/tracing';
 import type { RealtimeModule } from '@jataqi/realtime';
+import type { ConversationsModule } from '@jataqi/conversations';
+import type { ModelRuntimeModule } from '@jataqi/model-runtime';
+import type { AiSafetyModule } from '@jataqi/ai-safety';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, ResolvedCorsPolicy, RouteHandler, TlsConfig } from './types.js';
@@ -87,6 +90,9 @@ export class ApiGatewayModule implements IModule {
   private disasterRecovery?: DisasterRecoveryModule;
   private tracing?: TracingModule;
   private realtime?: RealtimeModule;
+  private conversations?: ConversationsModule;
+  private modelRuntime?: ModelRuntimeModule;
+  private aiSafety?: AiSafetyModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -142,6 +148,9 @@ export class ApiGatewayModule implements IModule {
     this.disasterRecovery = this.tryModule<DisasterRecoveryModule>('disaster-recovery');
     this.tracing = this.tryModule<TracingModule>('tracing');
     this.realtime = this.tryModule<RealtimeModule>('realtime');
+    this.conversations = this.tryModule<ConversationsModule>('conversations');
+    this.modelRuntime = this.tryModule<ModelRuntimeModule>('model-runtime');
+    this.aiSafety = this.tryModule<AiSafetyModule>('ai-safety');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -395,6 +404,20 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/org/data', auth('org:read', (req) => this.orgDataGet(req)));
     route('POST', '/org/data', auth('org:read', (req) => this.orgDataMutate(req)));
     route('GET', '/sessions', auth(null, (req) => this.sessionsList(req)));
+    // Unified Chat API (PR3 consumer AI — conversations + model routing + safety).
+    route('POST', '/chat', auth('agent:run', (req) => this.chat(req)));
+    route('GET', '/chats', auth('agent:run', (req) => this.chatList(req)));
+    route('POST', '/chats', auth('agent:run', (req) => this.chatCreate(req)));
+    route('GET', '/chat', auth('agent:run', (req) => this.chatGet(req)));
+    route('POST', '/chat/delete', auth('agent:run', (req) => this.chatDelete(req)));
+    route('POST', '/chat/message', auth('agent:run', (req) => this.chatMessage(req)));
+    route('POST', '/chat/edit', auth('agent:run', (req) => this.chatEdit(req)));
+    route('POST', '/chat/share', auth('agent:run', (req) => this.chatShare(req)));
+    route('GET', '/chat/shared', (req) => this.chatShared(req));
+    route('POST', '/chat/folder', auth('agent:run', (req) => this.chatFolder(req)));
+    route('GET', '/chat/folders', auth('agent:run', (req) => this.chatFolders(req)));
+    route('GET', '/chat/export', auth('agent:run', (req) => this.chatExport(req)));
+    route('GET', '/chat/search', auth('agent:run', (req) => this.chatSearch(req)));
     route('POST', '/session/revoke', auth(null, (req) => this.sessionRevoke(req)));
     // Notifications.
     route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
@@ -1752,6 +1775,175 @@ export class ApiGatewayModule implements IModule {
       ...(typeof b.iterations === 'number' ? { iterations: b.iterations } : {}),
     });
     return json(200, { result });
+  }
+
+  // --- unified chat API (conversations + model routing + safety) -----------
+
+  private async chat(req: GatewayRequest): Promise<GatewayResponse> {
+    const body = this.asObject(req.body);
+    const message = typeof body.message === 'string' ? body.message : '';
+    if (!message.trim()) return json(400, { error: 'field "message" is required' });
+    if (!req.principal) return json(401, { error: 'unauthorized' });
+
+    // AI safety scan.
+    if (this.aiSafety) {
+      const scan = this.aiSafety.scan(message);
+      if (scan.blocked) return json(400, { error: 'input blocked by safety filter', risk: scan.risk, violations: scan.violations.map((v) => v.type) });
+    }
+
+    // Resolve or create a conversation.
+    let conv;
+    const convMod = this.conversations;
+    if (convMod) {
+      const conversationId = typeof body.conversationId === 'string' ? body.conversationId : undefined;
+      if (conversationId) {
+        conv = await convMod.get(conversationId);
+        if (!conv || conv.userId !== req.principal.userId) return json(404, { error: 'conversation not found' });
+      } else {
+        conv = await convMod.create(req.principal.userId, { title: typeof body.title === 'string' ? body.title : undefined });
+      }
+      await convMod.addMessage(conv.id, 'user', message);
+    }
+
+    const messages = conv?.messages.slice(-20).map((m) => ({ role: m.role, content: m.content })) ?? [{ role: 'user', content: message }];
+    if (conv?.systemPrompt) messages.unshift({ role: 'system', content: conv.systemPrompt });
+
+    let answer: string;
+    try {
+      if (this.modelRuntime) {
+        const res = await this.modelRuntime.complete({ messages: messages.map((m) => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content })) });
+        answer = res.message.content;
+        if (conv && convMod) await convMod.addMessage(conv.id, 'assistant', answer, { ...(res.usage ? { usage: { promptTokens: res.usage.promptTokens, completionTokens: res.usage.completionTokens } } : {}) });
+      } else {
+        const res = await this.agents.run(message);
+        answer = res.answer;
+        if (conv && convMod) await convMod.addMessage(conv.id, 'assistant', answer);
+      }
+    } catch {
+      answer = 'I encountered an error processing your request. Please try again.';
+      if (conv && convMod) await convMod.addMessage(conv.id, 'assistant', answer);
+    }
+
+    return json(200, {
+      answer,
+      conversationId: conv?.id,
+      ...(conv ? { messageCount: conv.messages.length + 1 } : {}),
+    });
+  }
+
+  private async chatList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const result = await this.conversations.list(req.principal!.userId, {
+      ...(req.query.folderId ? { folderId: req.query.folderId } : {}),
+      ...(req.query.search ? { search: req.query.search } : {}),
+      ...(req.query.pinned === 'true' ? { pinned: true } : {}),
+      ...(req.query.archived === 'true' ? { archived: true } : {}),
+      limit: req.query.limit ? Number(req.query.limit) : 50,
+    });
+    return json(200, { conversations: result.conversations.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, pinned: c.pinned, messageCount: c.messages.length })), total: result.total });
+  }
+
+  private async chatCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    const conv = await this.conversations.create(req.principal!.userId, {
+      ...(typeof b.title === 'string' ? { title: b.title } : {}),
+      ...(typeof b.systemPrompt === 'string' ? { systemPrompt: b.systemPrompt } : {}),
+      ...(typeof b.modelPreference === 'string' ? { modelPreference: b.modelPreference } : {}),
+    });
+    return json(201, { conversation: { id: conv.id, title: conv.title } });
+  }
+
+  private async chatGet(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const conv = await this.conversations.get(id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    return json(200, { conversation: conv });
+  }
+
+  private async chatDelete(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const conv = await this.conversations.get(b.id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    await this.conversations.delete(b.id);
+    return json(200, { deleted: true });
+  }
+
+  private async chatMessage(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.conversationId !== 'string' || typeof b.content !== 'string') return json(400, { error: 'fields "conversationId" and "content" are required' });
+    const conv = await this.conversations.get(b.conversationId);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    const msg = await this.conversations.addMessage(b.conversationId, b.role === 'assistant' ? 'assistant' : 'user', b.content);
+    return json(201, { message: msg });
+  }
+
+  private async chatEdit(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.conversationId !== 'string' || typeof b.messageId !== 'string' || typeof b.content !== 'string')
+      return json(400, { error: 'fields "conversationId", "messageId", and "content" are required' });
+    const conv = await this.conversations.get(b.conversationId);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    const edited = await this.conversations.editMessage(b.conversationId, b.messageId, b.content);
+    return edited ? json(200, { message: edited }) : json(404, { error: 'message not found' });
+  }
+
+  private async chatShare(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const conv = await this.conversations.get(b.id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    const shareId = await this.conversations.share(b.id);
+    return json(200, { shareId });
+  }
+
+  private async chatShared(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const shareId = req.query.id;
+    if (!shareId) return json(400, { error: 'query parameter "id" (share id) is required' });
+    const conv = await this.conversations.getByShareId(shareId);
+    if (!conv) return json(404, { error: 'shared conversation not found' });
+    return json(200, { conversation: { title: conv.title, messages: conv.messages } });
+  }
+
+  private async chatFolder(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string') return json(400, { error: 'field "name" is required' });
+    const folder = await this.conversations.createFolder(req.principal!.userId, b.name, typeof b.color === 'string' ? b.color : undefined);
+    return json(201, { folder });
+  }
+
+  private async chatFolders(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const folders = await this.conversations.listFolders(req.principal!.userId);
+    return json(200, { folders });
+  }
+
+  private async chatExport(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const conv = await this.conversations.get(id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    const format = (req.query.format ?? 'json') as 'json' | 'markdown' | 'text';
+    const exported = await this.conversations.export(id, format);
+    return { status: 200, body: exported, contentType: format === 'json' ? 'application/json' : 'text/plain' };
+  }
+
+  private async chatSearch(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const q = req.query.q;
+    if (!q) return json(400, { error: 'query parameter "q" is required' });
+    const result = await this.conversations.list(req.principal!.userId, { search: q, limit: 20 });
+    return json(200, { results: result.conversations.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, messageCount: c.messages.length })), total: result.total });
   }
 
   // --- helpers -------------------------------------------------------------

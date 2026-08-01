@@ -50,7 +50,10 @@
     "@jataqi/policy-governance": "0.1.0",
     "@jataqi/disaster-recovery": "0.1.0",
     "@jataqi/tracing": "0.1.0",
-    "@jataqi/realtime": "0.1.0"
+    "@jataqi/realtime": "0.1.0",
+    "@jataqi/conversations": "0.1.0",
+    "@jataqi/model-runtime": "0.1.0",
+    "@jataqi/ai-safety": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
