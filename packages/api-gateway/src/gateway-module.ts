@@ -43,6 +43,8 @@ import type { RealtimeModule } from '@jataqi/realtime';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
+import type { RegistryModule } from '@jataqi/registry';
+import type { RegistrarModule } from '@jataqi/registrar';
 import type { ModelRuntimeModule } from '@jataqi/model-runtime';
 import type { AiSafetyModule } from '@jataqi/ai-safety';
 import { extract as extractTraceContext } from '@jataqi/tracing';
@@ -97,6 +99,8 @@ export class ApiGatewayModule implements IModule {
   private aiSafety?: AiSafetyModule;
   private accreditation?: AccreditationModule;
   private dns?: DnsModule;
+  private registry?: RegistryModule;
+  private registrar?: RegistrarModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -157,6 +161,8 @@ export class ApiGatewayModule implements IModule {
     this.aiSafety = this.tryModule<AiSafetyModule>('ai-safety');
     this.accreditation = this.tryModule<AccreditationModule>('accreditation');
     this.dns = this.tryModule<DnsModule>('dns');
+    this.registry = this.tryModule<RegistryModule>('registry');
+    this.registrar = this.tryModule<RegistrarModule>('registrar');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -479,6 +485,21 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/dns/resolve', auth('audit:read', (req) => this.dnsResolve(req)));
     route('GET', '/dns/rdap', (req) => this.dnsRdap(req));
     route('GET', '/dns/analytics', auth('metrics:read', () => this.dnsAnalytics()));
+    // PRX Part A — Registry (RDAP public; management audit-gated).
+    route('GET', '/registry/rdap', (req) => this.registryRdap(req));
+    route('GET', '/registry/tlds', auth('audit:read', () => this.registryTlds()));
+    route('GET', '/registry/report', auth('audit:read', () => this.registryReport()));
+    route('GET', '/registry/zones', auth('audit:read', (req) => this.registryZones(req)));
+    route('POST', '/registry/escrow', auth('policy:audit', (req) => this.registryEscrow(req)));
+    route('POST', '/registry/tld', auth('policy:audit', (req) => this.registryAddTld(req)));
+    route('POST', '/registry/registrar', auth('policy:audit', (req) => this.registryAddRegistrar(req)));
+    // PRX Part B — Registrar (consumer-facing domain flows).
+    route('GET', '/registrar/list', auth('audit:read', () => this.registrarList()));
+    route('POST', '/registrar', auth('policy:audit', (req) => this.registrarAdd(req)));
+    route('POST', '/registrar/search', auth('commerce:read', (req) => this.registrarSearch(req)));
+    route('POST', '/registrar/register', auth('commerce:read', (req) => this.registrarRegister(req)));
+    route('POST', '/registrar/renew', auth('commerce:read', (req) => this.registrarRenew(req)));
+    route('GET', '/registrar/portfolio', auth('commerce:read', (req) => this.registrarPortfolio(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1313,6 +1334,135 @@ export class ApiGatewayModule implements IModule {
   private dnsAnalytics(): GatewayResponse {
     if (!this.dns) return json(501, { error: 'dns module not registered' });
     return json(200, { analytics: this.dns.analytics() ?? { totalQueries: 0, byKey: {}, topQnames: [] }, address: this.dns.address });
+  }
+
+  // --- PRX Part A: Registry ------------------------------------------------
+
+  private registryRdap(req: GatewayRequest): GatewayResponse {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    const name = typeof req.query.name === 'string' ? req.query.name : '';
+    if (!name) return json(400, { error: 'query parameter "name" is required' });
+    const result = this.registry.rdapLookup(name);
+    const status = result.notFound ? 404 : 200;
+    return json(status, result);
+  }
+
+  private registryTlds(): GatewayResponse {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    return json(200, { tlds: this.registry.listTlds() });
+  }
+
+  private registryReport(): GatewayResponse {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    return json(200, { report: this.registry.report() });
+  }
+
+  private registryZones(req: GatewayRequest): GatewayResponse {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    const origin = typeof req.query.origin === 'string' ? req.query.origin : '';
+    if (!origin) return json(200, { domains: this.registry.listAllDomains() });
+    const reg = this.registry.getTld(origin);
+    if (!reg) return json(404, { error: 'TLD not found' });
+    return json(200, { domains: reg.listDomains() });
+  }
+
+  private async registryEscrow(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    const b = this.asObject(req.body);
+    const tld = typeof b.tld === 'string' ? b.tld : '';
+    if (!tld) return json(400, { error: 'field "tld" is required' });
+    const deposit = this.registry.escrowDeposit(tld);
+    return json(200, { deposit });
+  }
+
+  private async registryAddTld(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    const b = this.asObject(req.body);
+    const tld = typeof b.tld === 'string' ? b.tld : '';
+    if (!tld) return json(400, { error: 'field "tld" is required' });
+    this.registry.addTld(tld);
+    return json(201, { tld });
+  }
+
+  private async registryAddRegistrar(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registry) return json(501, { error: 'registry module not registered' });
+    const b = this.asObject(req.body);
+    const tld = typeof b.tld === 'string' ? b.tld : '';
+    const id = typeof b.id === 'string' ? b.id : '';
+    const password = typeof b.password === 'string' ? b.password : '';
+    if (!tld || !id || !password) return json(400, { error: 'fields tld, id, password are required' });
+    const rec = this.registry.addRegistrar(tld, { id, name: typeof b.name === 'string' ? b.name : id, password, active: true });
+    // Mirror into the registrar module so it can provision.
+    if (this.registrar && !this.registrar.getRegistrar(id)) {
+      this.registrar.addRegistrar({ id, name: rec.name, tld });
+    }
+    return json(201, { id });
+  }
+
+  // --- PRX Part B: Registrar -----------------------------------------------
+
+  private registrarList(): GatewayResponse {
+    if (!this.registrar) return json(501, { error: 'registrar module not registered' });
+    return json(200, { registrars: this.registrar.listRegistrars() });
+  }
+
+  private async registrarAdd(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registrar) return json(501, { error: 'registrar module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : '';
+    if (!id) return json(400, { error: 'field "id" is required' });
+    this.registrar.addRegistrar({ id, name: typeof b.name === 'string' ? b.name : id, ...(typeof b.tld === 'string' ? { tld: b.tld } : {}) });
+    return json(201, { id });
+  }
+
+  private async registrarSearch(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registrar) return json(501, { error: 'registrar module not registered' });
+    const b = this.asObject(req.body);
+    const registrarId = typeof b.registrarId === 'string' ? b.registrarId : '';
+    const names = Array.isArray(b.names) ? b.names.map(String) : [];
+    if (!registrarId || names.length === 0) return json(400, { error: 'fields registrarId, names[] are required' });
+    const reg = this.registrar.getRegistrar(registrarId);
+    if (!reg) return json(404, { error: 'registrar not found' });
+    return json(200, { results: await reg.search(names) });
+  }
+
+  private async registrarRegister(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registrar) return json(501, { error: 'registrar module not registered' });
+    const b = this.asObject(req.body);
+    const registrarId = typeof b.registrarId === 'string' ? b.registrarId : '';
+    const name = typeof b.name === 'string' ? b.name : '';
+    const years = typeof b.periodYears === 'number' ? b.periodYears : 1;
+    if (!registrarId || !name) return json(400, { error: 'fields registrarId, name are required' });
+    const reg = this.registrar.getRegistrar(registrarId);
+    if (!reg) return json(404, { error: 'registrar not found' });
+    // Create a registrant identity if not supplied.
+    const registrantId = typeof b.registrantId === 'string' ? b.registrantId : reg.identities.register({ name: name, email: `${name}@registrant.local` }).id;
+    const order = await reg.register({ name, registrantId, periodYears: years });
+    return json(order.status === 'completed' ? 201 : 200, { order });
+  }
+
+  private async registrarRenew(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.registrar) return json(501, { error: 'registrar module not registered' });
+    const b = this.asObject(req.body);
+    const registrarId = typeof b.registrarId === 'string' ? b.registrarId : '';
+    const name = typeof b.name === 'string' ? b.name : '';
+    const registrantId = typeof b.registrantId === 'string' ? b.registrantId : '';
+    const years = typeof b.periodYears === 'number' ? b.periodYears : 1;
+    if (!registrarId || !name || !registrantId) return json(400, { error: 'fields registrarId, name, registrantId are required' });
+    const reg = this.registrar.getRegistrar(registrarId);
+    if (!reg) return json(404, { error: 'registrar not found' });
+    const order = await reg.renew({ name, registrantId, periodYears: years });
+    return json(200, { order });
+  }
+
+  private registrarPortfolio(req: GatewayRequest): GatewayResponse {
+    if (!this.registrar) return json(501, { error: 'registrar module not registered' });
+    const registrarId = typeof req.query.registrarId === 'string' ? req.query.registrarId : '';
+    const registrantId = typeof req.query.registrantId === 'string' ? req.query.registrantId : '';
+    if (!registrarId || !registrantId) return json(400, { error: 'query parameters registrarId, registrantId are required' });
+    const reg = this.registrar.getRegistrar(registrarId);
+    if (!reg) return json(404, { error: 'registrar not found' });
+    return json(200, { domains: reg.portfolio(registrantId) });
   }
 
 

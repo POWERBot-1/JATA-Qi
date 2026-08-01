@@ -74,6 +74,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/policy-governance` | Policy & governance control plane — versioned, tenant-aware, precedence-based engine; agent/tool/autonomy governance |
 | `@jataqi/accreditation` | **PRX Part L** — Legal Operation Mode + accreditation governance: gates public-trust capabilities (registry, registrar, DNS authority, CA, RIR, cloud, hosting, IdP, CDN, marketplace) behind verified Ed25519-signed grants; SHA-256-chained immutable ledger; honest claim verification |
 | `@jataqi/dns` | **PRX Part D** — Global DNS platform: RFC 1035 wire codec, authoritative UDP/TCP server, recursive resolver, DNSSEC (ECDSA P-256, RRSIG/DNSKEY/DS/NSEC), GeoDNS views, AXFR, RDAP |
+| `@jataqi/registry` | **PRX Part A** — TLD Registry platform: domain lifecycle (ICANN grace periods), EPP (RFC 5730–5734 XML codec + TCP/TLS server/client), RDAP/WHOIS, DNSSEC DS delegation, data escrow (RFC 8909), premium/reserved/sunrise/trademark-claims, transfers |
+| `@jataqi/registrar` | **PRX Part B** — Registrar platform: search/register/renew/transfer/restore, bulk registration, portfolio, pricing engine, billing (via commerce), KYC identity, compliance engine (reserved/claims/abuse) |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 

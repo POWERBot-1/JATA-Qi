@@ -67,6 +67,8 @@ import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
 import { AccreditationModule, type OperationMode } from '@jataqi/accreditation';
 import { DnsModule } from '@jataqi/dns';
+import { RegistryModule } from '@jataqi/registry';
+import { RegistrarModule } from '@jataqi/registrar';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -171,6 +173,14 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
     host: process.env.JATAQI_DNS_HOST ?? '127.0.0.1',
     recursive: process.env.JATAQI_DNS_RECURSIVE === '1',
   }));
+  // PRX Part A: TLD Registry platform.
+  kernel.register(new RegistryModule({
+    serve: process.env.JATAQI_EPP_SERVE === '1',
+    eppPort: process.env.JATAQI_EPP_PORT ? Number(process.env.JATAQI_EPP_PORT) : 17000,
+    svID: process.env.JATAQI_EPP_SVID ?? 'registry.jataqi.local',
+  }));
+  // PRX Part B: Registrar platform.
+  kernel.register(new RegistrarModule());
   kernel.register(new CommerceModule());
   kernel.register(new OrganizationsModule());
   kernel.register(new NotificationsModule());

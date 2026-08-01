@@ -75,7 +75,9 @@
     "@jataqi/sovereign": "0.1.0",
     "@jataqi/llm-gateway": "0.1.0",
     "@jataqi/accreditation": "0.1.0",
-    "@jataqi/dns": "0.1.0"
+    "@jataqi/dns": "0.1.0",
+    "@jataqi/registry": "0.1.0",
+    "@jataqi/registrar": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
