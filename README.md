@@ -80,6 +80,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/game-world` | **NOVA §5** — Procedural world generation: seeded PRNG, Perlin/value noise, fBm, heightmaps + biomes, settlements (villages/towns/cities), MST road networks |
 | `@jataqi/game-physics` | **NOVA §7** — 3D rigid-body physics: sphere/AABB colliders, impulse collision resolution + positional correction, gravity, distance constraints, raycasting |
 | `@jataqi/game-architect` | **NOVA §2/§19** — AI game creation: natural-language prompt → game design document + 5 AI dev agents (Director/World/Character/Programmer/Tester) + autonomous build pipeline |
+| `@jataqi/game-ai` | **NOVA §6** — NPC intelligence: behavior trees, utility AI, finite state machines, GOAP planning, personality/emotion/relationship model, branching dialogue, ECS NpcSystem |
+| `@jataqi/game-net` | **NOVA §9** — Multiplayer netcode: authoritative rooms, snapshot/delta replication, client prediction + reconciliation, matchmaking, anti-cheat |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 

@@ -11,7 +11,7 @@ PKGS=(
   knowledge-service knowledge-graph agent-runtime
   model-registry scheduler plugins readiness commerce organizations notifications policies feature-flags privacy policy-governance payments messaging ai-safety model-runtime conversations
   compute teams robotics digital-twin tool-intelligence provenance
-  accreditation dns registry registrar game-engine game-world game-physics game-architect
+  accreditation dns registry registrar game-engine game-world game-physics game-architect game-ai game-net
   orchestrator multimedia evals finance communication research education health self-evolution supply-chain environment cyberdefense iot smart-cities cloud-devops localization enterprise mfa disaster-recovery optimization synthetic-data business-intelligence api-gateway sdk web-ui multimodal sovereign llm-gateway cli
 )
 
