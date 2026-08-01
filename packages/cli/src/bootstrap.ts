@@ -66,6 +66,7 @@ import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
 import { readConfig } from './config.js';
+import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
 function readConfigEnv(key: string): string | undefined {
   return process.env[key];
@@ -249,6 +250,33 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
       return { echoed: input };
     },
   });
+
+  // Wire real provider integrations into existing modules (PR3 provider bridges).
+  try {
+    const messaging = kernel.getModule('messaging') as unknown as { getEmailProvider(name?: string): unknown; getSmsProvider(name?: string): unknown } | undefined;
+    const notifications = kernel.getModule('notifications') as unknown as { registerChannel(ch: unknown): void } | undefined;
+    if (messaging && notifications) {
+      const emailProvider = messaging.getEmailProvider() as { send(msg: unknown): Promise<unknown> } | undefined;
+      const smsProvider = messaging.getSmsProvider() as { send(msg: unknown): Promise<unknown> } | undefined;
+      if (emailProvider) {
+        notifications.registerChannel(createEmailChannel(emailProvider as never, () => undefined));
+        kernel.logger.info('wired email notification channel');
+      }
+      if (smsProvider) {
+        notifications.registerChannel(createSmsChannel(smsProvider as never, () => undefined));
+        kernel.logger.info('wired SMS notification channel');
+      }
+    }
+  } catch { /* modules not registered */ }
+
+  try {
+    const payments = kernel.getModule('payments') as unknown as { stripe: { createPaymentIntent(req: unknown): Promise<unknown> } | undefined } | undefined;
+    const commerce = kernel.getModule('commerce') as unknown as { setPaymentProvider(p: unknown): void } | undefined;
+    if (payments?.stripe && commerce) {
+      commerce.setPaymentProvider(createStripePaymentProvider(payments.stripe as never));
+      kernel.logger.info('wired Stripe payment provider into commerce');
+    }
+  } catch { /* modules not registered */ }
 
   return {
     kernel,
