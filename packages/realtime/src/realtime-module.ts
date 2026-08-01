@@ -17,6 +17,8 @@ export interface RealtimeConfig {
   authenticate?: (token: string | undefined) => Promise<PrincipalLike | undefined>;
   /** Bus event types to auto-broadcast (default curated set). */
   eventTypes?: string[];
+  /** Custom message handler — receives parsed client messages + the client's WebSocket for replies. */
+  onMessage?: (msg: Record<string, unknown>, ws: { send: (data: string) => void }, principal: PrincipalLike | undefined) => void;
 }
 
 interface Client { ws: WebSocket; principal?: PrincipalLike; topics: Set<string> }
@@ -60,8 +62,9 @@ export class RealtimeModule implements IModule {
 
   private async handleUpgrade(req: IncomingMessage, socket: Socket, url: URL): Promise<void> {
     const token = url.searchParams.get('token') ?? this.extractProtocol(req);
+    let principal: PrincipalLike | undefined;
     if (this.cfg.authenticate) {
-      const principal = await this.cfg.authenticate(token ?? undefined);
+      principal = await this.cfg.authenticate(token ?? undefined);
       if (!principal) { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); socket.destroy(); return; }
     }
     const ws = upgrade(socket, req.headers['sec-websocket-key'], req.headers['sec-websocket-protocol']?.split(',').map((s) => s.trim()),
@@ -69,7 +72,7 @@ export class RealtimeModule implements IModule {
       () => this.clients.delete(client),
     );
     if (!ws) return;
-    const client: Client = { ws, topics: new Set() };
+    const client: Client = { ws, topics: new Set(), ...(principal ? { principal } : {}) };
     this.clients.add(client);
     ws.send(JSON.stringify({ type: 'realtime.connected', data: { clientCount: this.clients.size }, ts: Date.now() }));
   }
@@ -79,6 +82,8 @@ export class RealtimeModule implements IModule {
       const msg = JSON.parse(typeof data === 'string' ? data : data.toString('utf8'));
       if (msg.op === 'subscribe' && Array.isArray(msg.topics)) msg.topics.forEach((t: string) => client.topics.add(t));
       if (msg.op === 'unsubscribe' && Array.isArray(msg.topics)) msg.topics.forEach((t: string) => client.topics.delete(t));
+      // Forward to custom handler (e.g. streaming chat).
+      if (this.cfg.onMessage && !msg.op) this.cfg.onMessage(msg, client.ws, client.principal);
     } catch { /* not JSON — ignore */ }
   }
 

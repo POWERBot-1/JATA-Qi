@@ -164,7 +164,10 @@ export class ApiGatewayModule implements IModule {
 
     // Attach the WebSocket real-time server if present (PR10).
     if (this.realtime && this.server) {
-      this.realtime.attach(this.server, { authenticate: (token) => this.sec.authenticate(token ?? undefined) });
+      this.realtime.attach(this.server, {
+        authenticate: (token) => this.sec.authenticate(token ?? undefined),
+        onMessage: (msg, ws, principal) => void this.handleWsMessage(msg, ws, principal),
+      });
     }
     this.booted = true;
     // Record an auditable boot record describing the active security posture.
@@ -1944,6 +1947,65 @@ export class ApiGatewayModule implements IModule {
     if (!q) return json(400, { error: 'query parameter "q" is required' });
     const result = await this.conversations.list(req.principal!.userId, { search: q, limit: 20 });
     return json(200, { results: result.conversations.map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt, messageCount: c.messages.length })), total: result.total });
+  }
+
+  // --- WebSocket streaming chat (real-time /ws) ----------------------------
+
+  private async handleWsMessage(msg: Record<string, unknown>, ws: { send: (data: string) => void }, principal: { userId: string; username: string } | undefined): Promise<void> {
+    if (msg.type === 'chat' && typeof msg.message === 'string' && principal) {
+      const message = msg.message as string;
+      const conversationId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
+
+      // Safety scan.
+      if (this.aiSafety) {
+        const scan = this.aiSafety.scan(message);
+        if (scan.blocked) {
+          ws.send(JSON.stringify({ type: 'chat.error', error: 'input blocked by safety filter', risk: scan.risk }));
+          return;
+        }
+      }
+
+      // Persist user message.
+      let convId: string | undefined;
+      if (this.conversations) {
+        let conv;
+        if (conversationId) {
+          conv = await this.conversations.get(conversationId);
+          if (!conv || conv.userId !== principal.userId) { ws.send(JSON.stringify({ type: 'chat.error', error: 'conversation not found' })); return; }
+        } else {
+          conv = await this.conversations.create(principal.userId);
+        }
+        convId = conv.id;
+        await this.conversations.addMessage(convId, 'user', message);
+      }
+
+      // Generate response.
+      let answer: string;
+      try {
+        if (this.modelRuntime) {
+          const res = await this.modelRuntime.complete({ messages: [{ role: 'user', content: message }] });
+          answer = res.message.content;
+        } else {
+          const res = await this.agents.run(message);
+          answer = res.answer;
+        }
+      } catch {
+        answer = 'I encountered an error. Please try again.';
+      }
+
+      // Stream the response word-by-word.
+      const words = answer.split(/(\s+)/); // keep whitespace
+      for (let i = 0; i < words.length; i++) {
+        ws.send(JSON.stringify({ type: 'chat.chunk', content: words[i] }));
+      }
+
+      // Persist assistant message.
+      if (this.conversations && convId) {
+        await this.conversations.addMessage(convId, 'assistant', answer);
+      }
+
+      ws.send(JSON.stringify({ type: 'chat.done', ...(convId ? { conversationId: convId } : {}), full: answer }));
+    }
   }
 
   // --- helpers -------------------------------------------------------------
