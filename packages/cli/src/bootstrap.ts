@@ -61,6 +61,7 @@ import { TracingModule } from '@jataqi/tracing';
 import { RealtimeModule } from '@jataqi/realtime';
 import { PaymentsModule } from '@jataqi/payments';
 import { MessagingModule } from '@jataqi/messaging';
+import { AiSafetyModule } from '@jataqi/ai-safety';
 import { MultimodalModule } from '@jataqi/multimodal';
 import { SovereignModule } from '@jataqi/sovereign';
 import { LLMGatewayModule, openaiProvider, mockProvider } from '@jataqi/llm-gateway';
@@ -190,6 +191,7 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 
   kernel.register(new TracingModule(readTracingConfigFromEnv()));
   kernel.register(new RealtimeModule());
+  kernel.register(new AiSafetyModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {
