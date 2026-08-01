@@ -82,6 +82,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/game-architect` | **NOVA §2/§19** — AI game creation: natural-language prompt → game design document + 5 AI dev agents (Director/World/Character/Programmer/Tester) + autonomous build pipeline |
 | `@jataqi/game-ai` | **NOVA §6** — NPC intelligence: behavior trees, utility AI, finite state machines, GOAP planning, personality/emotion/relationship model, branching dialogue, ECS NpcSystem |
 | `@jataqi/game-net` | **NOVA §9** — Multiplayer netcode: authoritative rooms, snapshot/delta replication, client prediction + reconciliation, matchmaking, anti-cheat |
+| `@jataqi/game-economy` | **NOVA §10/§11** — Game economy: virtual currencies, player/creator/developer/marketplace wallets, immutable chained ledger, royalty-paying asset marketplace with licensing |
+| `@jataqi/game-audio` | **NOVA §12** — Sound & music AI: procedural synthesis (oscillators/ADSR), generative multi-instrument music, SFX, 3D spatial mixing, adaptive intensity layers, real WAV encoding |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
