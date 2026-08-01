@@ -17,10 +17,11 @@ export function filter(models: ModelDescriptor[], req: SelectionRequest): ModelD
 export function score(model: ModelDescriptor, prefer: SelectionPreference): number | undefined {
   switch (prefer) {
     case 'cost': {
+      // Unknown cost (both undefined) → cannot rank on cost.
+      if (model.inputCostPer1k === undefined && model.outputCostPer1k === undefined) return undefined;
       const cost = (model.inputCostPer1k ?? 0) + (model.outputCostPer1k ?? 0);
-      if (cost <= 0) return undefined; // unknown cost — cannot rank on cost
-      // Cheaper is better: invert. 1 / (1 + cost) keeps it in (0,1].
-      return 1 / (1 + cost);
+      if (cost <= 0) return 1; // explicitly free → highest cost score
+      return 1 / (1 + cost); // cheaper is better
     }
     case 'latency':
       if (model.latencyMs === undefined) return undefined;
