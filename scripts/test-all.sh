@@ -8,7 +8,7 @@ PKGS=(
   core-kernel storage vector-search
   qil security metrics simulation tracing realtime
   knowledge-service knowledge-graph
-  model-registry scheduler plugins readiness commerce organizations notifications policies feature-flags privacy policy-governance payments messaging ai-safety model-runtime
+  model-registry scheduler plugins readiness commerce organizations notifications policies feature-flags privacy policy-governance payments messaging ai-safety model-runtime conversations
   agent-runtime compute teams robotics digital-twin tool-intelligence provenance
   orchestrator multimedia evals finance communication research education health self-evolution supply-chain environment cyberdefense iot smart-cities cloud-devops localization enterprise mfa disaster-recovery optimization synthetic-data business-intelligence api-gateway sdk web-ui multimodal sovereign llm-gateway cli
 )
