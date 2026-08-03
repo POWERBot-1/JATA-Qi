@@ -14,6 +14,6 @@
   },
   "files": ["dist", "src"],
   "license": "MIT",
-  "dependencies": { "@jataqi/core-kernel": "0.1.0", "@jataqi/storage": "0.1.0" },
+  "dependencies": { "@jataqi/core-kernel": "0.1.0", "@jataqi/storage": "0.1.0", "@jataqi/memory": "0.1.0", "@jataqi/learning": "0.1.0", "@jataqi/ai-learning": "0.1.0" },
   "devDependencies": { "typescript": "^5.4.0", "@types/node": "^20.11.0" }
 }

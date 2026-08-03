@@ -17,7 +17,7 @@ import {
 } from './types.js';
 import type {
   Experiment, ExperimentMode, ExplainabilityReport, LessonLearned, Observation,
-  Proposal, ProposalKind, ProposalStatus, Severity,
+  ObservationType, Proposal, ProposalKind, ProposalStatus, Severity,
 } from './types.js';
 
 const COL_OBS = 'evolution.observations';
@@ -382,6 +382,143 @@ export class SelfEvolutionModule implements IModule {
       autonomousCycles: this.autonomousCycles,
       confidenceThreshold: this.confidenceThreshold,
     };
+  }
+
+  // --- Intelligence integration (CLP Phase 7 enhancement) -------------------
+  //
+  // The following methods wire the Self-Evolution framework to the Digital
+  // Memory Engine (@jataqi/memory), the Continuous Learning engine
+  // (@jataqi/learning), and the AI Learning platform (@jataqi/ai-learning).
+  // They are ADDITIVE — the existing observe/analyze/propose/approve/experiment/
+  // deploy/rollback lifecycle is unchanged. Each method degrades gracefully
+  // (no-ops) when the intelligence modules are not registered.
+
+  /**
+   * Pull events from the Digital Memory Engine and ingest them as observations.
+   * This makes the DME the primary observation source for self-evolution. The
+   * severity is inferred from the event category (errors → critical, performance
+   * → warning, etc.).
+   */
+  async observeFromMemory(orgId?: string, limit = 100): Promise<Observation[]> {
+    const memory = this.tryModule<{
+      queryAll: (f: Record<string, unknown>) => Array<{ category: string; summary: string; orgId?: string; ts: number; data?: Record<string, unknown> }>;
+    }>('memory');
+    if (!memory) return [];
+    const events = memory.queryAll({ ...(orgId ? { orgId } : {}), limit });
+    const created: Observation[] = [];
+    for (const e of events) {
+      const severity: Severity =
+        e.category === 'error' || e.category === 'exception' || e.category === 'incident' ? 'critical'
+        : e.category === 'security' ? 'critical'
+        : e.category === 'performance' ? 'warning'
+        : 'info';
+      const obs = await this.observe({
+        type: e.category as ObservationType, source: 'memory-engine', metric: e.category,
+        value: 1, severity, detail: e.summary, ...(e.orgId ? { organizationId: e.orgId } : {}),
+      });
+      created.push(obs);
+    }
+    return created;
+  }
+
+  /**
+   * Generate evolution proposals from Continuous Learning insights. Each insight
+   * becomes a governed proposal with evidence linking back to the insight. This
+   * closes the loop: learning detects patterns → self-evolution proposes
+   * improvements → governance approves/rejects → experiment validates.
+   */
+  async generateFromInsights(createdBy: string, orgId?: string): Promise<Proposal[]> {
+    const learning = this.tryModule<{
+      getInsights: (f?: { orgId?: string }) => Array<{ id: string; kind: string; title: string; detail: string; confidence: number; orgId?: string }>;
+    }>('learning');
+    if (!learning) return [];
+    const insights = learning.getInsights({ ...(orgId ? { orgId } : {}) });
+    const proposals: Proposal[] = [];
+    for (const insight of insights) {
+      try {
+        const p = await this.createProposal(createdBy, {
+          title: insight.title.slice(0, 80),
+          kind: this.insightToProposalKind(insight.kind),
+          description: insight.detail,
+          expectedImpact: `Address detected ${insight.kind.replace(/-/g, ' ')}`,
+          estimatedComplexity: 'medium',
+          confidence: Math.min(0.95, Math.max(0.3, insight.confidence)),
+          rollbackStrategy: 'Revert to previous configuration.',
+          affectedSystems: ['platform'],
+          evidence: [insight.id],
+          riskScore: 2,
+          ...(insight.orgId ? { organizationId: insight.orgId } : {}),
+        });
+        proposals.push(p);
+      } catch { /* autonomous cycle cap — stop generating */ break; }
+    }
+    return proposals;
+  }
+
+  /**
+   * Generate evolution proposals from AI drift alerts. Each drift alert (quality
+   * degradation, latency spike, rating drop) becomes a governed proposal to
+   * restore the baseline. Critical-severity drift gets higher confidence and
+   * risk scores.
+   */
+  async generateFromDrift(createdBy: string): Promise<Proposal[]> {
+    const aiLearning = this.tryModule<{
+      detectDrift: () => Array<{ id: string; scope: string; metric: string; severity: string; recentValue: number; baselineValue: number; change: number }>;
+    }>('ai-learning');
+    if (!aiLearning) return [];
+    const alerts = aiLearning.detectDrift();
+    const proposals: Proposal[] = [];
+    for (const alert of alerts) {
+      try {
+        const isCritical = alert.severity === 'critical';
+        const p = await this.createProposal(createdBy, {
+          title: `Address AI drift: ${alert.metric} on ${alert.scope}`,
+          kind: alert.metric === 'avgLatencyMs' ? 'latency' : 'quality',
+          description: `AI quality drift detected — ${alert.metric} changed from ${alert.baselineValue} to ${alert.recentValue} (severity: ${alert.severity}).`,
+          expectedImpact: `Restore ${alert.metric} to baseline ${alert.baselineValue}`,
+          estimatedComplexity: isCritical ? 'high' : 'medium',
+          confidence: isCritical ? 0.9 : 0.7,
+          rollbackStrategy: 'Revert to previous model/prompt configuration.',
+          affectedSystems: [alert.scope],
+          evidence: [alert.id],
+          riskScore: isCritical ? 3 : 2,
+        });
+        proposals.push(p);
+      } catch { /* autonomous cycle cap */ break; }
+    }
+    return proposals;
+  }
+
+  /**
+   * Run a full intelligence-driven evolution cycle (proposals only — never
+   * modifies production). Pulls from memory, learning, and drift detection,
+   * then generates governed proposals. The pipeline:
+   *   1. Observe from memory events
+   *   2. Analyze all observations (existing + new)
+   *   3. Generate proposals from analysis, insights, and drift
+   * Returns all generated proposals (awaiting governance approval).
+   */
+  async runEvolutionCycle(createdBy: string, orgId?: string): Promise<{ observations: Observation[]; analysis: Awaited<ReturnType<SelfEvolutionModule['analyze']>>; proposals: Proposal[] }> {
+    const observations = await this.observeFromMemory(orgId);
+    const analysis = await this.analyze();
+    const fromAnalysis = await this.generateOptimizations(createdBy, analysis);
+    const fromInsights = await this.generateFromInsights(createdBy, orgId);
+    const fromDrift = await this.generateFromDrift(createdBy);
+    return { observations, analysis, proposals: [...fromAnalysis, ...fromInsights, ...fromDrift] };
+  }
+
+  /** Map a learning insight kind to a self-evolution proposal kind. */
+  private insightToProposalKind(kind: string): ProposalKind {
+    if (kind.includes('error')) return 'retry';
+    if (kind.includes('workflow') || kind.includes('automation')) return 'workflow';
+    if (kind.includes('friction') || kind.includes('ui')) return 'architecture';
+    if (kind.includes('search')) return 'architecture';
+    return 'quality';
+  }
+
+  /** Resolve a kernel module by id (returns undefined if not registered). */
+  private tryModule<T>(id: string): T | undefined {
+    try { return this.api.getModule(id) as unknown as T; } catch { return undefined; }
   }
 
   // --- helpers --------------------------------------------------------------
