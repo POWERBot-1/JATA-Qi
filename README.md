@@ -89,6 +89,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/game-liveops` | **NOVA §15** — Live-ops: analytics (DAU/MAU, cohorts, D1/D7/D30 retention, funnels, ARPDAU/ARPPU/LTV), A/B experiments + feature flags, live events, offer targeting, remote config, seasons |
 | `@jataqi/design-system` | **JATA Qi design language** — universal design tokens (color/typography/8px spacing/elevation/motion/radius), light+dark themes, WCAG AA color science, per-product brand overrides, adaptive theming, CSS generation |
 | `@jataqi/memory` | **Digital Memory Engine** — unified governed platform-event memory: normalization, tenant isolation, policy/consent/retention gating, content-hash versioning, keyword search, right-to-delete/export |
+| `@jataqi/learning` | **Continuous Learning + Personalization** — analyzes the memory stream for insights (adoption, journeys, friction, errors, search failures, automation), generates governed recommendations, and derives per-user behavior adaptations (nav order, search boost, shortcuts) |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 

@@ -40,7 +40,7 @@ export class DigitalMemoryEngine {
     }
 
     const ts = input.ts ?? Date.now();
-    const hash = fingerprint(orgId, input.category, input.summary, input.data, input.correlationId);
+    const hash = fingerprint(orgId, input.userId, input.category, input.summary, input.data, input.correlationId);
     const tokens = tokenize([input.summary, ...(input.tags ?? []), ...Object.keys(input.data ?? {})].join(' '));
 
     // Versioning: a duplicate logical event bumps the revision.
@@ -88,9 +88,22 @@ export class DigitalMemoryEngine {
 
   /** Tenant-scoped query. `orgId` restricts to one tenant; omit for global events. */
   query(filter: MemoryQuery = {}): MemoryEvent[] {
+    return this.queryInternal(filter, false);
+  }
+
+  /** Cross-org query (internal platform use — learning, adaptation). Searches
+   *  all tenants. External APIs must use `query()` with an explicit orgId. */
+  queryAll(filter: MemoryQuery = {}): MemoryEvent[] {
+    return this.queryInternal(filter, true);
+  }
+
+  private queryInternal(filter: MemoryQuery, crossOrg: boolean): MemoryEvent[] {
     let ids: Set<string>;
     if (filter.orgId !== undefined) {
       ids = new Set(this.byOrg.get(filter.orgId) ?? []);
+    } else if (crossOrg) {
+      ids = new Set<string>();
+      for (const orgSet of this.byOrg.values()) for (const id of orgSet) ids.add(id);
     } else {
       ids = new Set(this.byOrg.get('') ?? []);
     }
@@ -249,8 +262,8 @@ function clone(e: MemoryEvent): MemoryEvent {
   return { ...e, ...(e.data ? { data: { ...e.data } } : {}), ...(e.tags ? { tags: [...e.tags] } : {}), tokens: [...e.tokens] };
 }
 
-function fingerprint(orgId: string | undefined, category: string, summary: string, data: Record<string, unknown> | undefined, correlationId: string | undefined): string {
-  const canonical = JSON.stringify({ o: orgId ?? '', c: category, s: summary, d: data ?? {}, x: correlationId ?? '' });
+function fingerprint(orgId: string | undefined, userId: string | undefined, category: string, summary: string, data: Record<string, unknown> | undefined, correlationId: string | undefined): string {
+  const canonical = JSON.stringify({ o: orgId ?? '', u: userId ?? '', c: category, s: summary, d: data ?? {}, x: correlationId ?? '' });
   return createHash('sha256').update(canonical).digest('hex');
 }
 

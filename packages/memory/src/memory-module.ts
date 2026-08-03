@@ -63,6 +63,8 @@ export class DigitalMemoryModule implements IModule {
 
   get(id: string): MemoryEvent | undefined { return this.engine.get(id); }
   query(filter: MemoryQuery = {}): MemoryEvent[] { return this.engine.query(filter); }
+  /** Cross-org query for internal platform services (learning/adaptation). */
+  queryAll(filter: MemoryQuery = {}): MemoryEvent[] { return this.engine.queryAll(filter); }
   stats(orgId?: string): MemoryStats { return this.engine.stats(orgId); }
 
   setPolicy(policy: OrgMemoryPolicy): void { this.engine.setPolicy(policy); }
