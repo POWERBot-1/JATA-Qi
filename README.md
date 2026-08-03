@@ -87,6 +87,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/game-esports` | **NOVA §13** — Esports: Elo ratings + rank tiers, ranked leaderboards/seasons, single-elim + Swiss tournaments, replay recording/playback (tamper-evident), live spectator |
 | `@jataqi/game-publish` | **NOVA §14** — Publishing: deterministic signed multi-platform build pipeline (per-store artifacts), store submission lifecycle, semver |
 | `@jataqi/game-liveops` | **NOVA §15** — Live-ops: analytics (DAU/MAU, cohorts, D1/D7/D30 retention, funnels, ARPDAU/ARPPU/LTV), A/B experiments + feature flags, live events, offer targeting, remote config, seasons |
+| `@jataqi/design-system` | **JATA Qi design language** — universal design tokens (color/typography/8px spacing/elevation/motion/radius), light+dark themes, WCAG AA color science, per-product brand overrides, adaptive theming, CSS generation |
 | `@jataqi/api-gateway` | Zero-dependency HTTP gateway: `/health`, `/auth/*`, `/qil`, `/objective`, `/simulate`, `/team`, `/models`, `/compute/*`, `/devices`, `/missions`, `/twins`, `/tools/*`, `/readiness`, `/metrics`, `/plugins`, `/audit`, `/stats`, rate limiting, OpenAPI |
 | `@jataqi/cli` | Bootstrapper (`createJataQi`, `createJataQiFromEnv`), CLI binary (`jataqi`) |
 
