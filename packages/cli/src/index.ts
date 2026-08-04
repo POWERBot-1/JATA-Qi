@@ -26,6 +26,7 @@ import type { MobilityModule } from '@jataqi/mobility';
 import type { LogisticsModule } from '@jataqi/logistics';
 import type { AgricultureModule } from '@jataqi/agriculture';
 import type { CircularModule } from '@jataqi/circular';
+import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
 JATA Qi CLI
@@ -59,6 +60,7 @@ Commands:
   logistics <sub>     PORTLINK: ports|vessels|containers|shipments|track|warehouses|stats.
   farm <sub>          KARIS FARM: farms|fields|plant|harvest|herds|stats.
   circular <sub>      KARIS LOOP: streams|collect|collections|takeback|score|stats.
+  qil <sub>           QiL language: parse|compile|format|lint|run <file|->.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -89,6 +91,7 @@ async function main() {
   const logistics = kernel.getModule<LogisticsModule>('logistics');
   const agriculture = kernel.getModule<AgricultureModule>('agriculture');
   const circular = kernel.getModule<CircularModule>('circular');
+  const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
   try {
@@ -943,6 +946,89 @@ async function main() {
         }
         break;
       }
+      case 'qil': {
+        const sub = args[1];
+        if (!sub || !['parse', 'compile', 'format', 'lint', 'run'].includes(sub)) {
+          console.error('Usage: jataqi qil parse|compile|format|lint|run <file.qil|->'); process.exit(1);
+        }
+        const fileArg = args[2] ?? '-';
+        let source: string;
+        if (fileArg === '-') {
+          source = await readStdin();
+        } else {
+          const fs = await import('node:fs/promises');
+          source = await fs.readFile(fileArg, 'utf8');
+        }
+        switch (sub) {
+          case 'parse': {
+            try {
+              const { parse } = await import('@jataqi/qil');
+              console.log(JSON.stringify(parse(source), null, 2));
+            } catch (err) {
+              console.error((err as Error).message);
+              process.exit(1);
+            }
+            break;
+          }
+          case 'compile': {
+            const { compileSource } = await import('@jataqi/qil');
+            const result = compileSource(source);
+            if (!result.ok) {
+              for (const d of result.diagnostics) {
+                console.error(`[${d.severity}]${d.line ? ` ${d.line}:${d.col}` : ''} ${d.message}`);
+              }
+              process.exit(1);
+            }
+            console.log(JSON.stringify(result.plan, null, 2));
+            break;
+          }
+          case 'format': {
+            const { format } = await import('@jataqi/qil');
+            try {
+              process.stdout.write(format(source));
+            } catch (err) {
+              console.error((err as Error).message);
+              process.exit(1);
+            }
+            break;
+          }
+          case 'lint': {
+            const { lintSource } = await import('@jataqi/qil');
+            const diags = lintSource(source);
+            if (diags.length === 0) { console.log('no issues found'); break; }
+            for (const d of diags) {
+              console.log(`${d.severity === 'error' ? 'error' : 'warn'} ${d.line ?? '?'}:${d.col ?? '?'} ${d.message}`);
+            }
+            process.exitCode = diags.some((d) => d.severity === 'error') ? 1 : 0;
+            break;
+          }
+          case 'run': {
+            // Auto-provision agents declared in the plan so `-> agent`
+            // routing works out of the box (each agent uses the default LLM).
+            const { compileSource } = await import('@jataqi/qil');
+            const compiled = compileSource(source);
+            if (compiled.ok && compiled.plan) {
+              for (const agentName of compiled.plan.agents) {
+                let exists = false;
+                try { agents.getAgent(agentName); exists = true; } catch { /* not registered */ }
+                if (!exists) {
+                  try { agents.createAgent(agentName, { description: `QiL-declared agent ${agentName}` }); }
+                  catch { /* already exists — race */ }
+                }
+              }
+            }
+            const result = await orchestrator.runSource(source);
+            console.log(JSON.stringify({
+              status: result.status,
+              steps: result.steps?.map((s) => ({ id: s.stepId, kind: s.kind, status: s.status, error: s.error ?? undefined })) ?? [],
+              finalReport: result.finalReport ?? undefined,
+              auditRecordId: result.auditRecordId ?? undefined,
+            }, null, 2));
+            break;
+          }
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -952,7 +1038,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)
@@ -968,6 +1054,13 @@ async function main() {
   } finally {
     if (!longRunning) await jataqi.shutdown();
   }
+}
+
+/** Read all of stdin as UTF-8 text (for `qil ... -`). */
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 main().catch((err) => {

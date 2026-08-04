@@ -3,10 +3,12 @@
 
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import { compileSource } from './lowerer.js';
+import { format } from './formatter.js';
+import { lint } from './linter.js';
 import { parse } from './parser.js';
 import { validate } from './validator.js';
 import { QiLEvents } from './types.js';
-import type { ExecutionPlan, QiLCompileResult, QiLProgram } from './types.js';
+import type { Diagnostic, ExecutionPlan, QiLCompileResult, QiLProgram } from './types.js';
 
 export class QiLModule implements IModule {
   readonly id = 'qil';
@@ -37,6 +39,24 @@ export class QiLModule implements IModule {
   /** Validate a parsed program; returns diagnostics. */
   validate(program: QiLProgram) {
     return validate(program);
+  }
+
+  /**
+   * Format QiL source into canonical style (2-space indent, one statement per
+   * line). Idempotent: format(format(src)) === format(src).
+   */
+  format(source: string): string {
+    return format(source);
+  }
+
+  /**
+   * Lint QiL source: validator diagnostics + semantic warnings (duplicate
+   * declarations, unused agents, dangling `after:` references, unreachable
+   * steps, empty missions). Never throws; returns [] on syntax errors (the
+   * parser's own diagnostics surface through compile()).
+   */
+  lint(source: string): Diagnostic[] {
+    return lint(this.parse(source));
   }
 
   /**

@@ -4,6 +4,8 @@ export { LexError } from './lexer.js';
 export { parse, ParseError } from './parser.js';
 export { validate, hasErrors } from './validator.js';
 export { compile, compileSource } from './lowerer.js';
+export { format, formatProgram, renderStatementLine, renderLiteral } from './formatter.js';
+export { lint, lintSource } from './linter.js';
 export { QiLModule } from './qil-module.js';
 
 export {

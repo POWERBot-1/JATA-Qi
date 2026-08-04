@@ -1,0 +1,12 @@
+MISSION "Analyze Acme revenue" {
+  GOAL "Identify revenue risks"
+  AGENT research
+  AGENT analyst
+  MODEL gpt-4o
+
+  RETRIEVE knowledge "Acme revenue Q3" -> research
+  ANALYZE "Highlight revenue risks" after: "step-1" -> analyst
+  SIMULATE "Revenue scenarios" trials: 500
+  SYNTHESIZE "Combine findings"
+  REPORT
+}

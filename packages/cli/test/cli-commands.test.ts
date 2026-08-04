@@ -118,6 +118,25 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"streams": 0/);
   });
 
+  it('qil format + lint + compile work on the example program', async () => {
+    const example = join(here, '..', '..', '..', '..', 'examples', 'objective.qil');
+    const formatted = await jataqi('qil', 'format', example);
+    assert.match(formatted, /MISSION "Analyze Acme revenue" \{/);
+    assert.match(formatted, /  REPORT/);
+    const linted = await jataqi('qil', 'lint', example);
+    assert.match(linted, /no issues found/);
+    const compiled = await jataqi('qil', 'compile', example);
+    assert.match(compiled, /"mission": "Analyze Acme revenue"/);
+    assert.match(compiled, /"kind": "simulate"/);
+  });
+
+  it('qil run executes the example program end-to-end', async () => {
+    const example = join(here, '..', '..', '..', '..', 'examples', 'objective.qil');
+    const run = await jataqi('qil', 'run', example);
+    assert.match(run, /"status": "completed"/);
+    assert.match(run, /"auditRecordId"/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

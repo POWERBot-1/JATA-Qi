@@ -226,6 +226,38 @@ const { ok, plan, diagnostics } = compileSource('MISSION "x" { RETRIEVE "a" REPO
 if (ok) console.log(plan.steps);   // [{ id: 'step-1', kind: 'retrieve', ... }, ...]
 ```
 
+### Language tooling
+
+QiL ships a formatter and a semantic linter alongside the compiler:
+
+```ts
+import { format, lintSource } from '@jataqi/qil';
+
+format('MISSION "x"{RETRIEVE "a" REPORT}');
+// MISSION "x" {
+//   RETRIEVE "a"
+//   REPORT
+// }
+
+lintSource('AGENT a1\nAGENT a1\nREPORT -> a1');
+// [ { severity: 'warning', message: 'duplicate agent declaration "a1" ...' } ]
+```
+
+The formatter is idempotent (`format(format(src)) === format(src)`); the linter
+flags duplicate declarations, unused agents, dangling `after:` references,
+unreachable steps after `STOP`, and empty missions. The grammar also accepts
+comma-separated `after: "step-1", "step-2"` lists and trailing `-> agent`
+routing after properties.
+
+Run the toolchain from the CLI:
+
+```bash
+node packages/cli/dist/src/index.js qil format examples/objective.qil
+node packages/cli/dist/src/index.js qil lint examples/objective.qil
+node packages/cli/dist/src/index.js qil compile examples/objective.qil
+node packages/cli/dist/src/index.js qil run examples/objective.qil   # executes with audit
+```
+
 ## The Alpha vertical slice
 
 The orchestrator turns a QiL plan into an audited workflow result:
@@ -391,6 +423,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
+- ✅ **QiL Tooling** (idempotent formatter, semantic linter, CLI `qil parse|compile|format|lint|run` with auto-provisioned agents)
 - ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit, durable history)
 - ✅ **Teams** (multi-agent coordination: parallel fan-out, sequential, consensus)
 - ✅ **Simulation** (Monte-Carlo scenarios, distributions, percentiles, target probabilities)

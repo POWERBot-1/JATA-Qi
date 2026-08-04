@@ -74,16 +74,24 @@ class Parser {
     // Optional trailing dependencies: "-> IDENT" (names a target agent/step).
     // e.g.  RETRIEVE "x" -> research
     let arrowTarget: string | undefined;
-    while (this.peek().type === 'ARROW') {
-      this.advance();
-      const tgt = this.peek();
-      if (tgt.type !== 'IDENT' && tgt.type !== 'KEYWORD') {
-        throw new ParseError('expected an identifier after "->"', tgt);
+    const parseArrows = (): void => {
+      while (this.peek().type === 'ARROW') {
+        this.advance();
+        const tgt = this.peek();
+        if (tgt.type !== 'IDENT' && tgt.type !== 'KEYWORD') {
+          throw new ParseError('expected an identifier after "->"', tgt);
+        }
+        arrowTarget = this.advance().value;
       }
-      arrowTarget = this.advance().value;
-    }
+    };
+    parseArrows();
 
     const properties = this.parseProperties();
+
+    // Trailing arrows after properties are also legal:
+    //   SIMULATE "s" trials: 1000 -> analyst
+    parseArrows();
+
     const children = this.parseBlock();
 
     // The arrow target is surfaced as the agent assignment for the step.
@@ -119,9 +127,23 @@ class Parser {
   private parsePropertyValue(): Literal {
     const tok = this.peek();
     switch (tok.type) {
-      case 'STRING':
+      case 'STRING': {
         this.advance();
-        return tok.value;
+        let value = tok.value;
+        // Comma-separated string lists: after: "step-1", "step-2"
+        // Join into a single comma-separated value (the lowerer splits on
+        // commas), so the AST property stays a plain string literal.
+        while (this.peek().type === 'COMMA') {
+          this.advance();
+          const next = this.peek();
+          if (next.type !== 'STRING') {
+            throw new ParseError('expected a string after "," in a property list', next);
+          }
+          this.advance();
+          value += `, ${next.value}`;
+        }
+        return value;
+      }
       case 'NUMBER':
         this.advance();
         return tok.value.includes('.') ? Number.parseFloat(tok.value) : Number.parseInt(tok.value, 10);

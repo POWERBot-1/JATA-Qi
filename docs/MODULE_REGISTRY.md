@@ -11,7 +11,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/knowledge-service` | `knowledge` | storage, vector | ingest / chunk / retrieve |
 | `@jataqi/knowledge-graph` | `knowledge-graph` | storage | entities, triples, graph-RAG |
 | `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector | ReAct agents + tools + LLMs |
-| `@jataqi/qil` | `qil` | – | QiL language → execution plan |
+| `@jataqi/qil` | `qil` | – | QiL language → execution plan; idempotent formatter + semantic linter |
 | `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history |
 | `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger |
 | `@jataqi/api-gateway` | `api-gateway` | security, orchestrator | HTTP gateway, rate limiting, OpenAPI |
