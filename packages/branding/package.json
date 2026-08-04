@@ -1,0 +1,19 @@
+{
+  "name": "@jataqi/branding",
+  "version": "0.1.0",
+  "description": "JATA Qi Branding — brand identity system for 15 products: programmatically generated logos, app icons, splash screens, marketing templates, business cards, email signatures, brand CSS. Zero external deps.",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": { ".": { "types": "./dist/src/index.d.ts", "import": "./dist/src/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/test/*.test.js",
+    "pretest": "npm run build"
+  },
+  "files": ["dist", "src"],
+  "license": "MIT",
+  "dependencies": { "@jataqi/core-kernel": "0.1.0" },
+  "devDependencies": { "typescript": "^5.4.0", "@types/node": "^20.11.0" }
+}
