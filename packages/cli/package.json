@@ -88,7 +88,8 @@
     "@jataqi/dashboard": "0.1.0",
     "@jataqi/link-intelligence": "0.1.0",
     "@jataqi/multimodal-intelligence": "0.1.0",
-    "@jataqi/search": "0.1.0"
+    "@jataqi/search": "0.1.0",
+    "@jataqi/automation": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

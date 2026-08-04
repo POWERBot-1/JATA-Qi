@@ -80,6 +80,7 @@ import { DashboardModule } from '@jataqi/dashboard';
 import { LinkIntelligenceModule } from '@jataqi/link-intelligence';
 import { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
 import { SearchModule } from '@jataqi/search';
+import { AutomationModule } from '@jataqi/automation';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -251,6 +252,11 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Phase 6 — Universal Search & Discovery (federates knowledge, memory,
   // graph, conversations, and tools with personalized ranking).
   kernel.register(new SearchModule());
+  // Phase 6 — SOMA AI Intelligent Automation Engine (schedule/event/manual
+  // automations with chained platform actions).
+  kernel.register(new AutomationModule({
+    tickIntervalMs: Number(process.env.JATAQI_AUTOMATION_TICK_MS ?? 1000),
+  }));
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

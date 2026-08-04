@@ -27,6 +27,7 @@ import { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
 import { ConversationsModule } from '@jataqi/conversations';
 import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { SearchModule } from '@jataqi/search';
+import { AutomationModule } from '@jataqi/automation';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -83,6 +84,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new ConversationsModule());
     kernel.register(new ToolIntelligenceModule());
     kernel.register(new SearchModule());
+    kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -535,6 +537,57 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const stats = await jsonRequest('GET', `${base}/search/stats`, undefined, token);
     assert.equal(stats.status, 200);
     assert.ok((stats.body as { stats: { adapters: string[] } }).stats.adapters.length >= 4);
+  });
+
+  // --- Phase 6 — SOMA AI Automation via gateway ---------------------------
+
+  it('automation CRUD + manual run + executions + stats over HTTP', async () => {
+    const created = await jsonRequest('POST', `${base}/automations`, {
+      name: 'gateway automation', trigger: { type: 'manual' },
+      actions: [{ type: 'memory.record', params: { summary: 'ran from gateway', category: 'automation', orgId: 'org-gw' } }],
+    }, token);
+    assert.equal(created.status, 201);
+    const automation = (created.body as { automation: { id: string; name: string } }).automation;
+    assert.equal(automation.name, 'gateway automation');
+
+    const listed = await jsonRequest('GET', `${base}/automations`, undefined, token);
+    assert.equal(listed.status, 200);
+    assert.ok((listed.body as { count: number }).count >= 1);
+
+    const fetched = await jsonRequest('GET', `${base}/automation?id=${automation.id}`, undefined, token);
+    assert.equal(fetched.status, 200);
+
+    const run = await jsonRequest('POST', `${base}/automations/run`, { automationId: automation.id }, token);
+    assert.equal(run.status, 200);
+    const execution = (run.body as { execution: { status: string; results: unknown[] } }).execution;
+    assert.equal(execution.status, 'succeeded');
+    assert.equal(execution.results.length, 1);
+
+    const executions = await jsonRequest('GET', `${base}/automations/executions?automationId=${automation.id}`, undefined, token);
+    assert.equal(executions.status, 200);
+    assert.equal((executions.body as { count: number }).count, 1);
+
+    const stats = await jsonRequest('GET', `${base}/automations/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { succeeded: number } }).stats.succeeded >= 1);
+
+    // The memory action actually landed in the DME.
+    const memory = kernel.getModule<DigitalMemoryModule>('memory');
+    assert.equal(memory.query({ category: 'automation', orgId: 'org-gw' }).length, 1);
+
+    // Enable/disable + remove.
+    const disabled = await jsonRequest('POST', `${base}/automations/status`, { id: automation.id, enabled: false }, token);
+    assert.equal(disabled.status, 200);
+    assert.equal((disabled.body as { automation: { enabled: boolean } }).automation.enabled, false);
+
+    const removed = await jsonRequest('POST', `${base}/automations/remove`, { id: automation.id }, token);
+    assert.equal(removed.status, 200);
+    assert.equal((removed.body as { removed: boolean }).removed, true);
+  });
+
+  it('automation routes reject unauthenticated requests', async () => {
+    const res = await jsonRequest('GET', `${base}/automations`, undefined);
+    assert.equal(res.status, 401);
   });
 
   // --- Authz guard --------------------------------------------------------

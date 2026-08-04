@@ -19,6 +19,7 @@ import type { UniversalWalletModule } from '@jataqi/universal-wallet';
 import type { CryptoModule } from '@jataqi/crypto';
 import type { DashboardModule } from '@jataqi/dashboard';
 import type { BrandingModule } from '@jataqi/branding';
+import type { AutomationModule } from '@jataqi/automation';
 
 const HELP = `
 JATA Qi CLI
@@ -45,6 +46,7 @@ Commands:
   crypto <sub>        KRT platform: assets|balance|summary.
   dashboard <sub>     Adaptive dashboard: layouts|adapt.
   brands list         List the 15 JATA Qi product brands.
+  automation <sub>    SOMA AI: list|show|create|run|executions|stats|enable|disable|remove.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -68,6 +70,7 @@ async function main() {
   const crypto = kernel.getModule<CryptoModule>('crypto');
   const dashboard = kernel.getModule<DashboardModule>('dashboard');
   const branding = kernel.getModule<BrandingModule>('branding');
+  const automation = kernel.getModule<AutomationModule>('automation');
   let longRunning = false;
 
   try {
@@ -471,6 +474,94 @@ async function main() {
         }
         break;
       }
+      case 'automation': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'list': {
+            const automations = automation.list({
+              ...(args[2] === 'enabled' || args[2] === 'disabled' ? { enabled: args[2] === 'enabled' } : {}),
+            });
+            for (const a of automations) {
+              const t = a.trigger.type === 'schedule' ? `every ${a.trigger.intervalMs}ms`
+                : a.trigger.type === 'event' ? `on ${a.trigger.event}`
+                : 'manual';
+              console.log(`- [${a.enabled ? 'on' : 'off'}] ${a.id} ${a.name} (${t}, runs=${a.runCount})`);
+            }
+            console.log(`${automations.length} automation(s)`);
+            break;
+          }
+          case 'show': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi automation show <id>'); process.exit(1); }
+            const a = automation.get(id);
+            console.log(a ? JSON.stringify(a, null, 2) : 'automation not found');
+            break;
+          }
+          case 'create': {
+            const name = args[2];
+            const triggerType = flag('trigger') ?? 'manual';
+            if (!name) { console.error('Usage: jataqi automation create <name> [--trigger schedule|event|manual] [--interval ms] [--event name] [--actions \'[{"type":"memory.record","params":{"summary":"x"}}]\']'); process.exit(1); }
+            let actions: Array<Record<string, unknown>> = [];
+            if (flag('actions')) {
+              try { actions = JSON.parse(flag('actions')!) as Array<Record<string, unknown>>; }
+              catch { console.error('--actions must be a JSON array'); process.exit(1); }
+            } else {
+              actions = [{ type: 'memory.record', params: { summary: name } }];
+            }
+            const a = automation.create({
+              name,
+              trigger: (triggerType === 'schedule'
+                ? { type: 'schedule', intervalMs: Number(flag('interval') ?? 60_000) }
+                : triggerType === 'event'
+                  ? { type: 'event', event: flag('event') ?? 'jataqi.automation' }
+                  : { type: 'manual' }) as never,
+              actions: actions as never,
+              createdBy: 'cli',
+            });
+            console.log(`created ${a.id}`);
+            break;
+          }
+          case 'run': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi automation run <id> [--payload \'{"k":"v"}\']'); process.exit(1); }
+            let payload: Record<string, unknown> | undefined;
+            if (flag('payload')) { try { payload = JSON.parse(flag('payload')!); } catch { console.error('--payload must be JSON'); process.exit(1); } }
+            const exec = await automation.run({ automationId: id, trigger: 'manual', ...(payload ? { payload } : {}) });
+            console.log(JSON.stringify({ status: exec.status, results: exec.results, error: exec.error ?? undefined, durationMs: exec.durationMs }, null, 2));
+            break;
+          }
+          case 'executions': {
+            const executions = automation.executions({ ...(args[2] ? { automationId: args[2] } : {}) });
+            for (const e of executions.slice(0, 20)) console.log(`[${e.status}] ${e.automationId} ${e.trigger} ${e.durationMs ?? 0}ms`);
+            console.log(`${executions.length} execution(s)`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(automation.stats(), null, 2));
+            break;
+          case 'enable':
+          case 'disable': {
+            const id = args[2];
+            if (!id) { console.error(`Usage: jataqi automation ${sub} <id>`); process.exit(1); }
+            const a = automation.setEnabled(id, sub === 'enable');
+            console.log(a ? `${a.id} ${a.enabled ? 'enabled' : 'disabled'}` : 'automation not found');
+            break;
+          }
+          case 'remove': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi automation remove <id>'); process.exit(1); }
+            console.log(automation.remove(id) ? 'removed' : 'automation not found');
+            break;
+          }
+          default:
+            console.error('Usage: jataqi automation list|show|create|run|executions|stats|enable|disable|remove'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -480,7 +571,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

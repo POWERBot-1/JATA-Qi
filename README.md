@@ -51,6 +51,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/knowledge-service` | Document/chunk model, paragraph+sentence+fixed chunker, semantic retrieval with context expansion |
 | `@jataqi/knowledge-graph` | Entities, relations, SPO triple store, BFS traversal, heuristic extractor, Graph-RAG fusion |
 | `@jataqi/agent-runtime` | Tool system, ReAct agent loop, Echo/Scripted/OpenAI LLMs, built-in knowledge+graph tools, session memory |
+| `@jataqi/automation` | **SOMA AI (Phase 6)** — Intelligent Automation Engine: schedule/event/manual triggers, chained actions (memory, notifications, knowledge, agents, tools), concurrency caps, timeouts, execution history |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -164,6 +165,9 @@ node packages/cli/dist/src/index.js wallet open alice creator
 node packages/cli/dist/src/index.js crypto summary
 node packages/cli/dist/src/index.js dashboard layouts
 node packages/cli/dist/src/index.js brands list
+node packages/cli/dist/src/index.js automation create "nightly digest" --trigger schedule --interval 3600000
+node packages/cli/dist/src/index.js automation list
+node packages/cli/dist/src/index.js automation run <id>
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -270,6 +274,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/search` | `search:read` | Phase 6 — unified search (`q`, `sources`, `topK`, `minScore`, `userId`, `orgId`) |
 | GET | `/search/suggest` · `/search/history` · `/search/stats` | `search:read` | Suggestions, search history, stats |
 | POST | `/search/history` | `search:read` | Record a search into memory history |
+| GET | `/automations` · `/automation?id=` · `/automations/executions` · `/automations/stats` | `automation:read` | SOMA AI automation reads |
+| POST | `/automations` · `/automations/run` · `/automations/status` · `/automations/remove` | `automation:write` | SOMA AI automation management + manual runs |
 
 ### Security model
 
@@ -365,6 +371,8 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Knowledge Distillation** (CLP Phase 5 — high-confidence insights + deployed recommendations become knowledge documents, graph lesson entities + triples, and operational playbooks)
 - ✅ **Self-Evolution** (CLP Phase 7 — governed proposals, experiments, rollback; consumes memory + learning + drift)
 - ✅ **Universal Search & Discovery** (Phase 6 — federated search across knowledge, memory, graph, conversations, and tools with recency decay, learned personalization boosts, facets, suggestions, and search history)
+- ✅ **SOMA AI — Intelligent Automation Engine** (Phase 6 — scheduled / bus-event / manual automations with chained platform actions, concurrency caps, timeouts, execution history, stats)
+- ✅ **Self-Evolution × CLP 4/5** (Phase 7 extension — evolution proposals from concluded prompt experiments; distillation progress observations)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)

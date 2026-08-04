@@ -59,4 +59,15 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(out, /"hits"/);
     assert.match(out, /"facets"/);
   });
+
+  it('automation create + list + stats work', async () => {
+    const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
+    assert.match(created, /created [0-9a-f-]{36}/);
+    // Each invocation boots a fresh in-memory OS: the list/stats runs see an
+    // empty registry but must still execute cleanly.
+    const list = await jataqi('automation', 'list');
+    assert.match(list, /0 automation\(s\)/);
+    const stats = await jataqi('automation', 'stats');
+    assert.match(stats, /"total": 0/);
+  });
 });

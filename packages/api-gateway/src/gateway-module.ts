@@ -58,6 +58,7 @@ import type { DashboardModule } from '@jataqi/dashboard';
 import type { LinkIntelligenceModule } from '@jataqi/link-intelligence';
 import type { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
 import type { SearchModule } from '@jataqi/search';
+import type { AutomationModule } from '@jataqi/automation';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -124,6 +125,7 @@ export class ApiGatewayModule implements IModule {
   private linkIntel?: LinkIntelligenceModule;
   private multimodalIntel?: MultimodalIntelligenceModule;
   private search?: SearchModule;
+  private automation?: AutomationModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -197,6 +199,7 @@ export class ApiGatewayModule implements IModule {
     this.linkIntel = this.tryModule<LinkIntelligenceModule>('link-intelligence');
     this.multimodalIntel = this.tryModule<MultimodalIntelligenceModule>('multimodal-intelligence');
     this.search = this.tryModule<SearchModule>('search');
+    this.automation = this.tryModule<AutomationModule>('automation');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -642,6 +645,15 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/search/history', auth('search:read', (req) => this.searchRecord(req)));
     route('GET', '/search/history', auth('search:read', (req) => this.searchHistory(req)));
     route('GET', '/search/stats', auth('search:read', () => this.searchStats()));
+    // Phase 6 — SOMA AI Intelligent Automation Engine.
+    route('GET', '/automations', auth('automation:read', (req) => this.automationsList(req)));
+    route('POST', '/automations', auth('automation:write', (req) => this.automationsCreate(req)));
+    route('GET', '/automation', auth('automation:read', (req) => this.automationGet(req)));
+    route('POST', '/automations/run', auth('automation:write', (req) => this.automationsRun(req)));
+    route('GET', '/automations/executions', auth('automation:read', (req) => this.automationsExecutions(req)));
+    route('POST', '/automations/status', auth('automation:write', (req) => this.automationsStatus(req)));
+    route('POST', '/automations/remove', auth('automation:write', (req) => this.automationsRemove(req)));
+    route('GET', '/automations/stats', auth('automation:read', () => this.automationsStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -946,7 +958,7 @@ export class ApiGatewayModule implements IModule {
       'organizations', 'notifications', 'policies', 'feature-flags', 'privacy',
       'policy-governance', 'api-gateway', 'memory', 'learning', 'ai-learning',
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
-      'link-intelligence', 'multimodal-intelligence', 'search',
+      'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -2549,6 +2561,102 @@ export class ApiGatewayModule implements IModule {
   private searchStats(): GatewayResponse {
     if (!this.search) return json(501, { error: 'search module not registered' });
     return json(200, { stats: this.search.stats() });
+  }
+
+  // --- Phase 6 — SOMA AI Intelligent Automation ---------------------------
+
+  private automationsList(req: GatewayRequest): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const status = req.query.status;
+    const trigger = req.query.trigger as 'schedule' | 'event' | 'manual' | undefined;
+    const automations = this.automation.list({
+      ...(status === 'enabled' ? { enabled: true } : status === 'disabled' ? { enabled: false } : {}),
+      ...(trigger ? { trigger } : {}),
+    });
+    return json(200, { automations, count: automations.length });
+  }
+
+  private automationsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || !b.trigger || typeof b.trigger !== 'object' || !Array.isArray(b.actions))
+      return json(400, { error: 'fields "name", "trigger", and "actions" (array) are required' });
+    const trigger = b.trigger as { type?: unknown; intervalMs?: unknown; event?: unknown; filter?: unknown };
+    if (trigger.type !== 'schedule' && trigger.type !== 'event' && trigger.type !== 'manual')
+      return json(400, { error: 'trigger.type must be schedule|event|manual' });
+    const automation = this.automation.create({
+      name: b.name,
+      ...(typeof b.description === 'string' ? { description: b.description } : {}),
+      trigger: {
+        type: trigger.type,
+        ...(trigger.type === 'schedule' ? { intervalMs: Number(trigger.intervalMs) } : {}),
+        ...(trigger.type === 'event'
+          ? { event: String(trigger.event), ...(trigger.filter && typeof trigger.filter === 'object' ? { filter: trigger.filter as { field: string; value: string } } : {}) }
+          : {}),
+      } as never,
+      actions: (b.actions as Array<Record<string, unknown>>).map((a) => ({
+        type: String(a.type),
+        params: a.params && typeof a.params === 'object' ? a.params as Record<string, unknown> : {},
+        ...(typeof a.name === 'string' ? { name: a.name } : {}),
+        ...(typeof a.continueOnError === 'boolean' ? { continueOnError: a.continueOnError } : {}),
+      })) as never,
+      ...(typeof b.enabled === 'boolean' ? { enabled: b.enabled } : {}),
+      ...(Array.isArray(b.tags) ? { tags: b.tags.map(String) } : {}),
+      ...(typeof b.maxConcurrency === 'number' ? { maxConcurrency: b.maxConcurrency } : {}),
+      ...(typeof b.timeoutMs === 'number' ? { timeoutMs: b.timeoutMs } : {}),
+      createdBy: req.principal?.username ?? 'api',
+    });
+    return json(201, { automation });
+  }
+
+  private automationGet(req: GatewayRequest): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query parameter "id" is required' });
+    const automation = this.automation.get(id);
+    return automation ? json(200, { automation }) : json(404, { error: 'automation not found' });
+  }
+
+  private async automationsRun(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.automationId !== 'string') return json(400, { error: 'field "automationId" is required' });
+    const execution = await this.automation.run({
+      automationId: b.automationId,
+      trigger: 'manual',
+      ...(b.payload && typeof b.payload === 'object' ? { payload: b.payload as Record<string, unknown> } : {}),
+    });
+    return json(200, { execution });
+  }
+
+  private automationsExecutions(req: GatewayRequest): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const executions = this.automation.executions({
+      ...(req.query.automationId ? { automationId: req.query.automationId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { executions, count: executions.length });
+  }
+
+  private automationsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.enabled !== 'boolean')
+      return json(400, { error: 'fields "id" and "enabled" (boolean) are required' });
+    const automation = this.automation.setEnabled(b.id, b.enabled);
+    return automation ? json(200, { automation }) : json(404, { error: 'automation not found' });
+  }
+
+  private automationsRemove(req: GatewayRequest): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, { removed: this.automation.remove(b.id) });
+  }
+
+  private automationsStats(): GatewayResponse {
+    if (!this.automation) return json(501, { error: 'automation module not registered' });
+    return json(200, { stats: this.automation.stats() });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

@@ -490,21 +490,106 @@ export class SelfEvolutionModule implements IModule {
   }
 
   /**
+   * Generate evolution proposals from concluded prompt experiments (CLP
+   * Phase 4). A "regression" experiment becomes a proposal to restore the
+   * baseline; a "promote" experiment becomes a proposal to widen the winning
+   * prompt's usage. Evidence links back to the experiment id.
+   */
+  async generateFromExperiments(createdBy: string, orgId?: string): Promise<Proposal[]> {
+    const aiLearning = this.tryModule<{
+      listExperiments: (status?: string) => Array<{
+        id: string; templateId: string; name: string; decision?: string;
+        reason?: string; status: string; challengerVersionId: string;
+        metrics?: { champion: { acceptanceRate: number }; challenger: { acceptanceRate: number } };
+      }>;
+    }>('ai-learning');
+    if (!aiLearning) return [];
+    const concluded = aiLearning.listExperiments('concluded');
+    const proposals: Proposal[] = [];
+    for (const experiment of concluded) {
+      if (experiment.decision !== 'regression' && experiment.decision !== 'promote') continue;
+      try {
+        const isRegression = experiment.decision === 'regression';
+        const gain = experiment.metrics
+          ? experiment.metrics.challenger.acceptanceRate - experiment.metrics.champion.acceptanceRate
+          : undefined;
+        const p = await this.createProposal(createdBy, {
+          title: isRegression
+            ? `Fix prompt regression: ${experiment.name}`
+            : `Extend winning prompt: ${experiment.name}`,
+          kind: isRegression ? (experiment.reason?.includes('latency') ? 'latency' : 'quality') : 'prompt',
+          description: isRegression
+            ? `Champion/challenger experiment concluded with regression. ${experiment.reason ?? ''}`
+            : `Champion/challenger experiment promoted the challenger. ${experiment.reason ?? ''}`,
+          expectedImpact: isRegression
+            ? 'Restore prompt quality to the pre-regression baseline'
+            : `Roll the promoted prompt out across additional templates${gain !== undefined ? ` (acceptance gain ${(gain * 100).toFixed(1)}pp)` : ''}`,
+          estimatedComplexity: 'low',
+          confidence: isRegression ? 0.9 : 0.8,
+          rollbackStrategy: isRegression
+            ? 'Re-activate the previous prompt version (registry keeps all versions).'
+            : 'Re-activate the previous champion version.',
+          affectedSystems: [`template:${experiment.templateId}`],
+          evidence: [experiment.id],
+          riskScore: isRegression ? 2 : 1,
+          ...(orgId ? { organizationId: orgId } : {}),
+        });
+        proposals.push(p);
+      } catch { /* autonomous cycle cap */ break; }
+    }
+    return proposals;
+  }
+
+  /**
+   * Observe knowledge-distillation progress (CLP Phase 5) as evolution
+   * observations. Lesson/playbook/document counts become quality observations
+   * so the evolution loop can react to (and build on) distilled knowledge.
+   */
+  async observeFromDistillation(orgId?: string): Promise<Observation[]> {
+    const learning = this.tryModule<{
+      distillStats: () => { lessons: number; playbooks: number; documentsIngested: number; graphEntities: number; graphTriples: number };
+    }>('learning');
+    if (!learning) return [];
+    const stats = learning.distillStats();
+    const created: Observation[] = [];
+    const push = async (metric: string, value: number, severity: Severity): Promise<void> => {
+      if (value <= 0) return;
+      const obs = await this.observe({
+        type: 'quality', source: 'knowledge-distillation', metric,
+        value, severity,
+        detail: `${metric} distilled so far`,
+        ...(orgId ? { organizationId: orgId } : {}),
+      });
+      created.push(obs);
+    };
+    await push('lessons', stats.lessons, 'info');
+    await push('playbooks', stats.playbooks, 'info');
+    await push('documentsIngested', stats.documentsIngested, 'info');
+    await push('graphEntities', stats.graphEntities, 'info');
+    return created;
+  }
+
+  /**
    * Run a full intelligence-driven evolution cycle (proposals only — never
-   * modifies production). Pulls from memory, learning, and drift detection,
-   * then generates governed proposals. The pipeline:
-   *   1. Observe from memory events
+   * modifies production). Pulls from memory, learning, distillation,
+   * experiments, and drift detection, then generates governed proposals.
+   * The pipeline:
+   *   1. Observe from memory events + distillation progress
    *   2. Analyze all observations (existing + new)
-   *   3. Generate proposals from analysis, insights, and drift
+   *   3. Generate proposals from analysis, insights, experiments, and drift
    * Returns all generated proposals (awaiting governance approval).
    */
   async runEvolutionCycle(createdBy: string, orgId?: string): Promise<{ observations: Observation[]; analysis: Awaited<ReturnType<SelfEvolutionModule['analyze']>>; proposals: Proposal[] }> {
-    const observations = await this.observeFromMemory(orgId);
+    const observations = [
+      ...(await this.observeFromMemory(orgId)),
+      ...(await this.observeFromDistillation(orgId)),
+    ];
     const analysis = await this.analyze();
     const fromAnalysis = await this.generateOptimizations(createdBy, analysis);
     const fromInsights = await this.generateFromInsights(createdBy, orgId);
+    const fromExperiments = await this.generateFromExperiments(createdBy, orgId);
     const fromDrift = await this.generateFromDrift(createdBy);
-    return { observations, analysis, proposals: [...fromAnalysis, ...fromInsights, ...fromDrift] };
+    return { observations, analysis, proposals: [...fromAnalysis, ...fromInsights, ...fromExperiments, ...fromDrift] };
   }
 
   /** Map a learning insight kind to a self-evolution proposal kind. */
