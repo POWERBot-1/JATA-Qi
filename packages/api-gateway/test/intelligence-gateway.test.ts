@@ -9,7 +9,6 @@ import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { VectorSearchModule } from '@jataqi/vector-search';
-import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
 import { QiLModule } from '@jataqi/qil';
@@ -25,6 +24,10 @@ import { CryptoModule } from '@jataqi/crypto';
 import { DashboardModule } from '@jataqi/dashboard';
 import { LinkIntelligenceModule } from '@jataqi/link-intelligence';
 import { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
+import { ConversationsModule } from '@jataqi/conversations';
+import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
+import { SearchModule } from '@jataqi/search';
+import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -77,6 +80,9 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new DashboardModule());
     kernel.register(new LinkIntelligenceModule());
     kernel.register(new MultimodalIntelligenceModule());
+    kernel.register(new ConversationsModule());
+    kernel.register(new ToolIntelligenceModule());
+    kernel.register(new SearchModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -421,6 +427,114 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const list = await jsonRequest('GET', `${base}/multimodal/sources?modality=web`, undefined, token);
     assert.equal(list.status, 200);
     assert.equal((list.body as { count: number }).count, 1);
+  });
+
+  // --- CLP Phase 4 — prompt experiments via gateway -----------------------
+
+  it('experiment lifecycle over HTTP: create → outcomes → evaluate → conclude', async () => {
+    const created = await jsonRequest('POST', `${base}/ai-learning/prompts`, {
+      name: 'gateway-exp', content: 'Answer {{topic}}', category: 'research',
+    }, token);
+    const template = (created.body as { prompt: { id: string; versions: Array<{ id: string }> } }).prompt;
+    const v1 = template.versions[0]!.id;
+    await jsonRequest('POST', `${base}/ai-learning/prompts/approve`, { templateId: template.id, versionId: v1, approver: 'admin' }, token);
+    await jsonRequest('POST', `${base}/ai-learning/prompts/activate`, { templateId: template.id, versionId: v1 }, token);
+    const v2res = await jsonRequest('POST', `${base}/ai-learning/prompts/version`, { templateId: template.id, content: 'Answer {{topic}} concisely' }, token);
+    const v2 = (v2res.body as { version: { id: string } }).version.id;
+    await jsonRequest('POST', `${base}/ai-learning/prompts/approve`, { templateId: template.id, versionId: v2, approver: 'admin' }, token);
+
+    const exp = await jsonRequest('POST', `${base}/ai-learning/experiments`, {
+      templateId: template.id, challengerVersionId: v2, createdBy: 'admin', minOutcomes: 4, minAcceptanceGain: 0.1,
+    }, token);
+    assert.equal(exp.status, 201);
+    const expId = (exp.body as { experiment: { id: string } }).experiment.id;
+
+    // Record 5 accepted champion + 5 accepted challenger outcomes (challenger better).
+    for (let i = 0; i < 5; i++) {
+      await jsonRequest('POST', `${base}/ai-learning/outcomes`, { promptTemplateId: template.id, promptVersionId: v1, model: 'm', provider: 'p', outcome: 'accepted', latencyMs: 10, rating: 4 }, token);
+    }
+    for (let i = 0; i < 5; i++) {
+      await jsonRequest('POST', `${base}/ai-learning/outcomes`, { promptTemplateId: template.id, promptVersionId: v2, model: 'm', provider: 'p', outcome: 'accepted', latencyMs: 10, rating: 5 }, token);
+    }
+
+    const evaluated = await jsonRequest('POST', `${base}/ai-learning/experiments/evaluate`, { id: expId }, token);
+    assert.equal(evaluated.status, 200);
+    assert.equal((evaluated.body as { decision: string }).decision, 'keep'); // no measurable gain (both 100%)
+
+    // Drop the challenger to a 0% acceptance rate → regression.
+    for (let i = 0; i < 5; i++) {
+      await jsonRequest('POST', `${base}/ai-learning/outcomes`, { promptTemplateId: template.id, promptVersionId: v2, model: 'm', provider: 'p', outcome: 'rejected', latencyMs: 10, rating: 1 }, token);
+    }
+    const evaluated2 = await jsonRequest('POST', `${base}/ai-learning/experiments/evaluate`, { id: expId }, token);
+    assert.equal((evaluated2.body as { decision: string }).decision, 'regression');
+
+    const concluded = await jsonRequest('POST', `${base}/ai-learning/experiments/conclude`, { id: expId }, token);
+    assert.equal((concluded.body as { experiment: { status: string } }).experiment.status, 'concluded');
+
+    const listed = await jsonRequest('GET', `${base}/ai-learning/experiments?status=concluded`, undefined, token);
+    assert.equal(listed.status, 200);
+    assert.ok((listed.body as { count: number }).count >= 1);
+  });
+
+  // --- CLP Phase 5 — knowledge distillation via gateway -------------------
+
+  it('POST /learning/distill produces lessons + playbooks; GET reads work', async () => {
+    // Seed memory + analyze so insights and recommendations exist. 30 events
+    // put the feature-adoption insight at the 0.6 distillation confidence.
+    for (let i = 0; i < 30; i++) {
+      await jsonRequest('POST', `${base}/memory`, { category: 'search', summary: `gateway search ${i}`, userId: 'u1', orgId: 'org-d' }, token);
+    }
+    const analyzed = await jsonRequest('POST', `${base}/learning/analyze`, { orgId: 'org-d' }, token);
+    assert.equal(analyzed.status, 200);
+
+    const distilled = await jsonRequest('POST', `${base}/learning/distill`, { orgId: 'org-d' }, token);
+    assert.equal(distilled.status, 200);
+    assert.ok((distilled.body as { stats: { lessons: number } }).stats.lessons >= 1);
+
+    const lessons = await jsonRequest('GET', `${base}/learning/lessons`, undefined, token);
+    assert.equal(lessons.status, 200);
+    assert.ok((lessons.body as { count: number }).count >= 1);
+
+    const stats = await jsonRequest('GET', `${base}/learning/distill-stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { documentsIngested: number } }).stats.documentsIngested >= 1);
+
+    // The distilled lesson is now retrievable through the knowledge service.
+    const knowledge = kernel.getModule<KnowledgeService>('knowledge');
+    const hits = await knowledge.retrieve('High adoption', { topK: 3 });
+    assert.ok(hits.length >= 1);
+  });
+
+  // --- Phase 6 — Universal Search via gateway -----------------------------
+
+  it('GET /search federates across sources with facets', async () => {
+    const knowledge = kernel.getModule<KnowledgeService>('knowledge');
+    await knowledge.ingestText('JATA Qi unified search indexes the entire platform.', { title: 'Search docs' });
+
+    const res = await jsonRequest('GET', `${base}/search?q=search&orgId=org-d`, undefined, token);
+    assert.equal(res.status, 200);
+    const body = res.body as { hits: Array<{ source: string; title: string }>; facets: { source: Record<string, number> } };
+    assert.ok(body.hits.length >= 1);
+    assert.ok(body.hits.some((h) => h.source === 'knowledge'));
+    assert.ok((body.facets.source.knowledge ?? 0) >= 1);
+  });
+
+  it('GET /search/suggest + POST /search/history + GET /search/stats', async () => {
+    const suggest = await jsonRequest('GET', `${base}/search/suggest?q=search`, undefined, token);
+    assert.equal(suggest.status, 200);
+    assert.ok((suggest.body as { suggestions: unknown[] }).suggestions.length >= 1);
+
+    const recorded = await jsonRequest('POST', `${base}/search/history`, { query: 'vector search', userId: 'u1', orgId: 'org-d' }, token);
+    assert.equal(recorded.status, 201);
+    assert.equal((recorded.body as { recorded: boolean }).recorded, true);
+
+    const history = await jsonRequest('GET', `${base}/search/history?userId=u1&orgId=org-d`, undefined, token);
+    assert.equal(history.status, 200);
+    assert.ok((history.body as { count: number }).count >= 1);
+
+    const stats = await jsonRequest('GET', `${base}/search/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { adapters: string[] } }).stats.adapters.length >= 4);
   });
 
   // --- Authz guard --------------------------------------------------------

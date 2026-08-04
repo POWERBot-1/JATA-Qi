@@ -8,13 +8,21 @@ import type { DigitalMemoryModule } from '@jataqi/memory';
 import { PromptRegistry } from './prompt-registry.js';
 import { QualityTracker } from './quality.js';
 import { DriftDetector } from './drift.js';
-import type { DriftAlert, ModelBenchmark, PromptTemplate, PromptVersion, QualityMetrics, ResponseOutcome } from './types.js';
+import { ExperimentEngine } from './experiment.js';
+import type {
+  CreateExperimentInput, ExperimentEvaluation, ExperimentServeResult,
+} from './experiment.js';
+import type { DriftAlert, ExperimentStatus, ModelBenchmark, PromptExperiment, PromptTemplate, PromptVersion, QualityMetrics, ResponseOutcome } from './types.js';
 
 export const AiLearningEvents = Object.freeze({
   PromptCreated: 'ai-learning.prompt.created',
   PromptActivated: 'ai-learning.prompt.activated',
   QualityRecorded: 'ai-learning.quality.recorded',
   DriftDetected: 'ai-learning.drift.detected',
+  ExperimentCreated: 'ai-learning.experiment.created',
+  ExperimentServed: 'ai-learning.experiment.served',
+  ExperimentEvaluated: 'ai-learning.experiment.evaluated',
+  ExperimentConcluded: 'ai-learning.experiment.concluded',
 } as const);
 
 export class AiLearningModule implements IModule {
@@ -26,6 +34,7 @@ export class AiLearningModule implements IModule {
   readonly registry = new PromptRegistry();
   readonly quality = new QualityTracker();
   readonly drift = new DriftDetector();
+  readonly experiments = new ExperimentEngine(this.registry, this.quality);
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -94,6 +103,60 @@ export class AiLearningModule implements IModule {
     for (const a of alerts) void this.api.bus.emit(AiLearningEvents.DriftDetected, { scope: a.scope, metric: a.metric, severity: a.severity });
     return alerts;
   }
+
+  // ---- prompt experiments (CLP Phase 4 — eval-gated learning) ------------
+
+  /** Create a champion/challenger experiment over a prompt template. */
+  createExperiment(input: CreateExperimentInput): PromptExperiment {
+    const experiment = this.experiments.create(input);
+    void this.api.bus.emit(AiLearningEvents.ExperimentCreated, {
+      id: experiment.id, templateId: experiment.templateId,
+      challengerVersionId: experiment.challengerVersionId,
+    });
+    return experiment;
+  }
+
+  getExperiment(id: string): PromptExperiment | undefined { return this.experiments.get(id); }
+  listExperiments(status?: ExperimentStatus): PromptExperiment[] { return this.experiments.list(status); }
+
+  /**
+   * Serve a prompt through a running experiment (traffic split between
+   * champion and challenger). Falls back to the active version when no
+   * experiment is running, so callers can always use this as their renderer.
+   */
+  servePrompt(templateId: string, vars: Record<string, string>): ExperimentServeResult | { text: string } {
+    const served = this.experiments.serve(templateId, vars);
+    if (served) {
+      void this.api.bus.emit(AiLearningEvents.ExperimentServed, {
+        experimentId: served.experimentId, variant: served.variant,
+      });
+      return served;
+    }
+    return { text: this.registry.render(templateId, vars) };
+  }
+
+  /** Evaluate a running experiment against recorded outcomes (may promote). */
+  evaluateExperiment(id: string): ExperimentEvaluation {
+    const evaluation = this.experiments.evaluate(id);
+    void this.api.bus.emit(AiLearningEvents.ExperimentEvaluated, {
+      id, decision: evaluation.decision, promoted: evaluation.promoted,
+    });
+    return evaluation;
+  }
+
+  /** Conclude a running experiment, finalizing its decision. */
+  concludeExperiment(id: string): PromptExperiment {
+    const experiment = this.experiments.conclude(id);
+    void this.api.bus.emit(AiLearningEvents.ExperimentConcluded, {
+      id, decision: experiment.decision,
+    });
+    return experiment;
+  }
+
+  /** Cancel a running experiment without promoting the challenger. */
+  cancelExperiment(id: string): PromptExperiment {
+    return this.experiments.cancel(id);
+  }
 }
 
-export { PromptRegistry, QualityTracker, DriftDetector };
+export { PromptRegistry, QualityTracker, DriftDetector, ExperimentEngine };

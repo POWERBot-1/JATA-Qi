@@ -79,6 +79,7 @@ import { CryptoModule } from '@jataqi/crypto';
 import { DashboardModule } from '@jataqi/dashboard';
 import { LinkIntelligenceModule } from '@jataqi/link-intelligence';
 import { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
+import { SearchModule } from '@jataqi/search';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -247,6 +248,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // intelligence (both feed the knowledge graph + memory when available).
   kernel.register(new LinkIntelligenceModule());
   kernel.register(new MultimodalIntelligenceModule());
+  // Phase 6 — Universal Search & Discovery (federates knowledge, memory,
+  // graph, conversations, and tools with personalized ranking).
+  kernel.register(new SearchModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

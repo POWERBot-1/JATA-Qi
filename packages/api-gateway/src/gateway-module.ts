@@ -57,6 +57,8 @@ import type { CryptoModule } from '@jataqi/crypto';
 import type { DashboardModule } from '@jataqi/dashboard';
 import type { LinkIntelligenceModule } from '@jataqi/link-intelligence';
 import type { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
+import type { SearchModule } from '@jataqi/search';
+import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, ResolvedCorsPolicy, RouteHandler, TlsConfig } from './types.js';
@@ -121,6 +123,7 @@ export class ApiGatewayModule implements IModule {
   private dashboard?: DashboardModule;
   private linkIntel?: LinkIntelligenceModule;
   private multimodalIntel?: MultimodalIntelligenceModule;
+  private search?: SearchModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -193,6 +196,7 @@ export class ApiGatewayModule implements IModule {
     this.dashboard = this.tryModule<DashboardModule>('dashboard');
     this.linkIntel = this.tryModule<LinkIntelligenceModule>('link-intelligence');
     this.multimodalIntel = this.tryModule<MultimodalIntelligenceModule>('multimodal-intelligence');
+    this.search = this.tryModule<SearchModule>('search');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -546,6 +550,11 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/learning/recommendation/deploy', auth('learning:write', (req) => this.learningDeploy(req)));
     route('POST', '/learning/preference', auth('learning:write', (req) => this.learningPreference(req)));
     route('GET', '/learning/adaptation', auth('learning:read', (req) => this.learningAdaptation(req)));
+    // CLP Phase 5 — knowledge distillation.
+    route('POST', '/learning/distill', auth('learning:write', (req) => this.learningDistill(req)));
+    route('GET', '/learning/lessons', auth('learning:read', () => this.learningLessons()));
+    route('GET', '/learning/playbooks', auth('learning:read', () => this.learningPlaybooks()));
+    route('GET', '/learning/distill-stats', auth('learning:read', () => this.learningDistillStats()));
     // AI Learning Platform (CLP Phase 3) — prompt registry, quality, drift.
     route('GET', '/ai-learning/prompts', auth('learning:read', (req) => this.aiPromptsList(req)));
     route('POST', '/ai-learning/prompts', auth('learning:write', (req) => this.aiPromptsCreate(req)));
@@ -557,6 +566,13 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/ai-learning/metrics', auth('learning:read', (req) => this.aiMetrics(req)));
     route('GET', '/ai-learning/benchmarks', auth('learning:read', () => this.aiBenchmarks()));
     route('POST', '/ai-learning/drift', auth('learning:read', () => this.aiDrift()));
+    // CLP Phase 4 — eval-gated prompt experiments.
+    route('POST', '/ai-learning/experiments', auth('learning:write', (req) => this.aiExperimentsCreate(req)));
+    route('GET', '/ai-learning/experiments', auth('learning:read', (req) => this.aiExperimentsList(req)));
+    route('POST', '/ai-learning/experiments/evaluate', auth('learning:write', (req) => this.aiExperimentsEvaluate(req)));
+    route('POST', '/ai-learning/experiments/conclude', auth('learning:write', (req) => this.aiExperimentsConclude(req)));
+    route('POST', '/ai-learning/experiments/cancel', auth('learning:write', (req) => this.aiExperimentsCancel(req)));
+    route('POST', '/ai-learning/serve', auth('learning:read', (req) => this.aiServe(req)));
     // Design system — universal design language (tokens, adaptive theming, CSS).
     route('GET', '/design-system/tokens', auth('design:read', (req) => this.designTokens(req)));
     route('GET', '/design-system/css', auth('design:read', (req) => this.designCss(req)));
@@ -620,6 +636,12 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/multimodal/sources/revoke', auth('knowledge:write', (req) => this.multimodalSourcesRevoke(req)));
     route('POST', '/multimodal/acquire', auth('knowledge:write', (req) => this.multimodalAcquire(req)));
     route('POST', '/multimodal/acquire-batch', auth('knowledge:write', (req) => this.multimodalAcquireBatch(req)));
+    // Phase 6 — Universal Search & Discovery.
+    route('GET', '/search', auth('search:read', (req) => this.searchQuery(req)));
+    route('GET', '/search/suggest', auth('search:read', (req) => this.searchSuggest(req)));
+    route('POST', '/search/history', auth('search:read', (req) => this.searchRecord(req)));
+    route('GET', '/search/history', auth('search:read', (req) => this.searchHistory(req)));
+    route('GET', '/search/stats', auth('search:read', () => this.searchStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -924,7 +946,7 @@ export class ApiGatewayModule implements IModule {
       'organizations', 'notifications', 'policies', 'feature-flags', 'privacy',
       'policy-governance', 'api-gateway', 'memory', 'learning', 'ai-learning',
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
-      'link-intelligence', 'multimodal-intelligence',
+      'link-intelligence', 'multimodal-intelligence', 'search',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -2382,6 +2404,152 @@ export class ApiGatewayModule implements IModule {
     return json(200, { results, count: results.length });
   }
 
+
+  // --- CLP Phase 4 — prompt experiments ----------------------------------
+
+  private aiExperimentsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.templateId !== 'string' || typeof b.challengerVersionId !== 'string' || typeof b.createdBy !== 'string')
+      return json(400, { error: 'fields "templateId", "challengerVersionId", and "createdBy" are required' });
+    const experiment = this.aiLearning.createExperiment({
+      templateId: b.templateId,
+      challengerVersionId: b.challengerVersionId,
+      createdBy: b.createdBy,
+      ...(typeof b.name === 'string' ? { name: b.name } : {}),
+      ...(typeof b.challengerTraffic === 'number' ? { challengerTraffic: b.challengerTraffic } : {}),
+      ...(typeof b.minOutcomes === 'number' ? { minOutcomes: b.minOutcomes } : {}),
+      ...(typeof b.minAcceptanceGain === 'number' ? { minAcceptanceGain: b.minAcceptanceGain } : {}),
+    });
+    return json(201, { experiment });
+  }
+
+  private aiExperimentsList(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const status = req.query.status as 'running' | 'concluded' | 'cancelled' | undefined;
+    const experiments = status
+      ? this.aiLearning.listExperiments(status)
+      : this.aiLearning.listExperiments();
+    return json(200, { experiments, count: experiments.length });
+  }
+
+  private aiExperimentsEvaluate(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const evaluation = this.aiLearning.evaluateExperiment(b.id);
+    return json(200, {
+      decision: evaluation.decision,
+      reason: evaluation.reason,
+      promoted: evaluation.promoted,
+      championMetrics: evaluation.championMetrics,
+      challengerMetrics: evaluation.challengerMetrics,
+    });
+  }
+
+  private aiExperimentsConclude(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, { experiment: this.aiLearning.concludeExperiment(b.id) });
+  }
+
+  private aiExperimentsCancel(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, { experiment: this.aiLearning.cancelExperiment(b.id) });
+  }
+
+  private aiServe(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.templateId !== 'string') return json(400, { error: 'field "templateId" is required' });
+    const vars = b.vars && typeof b.vars === 'object' ? b.vars as Record<string, string> : {};
+    const served = this.aiLearning.servePrompt(b.templateId, vars);
+    return json(200, served);
+  }
+
+  // --- CLP Phase 5 — knowledge distillation -------------------------------
+
+  private async learningDistill(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const b = this.asObject(req.body);
+    const run = await this.learning.distill(typeof b.orgId === 'string' ? b.orgId : undefined);
+    return json(200, run);
+  }
+
+  private learningLessons(): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const lessons = this.learning.getLessons();
+    return json(200, { lessons, count: lessons.length });
+  }
+
+  private learningPlaybooks(): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const playbooks = this.learning.getPlaybooks();
+    return json(200, { playbooks, count: playbooks.length });
+  }
+
+  private learningDistillStats(): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    return json(200, { stats: this.learning.distillStats() });
+  }
+
+  // --- Phase 6 — Universal Search & Discovery ------------------------------
+
+  private async searchQuery(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.search) return json(501, { error: 'search module not registered' });
+    const q = req.query.q;
+    if (!q) return json(400, { error: 'query parameter "q" is required' });
+    const sources = req.query.sources
+      ? (req.query.sources.split(',').map((s) => s.trim()).filter(Boolean) as never[])
+      : undefined;
+    const result = await this.search.search(q, {
+      ...(sources?.length ? { sources } : {}),
+      ...(req.query.topK ? { topK: Number(req.query.topK) } : {}),
+      ...(req.query.minScore ? { minScore: Number(req.query.minScore) } : {}),
+      ...(req.query.userId ? { userId: req.query.userId } : {}),
+      ...(req.query.orgId ? { orgId: req.query.orgId } : {}),
+      ...(req.query.category ? { category: req.query.category } : {}),
+    });
+    return json(200, result);
+  }
+
+  private async searchSuggest(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.search) return json(501, { error: 'search module not registered' });
+    const q = req.query.q;
+    if (!q) return json(400, { error: 'query parameter "q" is required' });
+    const suggestions = await this.search.suggest(q, {
+      ...(req.query.limit ? { limit: Number(req.query.limit) } : {}),
+    });
+    return json(200, { suggestions, count: suggestions.length });
+  }
+
+  private async searchRecord(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.search) return json(501, { error: 'search module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.query !== 'string' || typeof b.userId !== 'string')
+      return json(400, { error: 'fields "query" and "userId" are required' });
+    const recorded = await this.search.recordSearch(b.userId, b.query, typeof b.orgId === 'string' ? b.orgId : undefined);
+    return json(201, { recorded });
+  }
+
+  private searchHistory(req: GatewayRequest): GatewayResponse {
+    if (!this.search) return json(501, { error: 'search module not registered' });
+    if (!req.query.userId) return json(400, { error: 'query parameter "userId" is required' });
+    const history = this.search.recentSearches(
+      req.query.userId,
+      req.query.orgId,
+      req.query.limit ? Number(req.query.limit) : 20,
+    );
+    return json(200, { history, count: history.length });
+  }
+
+  private searchStats(): GatewayResponse {
+    if (!this.search) return json(501, { error: 'search module not registered' });
+    return json(200, { stats: this.search.stats() });
+  }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.disasterRecovery) return json(501, { error: 'disaster-recovery module not registered' });

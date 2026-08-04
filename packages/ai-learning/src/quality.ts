@@ -16,9 +16,10 @@ export class QualityTracker {
   }
 
   /** All recorded outcomes (optionally filtered). */
-  list(filter?: { promptTemplateId?: string; model?: string; provider?: string; orgId?: string; fromTs?: number; toTs?: number }): ResponseOutcome[] {
+  list(filter?: { promptTemplateId?: string; promptVersionId?: string; model?: string; provider?: string; orgId?: string; fromTs?: number; toTs?: number }): ResponseOutcome[] {
     return this.outcomes.filter((o) =>
       (!filter?.promptTemplateId || o.promptTemplateId === filter.promptTemplateId) &&
+      (!filter?.promptVersionId || o.promptVersionId === filter.promptVersionId) &&
       (!filter?.model || o.model === filter.model) &&
       (!filter?.provider || o.provider === filter.provider) &&
       (!filter?.orgId || o.orgId === filter.orgId) &&

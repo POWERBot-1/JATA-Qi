@@ -90,3 +90,46 @@ export interface ModelBenchmark {
   p50Latency: number;
   p95Latency: number;
 }
+
+// ---- prompt experiments (CLP Phase 4) -------------------------------------
+
+/** Lifecycle of a champion/challenger prompt experiment. */
+export type ExperimentStatus = 'running' | 'concluded' | 'cancelled';
+
+/** Outcome decision of an evaluated experiment. */
+export type ExperimentDecision = 'promote' | 'keep' | 'insufficient-data' | 'regression';
+
+/** Which variant an online serve call routed traffic to. */
+export type ExperimentVariant = 'champion' | 'challenger';
+
+/**
+ * A controlled champion/challenger experiment over two versions of a prompt
+ * template. Traffic is split between the active ("champion") version and a
+ * candidate ("challenger") version; recorded response outcomes are compared
+ * and the challenger is promoted only when it beats the champion by a
+ * measurable, statistically honest margin (CLP Phase 4 — eval-gated learning).
+ */
+export interface PromptExperiment {
+  id: string;
+  templateId: string;
+  name: string;
+  /** The template version currently active (baseline). */
+  championVersionId: string;
+  /** The candidate version under test. */
+  challengerVersionId: string;
+  status: ExperimentStatus;
+  startedAt: number;
+  concludedAt?: number;
+  decision?: ExperimentDecision;
+  /** Human-readable justification of the decision. */
+  reason?: string;
+  /** Traffic share routed to the challenger (0..1). */
+  challengerTraffic: number;
+  /** Minimum recorded outcomes per variant before evaluation may conclude. */
+  minOutcomes: number;
+  /** Minimum acceptance-rate gain (percentage points) required to promote. */
+  minAcceptanceGain: number;
+  /** Per-variant quality metrics from the last evaluation. */
+  metrics?: { champion: QualityMetrics; challenger: QualityMetrics };
+  createdBy: string;
+}

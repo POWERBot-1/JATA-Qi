@@ -11,6 +11,14 @@ import type { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { ModelRegistryModule } from '@jataqi/model-registry';
 import { SimulationModule, uniform, constant } from '@jataqi/simulation';
 import { PluginManagerModule } from '@jataqi/plugins';
+import type { SearchModule } from '@jataqi/search';
+import type { DigitalMemoryModule } from '@jataqi/memory';
+import type { ContinuousLearningModule } from '@jataqi/learning';
+import type { AiLearningModule } from '@jataqi/ai-learning';
+import type { UniversalWalletModule } from '@jataqi/universal-wallet';
+import type { CryptoModule } from '@jataqi/crypto';
+import type { DashboardModule } from '@jataqi/dashboard';
+import type { BrandingModule } from '@jataqi/branding';
 
 const HELP = `
 JATA Qi CLI
@@ -26,7 +34,17 @@ Commands:
   plugins             List installed plugins.
   stats               Print knowledge/vector/graph stats.
   search <query>      Semantic search (no agent) — top 3 chunks.
+  find <query>        Unified search across knowledge, memory, graph, conversations
+                      and tools [--sources a,b] [--user u] [--org o] [--topK n] [--json].
   entities [<type>]   List entities in the knowledge graph.
+  memory <sub>        Digital memory: record|query|stats|policy|sweep.
+  learning <sub>      Continuous learning: analyze|recommendations|adapt|distill|lessons|playbooks|distill-stats.
+  prompts <sub>       AI prompt registry: list|create|render.
+  experiments <sub>   Prompt experiments (CLP P4): list|create|evaluate|conclude|cancel.
+  wallet <sub>        Universal wallet: open|balance|transfer|summary.
+  crypto <sub>        KRT platform: assets|balance|summary.
+  dashboard <sub>     Adaptive dashboard: layouts|adapt.
+  brands list         List the 15 JATA Qi product brands.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -42,6 +60,14 @@ async function main() {
   const agents = kernel.getModule<AgentRuntimeModule>('agent-runtime');
   const knowledge = kernel.getModule<KnowledgeService>('knowledge');
   const graph = kernel.getModule<KnowledgeGraphModule>('knowledge-graph');
+  const search = kernel.getModule<SearchModule>('search');
+  const memory = kernel.getModule<DigitalMemoryModule>('memory');
+  const learning = kernel.getModule<ContinuousLearningModule>('learning');
+  const aiLearning = kernel.getModule<AiLearningModule>('ai-learning');
+  const wallet = kernel.getModule<UniversalWalletModule>('universal-wallet');
+  const crypto = kernel.getModule<CryptoModule>('crypto');
+  const dashboard = kernel.getModule<DashboardModule>('dashboard');
+  const branding = kernel.getModule<BrandingModule>('branding');
   let longRunning = false;
 
   try {
@@ -158,6 +184,293 @@ async function main() {
         console.log(`\n${ents.length} entities shown`);
         break;
       }
+      case 'find': {
+        const q = args.slice(1).filter((a) => !a.startsWith('--')).join(' ');
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        if (!q) { console.error('Usage: jataqi find <query> [--sources a,b] [--user u] [--org o] [--topK n] [--json]'); process.exit(1); }
+        const result = await search.search(q, {
+          ...(flag('sources') ? { sources: flag('sources')!.split(',').map((s) => s.trim()).filter(Boolean) as never[] } : {}),
+          ...(flag('user') ? { userId: flag('user') } : {}),
+          ...(flag('org') ? { orgId: flag('org') } : {}),
+          ...(flag('topK') ? { topK: Number(flag('topK')) } : {}),
+        });
+        if (args.includes('--json')) { console.log(JSON.stringify(result, null, 2)); break; }
+        console.log(`${result.total} result(s) in ${result.tookMs}ms`);
+        for (const h of result.hits) {
+          console.log(`- [${h.source}] ${h.title} (score ${h.score.toFixed(3)})`);
+          console.log(`    ${h.snippet.slice(0, 160)}`);
+        }
+        break;
+      }
+      case 'memory': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'record': {
+            const summary = args.slice(2).filter((a) => !a.startsWith('--')).join(' ');
+            if (!summary) { console.error('Usage: jataqi memory record "<summary>" [--category cat] [--user u] [--org o]'); process.exit(1); }
+            const res = await memory.record({
+              category: (flag('category') ?? 'command') as never,
+              summary,
+              ...(flag('user') ? { userId: flag('user') } : {}),
+              ...(flag('org') ? { orgId: flag('org') } : {}),
+            });
+            console.log(res.recorded ? `recorded ${res.event?.id}` : `not recorded: ${res.reason}`);
+            break;
+          }
+          case 'query': {
+            const events = memory.query({
+              ...(flag('category') ? { category: flag('category') as never } : {}),
+              ...(flag('user') ? { userId: flag('user') } : {}),
+              ...(flag('org') ? { orgId: flag('org') } : {}),
+              ...(flag('text') ? { text: flag('text') } : {}),
+              ...(flag('limit') ? { limit: Number(flag('limit')) } : {}),
+            });
+            for (const e of events.slice(0, 25)) console.log(`[${e.ts}] ${e.category} :: ${e.summary}`);
+            console.log(`${events.length} event(s)`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(memory.stats(flag('org')), null, 2));
+            break;
+          case 'policy': {
+            const orgId = flag('org');
+            if (!orgId) { console.error('Usage: jataqi memory policy --org <orgId> [--blocked a,b] [--retention n] [--disable]'); process.exit(1); }
+            memory.setPolicy({
+              orgId,
+              ...(flag('blocked') ? { blockedCategories: flag('blocked')!.split(',').map((s) => s.trim()) } : {}),
+              ...(flag('retention') ? { retentionDays: Number(flag('retention')) } : {}),
+              ...(args.includes('--disable') ? { disabled: true } : {}),
+            });
+            console.log('policy updated');
+            break;
+          }
+          case 'sweep': {
+            const swept = await memory.sweep();
+            console.log(`swept ${swept} expired event(s)`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi memory record|query|stats|policy|sweep'); process.exit(1);
+        }
+        break;
+      }
+      case 'learning': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'analyze': {
+            const result = await learning.analyze(flag('org'));
+            console.log(`insights: ${result.insights.length}, recommendations: ${result.recommendations.length}, events: ${result.summary.totalEvents}`);
+            break;
+          }
+          case 'recommendations': {
+            const recs = learning.getRecommendations({ ...(flag('status') ? { status: flag('status') as never } : {}), ...(flag('org') ? { orgId: flag('org') } : {}) });
+            for (const r of recs) console.log(`[${r.status}] ${r.priority} ${r.title} (${r.category})`);
+            console.log(`${recs.length} recommendation(s)`);
+            break;
+          }
+          case 'adapt': {
+            const userId = flag('user');
+            if (!userId) { console.error('Usage: jataqi learning adapt --user <userId>'); process.exit(1); }
+            const result = learning.adapt(userId);
+            console.log(JSON.stringify(result ?? null, null, 2));
+            break;
+          }
+          case 'distill': {
+            const run = await learning.distill(flag('org'));
+            console.log(`distilled ${run.lessons.length} lesson(s), ${run.playbooks.length} playbook(s)`);
+            break;
+          }
+          case 'lessons':
+            for (const l of learning.getLessons()) console.log(`[${l.sourceType}] ${l.title} (${l.category}, conf ${l.confidence.toFixed(2)})`);
+            console.log(`${learning.getLessons().length} lesson(s)`);
+            break;
+          case 'playbooks':
+            for (const p of learning.getPlaybooks()) console.log(`- ${p.name} [${p.category}] steps=${p.steps.length} lessons=${p.lessonIds.length}`);
+            break;
+          case 'distill-stats':
+            console.log(JSON.stringify(learning.distillStats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi learning analyze|recommendations|adapt|distill|lessons|playbooks|distill-stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'prompts': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'list': {
+            const prompts = aiLearning.listPrompts(args[2]);
+            for (const p of prompts) console.log(`- ${p.id} ${p.name} (${p.category}, versions=${p.versions.length}, active=${p.activeVersionId ? 'yes' : 'no'})`);
+            console.log(`${prompts.length} prompt(s)`);
+            break;
+          }
+          case 'create': {
+            const name = args[2], content = args[3], category = args[4];
+            if (!name || !content || !category) { console.error('Usage: jataqi prompts create <name> <content> <category>'); process.exit(1); }
+            const p = aiLearning.createPrompt({ name, content, category });
+            console.log(`created ${p.id}`);
+            break;
+          }
+          case 'render': {
+            const templateId = args[2];
+            let vars: Record<string, string> = {};
+            if (flag('vars')) { try { vars = JSON.parse(flag('vars')!) as Record<string, string>; } catch { console.error('--vars must be JSON'); process.exit(1); } }
+            if (!templateId) { console.error('Usage: jataqi prompts render <templateId> [--vars \'{"k":"v"}\']'); process.exit(1); }
+            console.log(aiLearning.render(templateId, vars));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi prompts list|create|render'); process.exit(1);
+        }
+        break;
+      }
+      case 'experiments': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'list': {
+            const exps = args[2] ? aiLearning.listExperiments(args[2] as never) : aiLearning.listExperiments();
+            for (const e of exps) console.log(`[${e.status}] ${e.name} (${e.templateId}) champion=${e.championVersionId.slice(0, 8)} challenger=${e.challengerVersionId.slice(0, 8)}${e.decision ? ` decision=${e.decision}` : ''}`);
+            console.log(`${exps.length} experiment(s)`);
+            break;
+          }
+          case 'create': {
+            const templateId = args[2], challenger = args[3];
+            if (!templateId || !challenger) { console.error('Usage: jataqi experiments create <templateId> <challengerVersionId> [--traffic 0.5] [--by admin]'); process.exit(1); }
+            const e = aiLearning.createExperiment({ templateId, challengerVersionId: challenger, createdBy: flag('by') ?? 'cli', ...(flag('traffic') ? { challengerTraffic: Number(flag('traffic')) } : {}) });
+            console.log(`created ${e.id}`);
+            break;
+          }
+          case 'evaluate':
+          case 'conclude':
+          case 'cancel': {
+            const id = args[2];
+            if (!id) { console.error(`Usage: jataqi experiments ${sub} <id>`); process.exit(1); }
+            const result = sub === 'evaluate' ? aiLearning.evaluateExperiment(id) : sub === 'conclude' ? aiLearning.concludeExperiment(id) : aiLearning.cancelExperiment(id);
+            console.log(JSON.stringify(result, null, 2));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi experiments list|create|evaluate|conclude|cancel'); process.exit(1);
+        }
+        break;
+      }
+      case 'wallet': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'open': {
+            const ownerId = args[2], role = args[3];
+            if (!ownerId || !role) { console.error('Usage: jataqi wallet open <ownerId> <role> [--org o]'); process.exit(1); }
+            const w = wallet.openWallet(ownerId, role as never, flag('org'));
+            console.log(`wallet ${w.id} opened (${w.role})`);
+            break;
+          }
+          case 'balance': {
+            const walletId = args[2], currency = args[3];
+            if (!walletId || !currency) { console.error('Usage: jataqi wallet balance <walletId> <currency>'); process.exit(1); }
+            console.log(`${currency} ${wallet.balance(walletId, currency).toString()}`);
+            break;
+          }
+          case 'transfer': {
+            const from = args[2], to = args[3], currency = args[4], amount = args[5], desc = args[6];
+            if (!from || !to || !currency || !amount || !desc) { console.error('Usage: jataqi wallet transfer <from> <to> <currency> <amount> <description>'); process.exit(1); }
+            const tx = wallet.transfer(from, to, currency, BigInt(amount), desc);
+            console.log(`tx ${tx.ref} settled`);
+            break;
+          }
+          case 'summary': {
+            const s = wallet.summary();
+            console.log(JSON.stringify({ totalWallets: s.totalWallets, totalTxCount: s.totalTxCount, activeEscrows: s.activeEscrows, ledgerBalanced: wallet.verifyLedger() }, null, 2));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi wallet open|balance|transfer|summary'); process.exit(1);
+        }
+        break;
+      }
+      case 'crypto': {
+        const sub = args[1];
+        switch (sub) {
+          case 'assets': {
+            const symbol = args[2];
+            if (symbol) {
+              const asset = crypto.getAsset(symbol);
+              console.log(asset ? JSON.stringify(asset, null, 2) : 'asset not found');
+            } else {
+              for (const a of crypto.listAssets()) console.log(`- ${a.symbol} ${a.name} (${a.type}, supply=${a.totalSupply.toString()})`);
+              console.log(`${crypto.listAssets().length} asset(s)`);
+            }
+            break;
+          }
+          case 'balance': {
+            const address = args[2], symbol = args[3];
+            if (!address || !symbol) { console.error('Usage: jataqi crypto balance <address> <symbol>'); process.exit(1); }
+            console.log(crypto.getBalance(address, symbol).toString());
+            break;
+          }
+          case 'summary':
+            console.log(JSON.stringify(crypto.summary(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi crypto assets|balance|summary'); process.exit(1);
+        }
+        break;
+      }
+      case 'dashboard': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'layouts': {
+            const layouts = flag('org') ? dashboard.layoutsForOrg(flag('org')!) : flag('owner') ? dashboard.layoutsForUser(flag('owner')!) : dashboard.layouts.listAll();
+            for (const l of layouts) console.log(`- ${l.id} ${l.name} (owner=${l.ownerId}, widgets=${l.widgets.length})`);
+            console.log(`${layouts.length} layout(s)`);
+            break;
+          }
+          case 'adapt': {
+            const layoutId = args[2], userId = args[3], role = args[4];
+            if (!layoutId || !userId) { console.error('Usage: jataqi dashboard adapt <layoutId> <userId> [role]'); process.exit(1); }
+            const applied = await dashboard.adapt(layoutId, userId, role);
+            console.log(`applied ${applied} widget suggestion(s)`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi dashboard layouts|adapt'); process.exit(1);
+        }
+        break;
+      }
+      case 'brands': {
+        if (args[1] !== 'list') { console.error('Usage: jataqi brands list'); process.exit(1); }
+        for (const id of branding.listProducts()) {
+          const b = branding.getBrand(id);
+          console.log(`- ${id} :: ${b?.productName ?? id} (${b?.tagline ?? ''})`);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -167,7 +480,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('stats') || line.startsWith('entities')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

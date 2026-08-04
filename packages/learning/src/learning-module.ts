@@ -6,15 +6,22 @@
 
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { DigitalMemoryModule } from '@jataqi/memory';
+import type { KnowledgeService } from '@jataqi/knowledge-service';
+import type { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { LearningEngine } from './learning.js';
 import { PersonalizationEngine } from './personalization.js';
-import type { AdaptationResult, LearningInsight, PreferenceKey, Recommendation, RecommendationStatus } from './types.js';
+import { DistillationEngine } from './distillation.js';
+import type {
+  AdaptationResult, DistillStats, DistilledLesson, LearningInsight, Playbook,
+  PreferenceKey, Recommendation, RecommendationStatus,
+} from './types.js';
 
 export const LearningEvents = Object.freeze({
   InsightsGenerated: 'learning.insights.generated',
   RecommendationProposed: 'learning.recommendation.proposed',
   RecommendationReviewed: 'learning.recommendation.reviewed',
   UserAdapted: 'personalization.user.adapted',
+  Distilled: 'learning.distilled',
 } as const);
 
 export class ContinuousLearningModule implements IModule {
@@ -25,6 +32,7 @@ export class ContinuousLearningModule implements IModule {
   private api!: KernelApi;
   readonly engine = new LearningEngine();
   readonly personalization = new PersonalizationEngine();
+  readonly distillation = new DistillationEngine();
   private insights: LearningInsight[] = [];
   private recommendations: Recommendation[] = [];
 
@@ -106,11 +114,41 @@ export class ContinuousLearningModule implements IModule {
 
   getProfile(userId: string) { return this.personalization.profile(userId); }
 
+  // ---- knowledge distillation (CLP Phase 5) ------------------------------
+
+  /**
+   * Distill the learning stream into durable knowledge: high-confidence
+   * insights and deployed recommendations become knowledge-service documents,
+   * knowledge-graph lesson entities + triples, and operational playbooks.
+   * Idempotent — each source is distilled at most once per module lifetime.
+   */
+  async distill(orgId?: string): Promise<{ stats: DistillStats; lessons: DistilledLesson[]; playbooks: Playbook[] }> {
+    const run = await this.distillation.distill({
+      insights: this.insights.filter((i) => !orgId || i.orgId === orgId),
+      recommendations: this.recommendations.filter((r) => !orgId || r.orgId === orgId),
+      orgId,
+      knowledge: this.tryModule<KnowledgeService>('knowledge'),
+      graph: this.tryModule<KnowledgeGraphModule>('knowledge-graph'),
+    });
+    if (run.lessons.length > 0 || run.playbooks.length > 0) {
+      void this.api.bus.emit(LearningEvents.Distilled, { lessons: run.lessons.length, playbooks: run.playbooks.length, orgId });
+    }
+    return run;
+  }
+
+  getLessons(): DistilledLesson[] { return this.distillation.lessonsList(); }
+  getPlaybooks(): Playbook[] { return this.distillation.playbooksList(); }
+  distillStats(): DistillStats { return this.distillation.stats(); }
+
   // ---- internals ---------------------------------------------------------
 
   private tryMemory(): DigitalMemoryModule | undefined {
     try { return this.api.getModule<DigitalMemoryModule>('memory'); } catch { return undefined; }
   }
+
+  private tryModule<T extends IModule>(id: string): T | undefined {
+    try { return this.api.getModule<T>(id); } catch { return undefined; }
+  }
 }
 
-export { LearningEngine, PersonalizationEngine };
+export { LearningEngine, PersonalizationEngine, DistillationEngine };

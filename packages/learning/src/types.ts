@@ -81,3 +81,55 @@ export interface AdaptationResult {
   /** Preferred AI model (from accepted AI responses). */
   preferredModel?: string;
 }
+
+// ---- knowledge distillation (CLP Phase 5) --------------------------------
+
+/** What produced a distilled lesson. */
+export type DistilledSourceType = 'insight' | 'recommendation';
+
+/**
+ * A durable lesson distilled from the learning stream: high-confidence
+ * insights and deployed recommendations, persisted into the knowledge layer
+ * (knowledge service document + knowledge graph entity) so that what JATA Qi
+ * learns becomes part of its permanent knowledge base (CLP Phase 5).
+ */
+export interface DistilledLesson {
+  id: string;
+  sourceType: DistilledSourceType;
+  sourceId: string;
+  title: string;
+  body: string;
+  /** Insight kind or recommendation category. */
+  category: string;
+  confidence: number;
+  orgId?: string;
+  /** Knowledge-graph entity id (ent:lesson:<id>) when the graph is present. */
+  entityId?: string;
+  /** Knowledge-service document id when the service is present. */
+  documentId?: string;
+  distilledAt: number;
+}
+
+/** An operational playbook assembled from deployed recommendations. */
+export interface Playbook {
+  id: string;
+  name: string;
+  category: string;
+  summary: string;
+  /** Ordered actionable steps. */
+  steps: string[];
+  lessonIds: string[];
+  orgId?: string;
+  status: 'active' | 'superseded';
+  createdAt: number;
+}
+
+/** Cumulative distillation counters. */
+export interface DistillStats {
+  lessons: number;
+  playbooks: number;
+  documentsIngested: number;
+  graphEntities: number;
+  graphTriples: number;
+  lastDistilledAt?: number;
+}

@@ -154,6 +154,16 @@ Other CLI commands:
 node packages/cli/dist/src/index.js ask "what is JATA Qi?"
 node packages/cli/dist/src/index.js ingest ./README.md
 node packages/cli/dist/src/index.js search "vector search"
+node packages/cli/dist/src/index.js find "vector search" --user alice   # unified search
+node packages/cli/dist/src/index.js memory record "deployed v2" --category config_change
+node packages/cli/dist/src/index.js learning analyze --org org1
+node packages/cli/dist/src/index.js learning distill --org org1
+node packages/cli/dist/src/index.js prompts list
+node packages/cli/dist/src/index.js experiments list
+node packages/cli/dist/src/index.js wallet open alice creator
+node packages/cli/dist/src/index.js crypto summary
+node packages/cli/dist/src/index.js dashboard layouts
+node packages/cli/dist/src/index.js brands list
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -253,6 +263,13 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/link/results` · `/link/summary` | `knowledge:read` | Link intelligence reads |
 | POST | `/multimodal/sources` · `/sources/authorize` · `/sources/revoke` · `/acquire` · `/acquire-batch` | `knowledge:write` | Multimodal acquisition |
 | GET | `/multimodal/sources` | `knowledge:read` | Registered acquisition sources |
+| POST | `/ai-learning/experiments` · `/experiments/evaluate` · `/experiments/conclude` · `/experiments/cancel` · `/ai-learning/serve` | `learning:write` / `learning:read` | CLP Phase 4 — eval-gated prompt experiments |
+| GET | `/ai-learning/experiments` | `learning:read` | List experiments (optionally by status) |
+| POST | `/learning/distill` | `learning:write` | CLP Phase 5 — distill insights + recommendations into knowledge |
+| GET | `/learning/lessons` · `/learning/playbooks` · `/learning/distill-stats` | `learning:read` | Distilled knowledge reads |
+| GET | `/search` | `search:read` | Phase 6 — unified search (`q`, `sources`, `topK`, `minScore`, `userId`, `orgId`) |
+| GET | `/search/suggest` · `/search/history` · `/search/stats` | `search:read` | Suggestions, search history, stats |
+| POST | `/search/history` | `search:read` | Record a search into memory history |
 
 ### Security model
 
@@ -344,7 +361,10 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Digital Memory Engine** (CLP Phase 1 — governed platform-event memory, consent/retention policies, right-to-delete/export)
 - ✅ **Continuous Learning + Personalization** (CLP Phase 2/6 — insights, recommendations, per-user adaptation)
 - ✅ **AI Learning Platform** (CLP Phase 3 — prompt registry lifecycle, response quality tracking, drift detection, model benchmarks)
+- ✅ **Prompt Experiments** (CLP Phase 4 — eval-gated champion/challenger experiments: traffic-split serving, evidence-based promotion, latency regression guard)
+- ✅ **Knowledge Distillation** (CLP Phase 5 — high-confidence insights + deployed recommendations become knowledge documents, graph lesson entities + triples, and operational playbooks)
 - ✅ **Self-Evolution** (CLP Phase 7 — governed proposals, experiments, rollback; consumes memory + learning + drift)
+- ✅ **Universal Search & Discovery** (Phase 6 — federated search across knowledge, memory, graph, conversations, and tools with recency decay, learned personalization boosts, facets, suggestions, and search history)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
