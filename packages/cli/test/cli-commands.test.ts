@@ -60,6 +60,27 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(out, /"facets"/);
   });
 
+  it('fx set rate + convert + currencies work', async () => {
+    const set = await jataqi('fx', 'set', 'USD', 'KES', '128.5', '--ask', '129.0');
+    assert.match(set, /USD\/KES bid=128.5 ask=129/);
+    // Each invocation boots a fresh in-memory OS: the convert run sees no
+    // rate (proving the command executes and fails gracefully), and the set
+    // command's own conversion math is covered by the package tests.
+    const convert = await jataqi('fx', 'convert', 'USD', 'KES', '10000');
+    assert.match(convert, /no rate for USD\/KES/);
+    const currencies = await jataqi('fx', 'currencies');
+    assert.match(currencies, /KES/);
+  });
+
+  it('pki root + cas + status work', async () => {
+    const root = await jataqi('pki', 'root', 'CLI Root');
+    assert.match(root, /root CA created: [0-9a-f-]{36}/);
+    const cas = await jataqi('pki', 'cas');
+    assert.match(cas, /0 CA\(s\)/); // fresh in-memory OS per invocation
+    const status = await jataqi('pki', 'status');
+    assert.match(status, /"idp"/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

@@ -20,6 +20,8 @@ import type { CryptoModule } from '@jataqi/crypto';
 import type { DashboardModule } from '@jataqi/dashboard';
 import type { BrandingModule } from '@jataqi/branding';
 import type { AutomationModule } from '@jataqi/automation';
+import type { FxModule } from '@jataqi/fx';
+import type { PkiModule } from '@jataqi/pki';
 
 const HELP = `
 JATA Qi CLI
@@ -47,6 +49,8 @@ Commands:
   dashboard <sub>     Adaptive dashboard: layouts|adapt.
   brands list         List the 15 JATA Qi product brands.
   automation <sub>    SOMA AI: list|show|create|run|executions|stats|enable|disable|remove.
+  fx <sub>            KARIS FX: rates|rate|set|convert|history|analytics|currencies|stats.
+  pki <sub>           PKI: status|root|cas|issue|list|revoke|crl|ra|client|discovery.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -71,6 +75,8 @@ async function main() {
   const dashboard = kernel.getModule<DashboardModule>('dashboard');
   const branding = kernel.getModule<BrandingModule>('branding');
   const automation = kernel.getModule<AutomationModule>('automation');
+  const fx = kernel.getModule<FxModule>('fx');
+  const pki = kernel.getModule<PkiModule>('pki');
   let longRunning = false;
 
   try {
@@ -562,6 +568,147 @@ async function main() {
         }
         break;
       }
+      case 'fx': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'set': {
+            const base = args[2], quote = args[3], bid = args[4];
+            if (!base || !quote || !bid) { console.error('Usage: jataqi fx set <base> <quote> <bid> [--ask n] [--source s]'); process.exit(1); }
+            const q = fx.setRate({ base, quote, bid: Number(bid), ...(flag('ask') ? { ask: Number(flag('ask')) } : {}), ...(flag('source') ? { source: flag('source') } : {}) });
+            console.log(`${q.pair} bid=${q.bid} ask=${q.ask} (${q.source})`);
+            break;
+          }
+          case 'rates':
+            for (const q of fx.listRates()) console.log(`${q.pair}\tbid=${q.bid}\task=${q.ask}\t${q.source}`);
+            console.log(`${fx.listRates().length} pair(s)`);
+            break;
+          case 'rate': {
+            const base = args[2], quote = args[3];
+            if (!base || !quote) { console.error('Usage: jataqi fx rate <base> <quote>'); process.exit(1); }
+            const q = fx.getRate(base, quote);
+            console.log(q ? `${q.pair} bid=${q.bid} ask=${q.ask} (${q.source})` : `no rate for ${base}/${quote}`);
+            break;
+          }
+          case 'convert': {
+            const from = args[2], to = args[3], amount = args[4];
+            if (!from || !to || !amount) { console.error('Usage: jataqi fx convert <from> <to> <amountMinorUnits> [--margin 1.02]'); process.exit(1); }
+            try {
+              const r = fx.convert({ from, to, amount: BigInt(amount), ...(flag('margin') ? { margin: Number(flag('margin')) } : {}) });
+              console.log(`${r.amount} ${r.from} → ${r.result} ${r.to} @ ${r.rate.toFixed(4)} (margin ${r.margin})`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'history': {
+            const pair = args[2];
+            if (!pair) { console.error('Usage: jataqi fx history <pair> [--limit n]'); process.exit(1); }
+            for (const p of fx.historyFor(pair, { ...(flag('limit') ? { limit: Number(flag('limit')) } : {}) }).slice(-10)) {
+              console.log(`[${new Date(p.ts).toISOString()}] mid=${p.mid}`);
+            }
+            break;
+          }
+          case 'analytics': {
+            const pair = args[2];
+            if (!pair) { console.error('Usage: jataqi fx analytics <pair> [--windowMs n]'); process.exit(1); }
+            const a = fx.analyze(pair, { ...(flag('windowMs') ? { windowMs: Number(flag('windowMs')) } : {}) });
+            console.log(a ? JSON.stringify(a, null, 2) : `no history for ${pair}`);
+            break;
+          }
+          case 'currencies':
+            console.log(fx.currencies().join(' '));
+            break;
+          case 'stats':
+            console.log(JSON.stringify(fx.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi fx set|rates|rate|convert|history|analytics|currencies|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'pki': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'status':
+            console.log(JSON.stringify(pki.stats(), null, 2));
+            break;
+          case 'root': {
+            const cn = args[2] ?? 'JATA Qi Root CA';
+            const ca = pki.createRootCa([{ oid: '2.5.4.3', value: cn }, { oid: '2.5.4.10', value: 'JATA Qi' }]);
+            console.log(`root CA created: ${ca.id}`);
+            break;
+          }
+          case 'cas':
+            for (const c of pki.ca.listCas()) console.log(`[${c.role}] ${c.id} ${c.subject.map((s) => s.value).join(', ')}`);
+            console.log(`${pki.ca.listCas().length} CA(s)`);
+            break;
+          case 'issue': {
+            const caId = args[2], cn = args[3];
+            if (!caId || !cn) { console.error('Usage: jataqi pki issue <caId> <cn> [--san a.com,b.com]'); process.exit(1); }
+            const key = (await import('@jataqi/pki')).generateKeyPair('ec-p256');
+            const cert = pki.issueCertificate({
+              caId, subject: [{ oid: '2.5.4.3', value: cn }],
+              subjectPublicKeyJwk: key.jwk,
+              ...(flag('san') ? { sanDnsNames: flag('san')!.split(',').map((s) => s.trim()) } : {}),
+            });
+            console.log(`issued ${cert.id} (serial ${cert.serialNumber.toString()})`);
+            break;
+          }
+          case 'list':
+            for (const c of pki.ca.list()) console.log(`[${pki.ca.effectiveStatus(c)}] ${c.id} ${c.subject.map((s) => s.value).join(', ')}`);
+            console.log(`${pki.ca.list().length} certificate(s)`);
+            break;
+          case 'revoke': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi pki revoke <certId> [--reason keyCompromise]'); process.exit(1); }
+            const c = pki.revokeCertificate(id, flag('reason'));
+            console.log(`${c.id} ${c.status}`);
+            break;
+          }
+          case 'crl': {
+            const caId = args[2];
+            if (!caId) { console.error('Usage: jataqi pki crl <caId>'); process.exit(1); }
+            const crl = pki.ca.latestCrl(caId);
+            console.log(crl ? JSON.stringify({ number: crl.number.toString(), revokedCount: crl.revokedCount, nextUpdate: crl.nextUpdate.toISOString() }, null, 2) : 'no CRL yet');
+            break;
+          }
+          case 'ra': {
+            const domains = args[2];
+            if (!domains) { console.error('Usage: jataqi pki ra <domain> [--method dns-txt|http-01|email]'); process.exit(1); }
+            const key = (await import('@jataqi/pki')).generateKeyPair('ec-p256');
+            const req = pki.createRequest({
+              domains: domains.split(',').map((s) => s.trim()),
+              subject: [{ oid: '2.5.4.3', value: domains.split(',')[0]!.trim() }],
+              publicKeyJwk: key.jwk,
+              method: (flag('method') ?? 'dns-txt') as never,
+              requestedBy: 'cli',
+            });
+            console.log(JSON.stringify({ id: req.id, proof: pki.ra.proofLocation(req) }, null, 2));
+            break;
+          }
+          case 'client': {
+            const name = args[2], redirect = args[3];
+            if (!name || !redirect) { console.error('Usage: jataqi pki client <name> <redirectUri>'); process.exit(1); }
+            const client = pki.registerIdpClient({ name, redirectUris: [redirect] });
+            console.log(JSON.stringify({ clientId: client.clientId, clientSecret: client.clientSecret }, null, 2));
+            break;
+          }
+          case 'discovery':
+            console.log(JSON.stringify(pki.idp.discovery(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi pki status|root|cas|issue|list|revoke|crl|ra|client|discovery'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -571,7 +718,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

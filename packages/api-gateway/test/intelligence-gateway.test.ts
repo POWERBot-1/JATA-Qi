@@ -28,17 +28,20 @@ import { ConversationsModule } from '@jataqi/conversations';
 import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import { SearchModule } from '@jataqi/search';
 import { AutomationModule } from '@jataqi/automation';
+import { FxModule } from '@jataqi/fx';
+import { PkiModule } from '@jataqi/pki';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
 
-async function jsonRequest(method: string, url: string, body?: unknown, token?: string) {
+async function jsonRequest(method: string, url: string, body?: unknown, token?: string, extraHeaders: Record<string, string> = {}) {
   const res = await fetch(url, {
     method,
     headers: {
       'content-type': 'application/json',
       ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...extraHeaders,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -85,6 +88,8 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new ToolIntelligenceModule());
     kernel.register(new SearchModule());
     kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
+    kernel.register(new FxModule({ anchor: 'USD' }));
+    kernel.register(new PkiModule({ issuer: 'https://id.test.local' }));
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -588,6 +593,129 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
   it('automation routes reject unauthenticated requests', async () => {
     const res = await jsonRequest('GET', `${base}/automations`, undefined);
     assert.equal(res.status, 401);
+  });
+
+  // --- Phase 6 — KARIS FX + PRX Part C PKI via gateway --------------------
+
+  it('fx: set rate → convert → history → analytics → stats over HTTP', async () => {
+    const set = await jsonRequest('POST', `${base}/fx/rates`, { base: 'USD', quote: 'KES', bid: 128.5, ask: 129.0, source: 'test' }, token);
+    assert.equal(set.status, 201);
+    assert.equal((set.body as { quote: { pair: string } }).quote.pair, 'USD/KES');
+
+    const conv = await jsonRequest('POST', `${base}/fx/convert`, { from: 'USD', to: 'KES', amount: '10000' }, token);
+    assert.equal(conv.status, 200);
+    const result = (conv.body as { result: { result: string; rate: number } }).result;
+    assert.equal(result.result, '1287500');
+
+    const rates = await jsonRequest('GET', `${base}/fx/rates`, undefined, token);
+    assert.equal(rates.status, 200);
+    assert.equal((rates.body as { count: number }).count, 1);
+
+    const history = await jsonRequest('GET', `${base}/fx/history?pair=USD/KES`, undefined, token);
+    assert.equal(history.status, 200);
+    assert.equal((history.body as { count: number }).count, 1);
+
+    const analytics = await jsonRequest('GET', `${base}/fx/analytics?pair=USD/KES`, undefined, token);
+    assert.equal(analytics.status, 200);
+    assert.equal((analytics.body as { analytics: { pair: string } }).analytics.pair, 'USD/KES');
+
+    const stats = await jsonRequest('GET', `${base}/fx/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { pairs: number } }).stats.pairs >= 1);
+  });
+
+  it('pki: root CA → intermediate → issue → revoke → CRL over HTTP', async () => {
+    const root = await jsonRequest('POST', `${base}/pki/ca/root`, {
+      subject: [{ oid: '2.5.4.3', value: 'GW Root' }],
+    }, token);
+    assert.equal(root.status, 201);
+    const rootCa = (root.body as { ca: { id: string; certDer: string } }).ca;
+
+    const sub = await jsonRequest('POST', `${base}/pki/ca/intermediate`, {
+      subject: [{ oid: '2.5.4.3', value: 'GW Sub' }], issuerId: rootCa.id,
+    }, token);
+    assert.equal(sub.status, 201);
+    const subCa = (sub.body as { ca: { id: string } }).ca;
+
+    // Issue needs a JWK — generate one via the module API directly on the kernel.
+    const pki = kernel.getModule<PkiModule>('pki');
+    const key = (await import('@jataqi/pki')).generateKeyPair('ec-p256');
+    const issued = await jsonRequest('POST', `${base}/pki/certificates`, {
+      caId: subCa.id,
+      subject: [{ oid: '2.5.4.3', value: 'secure.example.com' }],
+      sanDnsNames: ['secure.example.com'],
+      subjectPublicKeyJwk: key.jwk,
+    }, token);
+    assert.equal(issued.status, 201);
+    const cert = (issued.body as { certificate: { id: string } }).certificate;
+
+    // Cross-validate the issued certificate chain with OpenSSL via the module.
+    assert.equal(pki.ca.verifySignature(cert.id, subCa.id), true);
+
+    const list = await jsonRequest('GET', `${base}/pki/certificates`, undefined, token);
+    assert.equal(list.status, 200);
+    assert.ok((list.body as { count: number }).count >= 1);
+
+    const revoked = await jsonRequest('POST', `${base}/pki/certificates/revoke`, { id: cert.id, reason: 'keyCompromise' }, token);
+    assert.equal(revoked.status, 200);
+    assert.equal((revoked.body as { certificate: { status: string } }).certificate.status, 'revoked');
+
+    const crl = await jsonRequest('GET', `${base}/pki/crl?caId=${subCa.id}`, undefined, token);
+    assert.equal(crl.status, 200);
+    assert.equal((crl.body as { crl: { revokedCount: number } }).crl.revokedCount, 1);
+  });
+
+  it('pki: RA domain validation + IdP client/code/token flow over HTTP', async () => {
+    const pki = kernel.getModule<PkiModule>('pki');
+    const key = (await import('@jataqi/pki')).generateKeyPair('ec-p256');
+    const created = await jsonRequest('POST', `${base}/pki/ra/requests`, {
+      domains: ['ra.example.com'], publicKeyJwk: key.jwk, method: 'dns-txt',
+    }, token);
+    assert.equal(created.status, 201);
+    const req = (created.body as { request: { id: string; proof: { value: string } } }).request;
+    assert.match(req.proof.value, /_jataqi-pki-validation/);
+    // Extract the token from the proof location and validate with it.
+    const tokenMatch = req.proof.value.match(/"([0-9a-f]+)"/);
+    assert.ok(tokenMatch, 'proof should expose the token');
+
+    const validated = await jsonRequest('POST', `${base}/pki/ra/validate`, {
+      id: req.id, location: '_jataqi-pki-validation.ra.example.com', token: tokenMatch![1]!,
+    }, token);
+    assert.equal((validated.body as { request: { status: string } }).request.status, 'validated');
+
+    const approved = await jsonRequest('POST', `${base}/pki/ra/approve`, { id: req.id }, token);
+    assert.equal((approved.body as { request: { status: string } }).request.status, 'approved');
+
+    // IdP: client → authorize → token → userinfo.
+    const client = await jsonRequest('POST', `${base}/pki/idp/clients`, {
+      name: 'gw-app', redirectUris: ['https://gw.example.com/cb'],
+    }, token);
+    assert.equal(client.status, 201);
+    const c = (client.body as { clientId: string; clientSecret: string });
+    await pki.idp.upsertUser('gw-user', { name: 'GW User' });
+
+    const authz = await jsonRequest('POST', `${base}/pki/idp/authorize`, {
+      clientId: c.clientId, redirectUri: 'https://gw.example.com/cb', userId: 'gw-user',
+    }, token);
+    const code = (authz.body as { code: string }).code;
+
+    const tok = await jsonRequest('POST', `${base}/pki/idp/token`, {
+      code, clientId: c.clientId, clientSecret: c.clientSecret, redirectUri: 'https://gw.example.com/cb',
+    }, token);
+    assert.equal(tok.status, 200);
+    const tokens = tok.body as { access_token: string; id_token: string };
+    assert.ok(tokens.access_token);
+
+    const info = await jsonRequest('GET', `${base}/pki/idp/userinfo`, undefined, token, { 'x-idp-token': tokens.access_token });
+    assert.equal(info.status, 200);
+    assert.equal((info.body as { sub: string }).sub, 'gw-user');
+
+    const intro = await jsonRequest('POST', `${base}/pki/idp/introspect`, { token: tokens.access_token });
+    assert.equal((intro.body as { active: boolean }).active, true);
+
+    const discovery = await jsonRequest('GET', `${base}/pki/idp/discovery`);
+    assert.equal(discovery.status, 200);
+    assert.equal((discovery.body as { issuer: string }).issuer, 'https://id.test.local');
   });
 
   // --- Authz guard --------------------------------------------------------

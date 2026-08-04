@@ -31,6 +31,8 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/ai-learning` | `ai-learning` | – | AI Learning Platform (CLP P3) — prompt registry, quality, drift; prompt experiments (CLP P4) |
 | `@jataqi/search` | `search` | knowledge, memory, graph, conversations, tool-intelligence | Universal Search & Discovery (Phase 6) — federated, personalized, faceted |
 | `@jataqi/automation` | `automation` | memory, notifications, knowledge, agent-runtime, tool-intelligence | SOMA AI (Phase 6) — Intelligent Automation Engine: schedule/event/manual triggers, chained actions, executions |
+| `@jataqi/pki` | `pki` | – | PRX Part C — X.509 CA (root/intermediate), Registration Authority (domain validation), OIDC-lite Identity Provider |
+| `@jataqi/fx` | `fx` | memory, universal-wallet | KARIS FX (Phase 6) — rate engine, cross rates, conversions, trend/volatility analytics |
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
 | `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |

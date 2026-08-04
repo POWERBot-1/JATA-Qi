@@ -59,6 +59,8 @@ import type { LinkIntelligenceModule } from '@jataqi/link-intelligence';
 import type { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
 import type { SearchModule } from '@jataqi/search';
 import type { AutomationModule } from '@jataqi/automation';
+import type { FxModule } from '@jataqi/fx';
+import type { PkiModule } from '@jataqi/pki';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -126,6 +128,8 @@ export class ApiGatewayModule implements IModule {
   private multimodalIntel?: MultimodalIntelligenceModule;
   private search?: SearchModule;
   private automation?: AutomationModule;
+  private fx?: FxModule;
+  private pki?: PkiModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -200,6 +204,8 @@ export class ApiGatewayModule implements IModule {
     this.multimodalIntel = this.tryModule<MultimodalIntelligenceModule>('multimodal-intelligence');
     this.search = this.tryModule<SearchModule>('search');
     this.automation = this.tryModule<AutomationModule>('automation');
+    this.fx = this.tryModule<FxModule>('fx');
+    this.pki = this.tryModule<PkiModule>('pki');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -654,6 +660,33 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/automations/status', auth('automation:write', (req) => this.automationsStatus(req)));
     route('POST', '/automations/remove', auth('automation:write', (req) => this.automationsRemove(req)));
     route('GET', '/automations/stats', auth('automation:read', () => this.automationsStats()));
+    // Phase 6 — KARIS FX foreign exchange intelligence.
+    route('POST', '/fx/rates', auth('finance:write', (req) => this.fxRatesSet(req)));
+    route('GET', '/fx/rates', auth('finance:read', (req) => this.fxRatesList(req)));
+    route('GET', '/fx/rate', auth('finance:read', (req) => this.fxRateGet(req)));
+    route('POST', '/fx/convert', auth('finance:read', (req) => this.fxConvert(req)));
+    route('GET', '/fx/history', auth('finance:read', (req) => this.fxHistory(req)));
+    route('GET', '/fx/analytics', auth('finance:read', (req) => this.fxAnalytics(req)));
+    route('GET', '/fx/currencies', auth('finance:read', () => this.fxCurrencies()));
+    route('GET', '/fx/stats', auth('finance:read', () => this.fxStats()));
+    // PRX Part C — PKI: CA + Registration Authority + Identity Provider.
+    route('GET', '/pki/status', auth('pki:read', () => this.pkiStatus()));
+    route('POST', '/pki/ca/root', auth('pki:write', (req) => this.pkiCaRoot(req)));
+    route('POST', '/pki/ca/intermediate', auth('pki:write', (req) => this.pkiCaIntermediate(req)));
+    route('GET', '/pki/cas', auth('pki:read', () => this.pkiCas()));
+    route('POST', '/pki/certificates', auth('pki:write', (req) => this.pkiCertificatesIssue(req)));
+    route('GET', '/pki/certificates', auth('pki:read', (req) => this.pkiCertificatesList(req)));
+    route('POST', '/pki/certificates/revoke', auth('pki:write', (req) => this.pkiCertificatesRevoke(req)));
+    route('GET', '/pki/crl', auth('pki:read', (req) => this.pkiCrl(req)));
+    route('POST', '/pki/ra/requests', auth('pki:write', (req) => this.pkiRaCreate(req)));
+    route('POST', '/pki/ra/validate', auth('pki:write', (req) => this.pkiRaValidate(req)));
+    route('POST', '/pki/ra/approve', auth('pki:write', (req) => this.pkiRaApprove(req)));
+    route('POST', '/pki/idp/clients', auth('pki:write', (req) => this.pkiIdpClients(req)));
+    route('POST', '/pki/idp/authorize', auth('pki:read', (req) => this.pkiIdpAuthorize(req)));
+    route('POST', '/pki/idp/token', (req) => this.pkiIdpToken(req));
+    route('POST', '/pki/idp/introspect', (req) => this.pkiIdpIntrospect(req));
+    route('GET', '/pki/idp/userinfo', auth('pki:read', (req) => this.pkiIdpUserinfo(req)));
+    route('GET', '/pki/idp/discovery', () => this.pkiIdpDiscovery());
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -959,6 +992,7 @@ export class ApiGatewayModule implements IModule {
       'policy-governance', 'api-gateway', 'memory', 'learning', 'ai-learning',
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
+      'fx', 'pki',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -2659,6 +2693,243 @@ export class ApiGatewayModule implements IModule {
     return json(200, { stats: this.automation.stats() });
   }
 
+  // --- Phase 6 — KARIS FX ------------------------------------------------
+
+  private fxRatesSet(req: GatewayRequest): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.base !== 'string' || typeof b.quote !== 'string' || typeof b.bid !== 'number')
+      return json(400, { error: 'fields "base", "quote", and "bid" are required' });
+    const quote = this.fx.setRate({
+      base: b.base, quote: b.quote, bid: b.bid,
+      ...(typeof b.ask === 'number' ? { ask: b.ask } : {}),
+      ...(typeof b.source === 'string' ? { source: b.source } : {}),
+    });
+    return json(201, { quote });
+  }
+
+  private fxRatesList(_req: GatewayRequest): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    return json(200, { rates: this.fx.listRates(), count: this.fx.listRates().length });
+  }
+
+  private fxRateGet(req: GatewayRequest): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    if (!req.query.base || !req.query.quote) return json(400, { error: 'query parameters "base" and "quote" are required' });
+    const quote = this.fx.getRate(req.query.base, req.query.quote);
+    return quote ? json(200, { quote }) : json(404, { error: `no rate for ${req.query.base}/${req.query.quote}` });
+  }
+
+  private fxConvert(req: GatewayRequest): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.from !== 'string' || typeof b.to !== 'string' || b.amount === undefined)
+      return json(400, { error: 'fields "from", "to", and "amount" (integer string) are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number' });
+    const result = this.fx.convert({
+      from: b.from, to: b.to, amount,
+      ...(typeof b.margin === 'number' ? { margin: b.margin } : {}),
+      ...(typeof b.toDecimals === 'number' ? { toDecimals: b.toDecimals } : {}),
+    });
+    return json(200, { result: jsonSafe(result) });
+  }
+
+  private fxHistory(req: GatewayRequest): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    if (!req.query.pair) return json(400, { error: 'query parameter "pair" (e.g. USD/KES) is required' });
+    const points = this.fx.historyFor(req.query.pair, {
+      ...(req.query.fromTs ? { fromTs: Number(req.query.fromTs) } : {}),
+      ...(req.query.toTs ? { toTs: Number(req.query.toTs) } : {}),
+      ...(req.query.limit ? { limit: Number(req.query.limit) } : {}),
+    });
+    return json(200, { pair: req.query.pair, points, count: points.length });
+  }
+
+  private fxAnalytics(req: GatewayRequest): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    if (!req.query.pair) return json(400, { error: 'query parameter "pair" is required' });
+    const analytics = this.fx.analyze(req.query.pair, {
+      ...(req.query.windowMs ? { windowMs: Number(req.query.windowMs) } : {}),
+    });
+    return analytics ? json(200, { analytics }) : json(404, { error: `no history for ${req.query.pair}` });
+  }
+
+  private fxCurrencies(): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    return json(200, { currencies: this.fx.currencies() });
+  }
+
+  private fxStats(): GatewayResponse {
+    if (!this.fx) return json(501, { error: 'fx module not registered' });
+    return json(200, { stats: this.fx.stats(), anchor: this.fx.anchorCurrency });
+  }
+
+  // --- PRX Part C — PKI -----------------------------------------------
+
+  private pkiStatus(): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    return json(200, { stats: this.pki.stats() });
+  }
+
+  private pkiCaRoot(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    const subject = parseDn(b.subject);
+    if (!subject) return json(400, { error: 'field "subject" must be an array of {oid, value} or an object map' });
+    const ca = this.pki.createRootCa(subject);
+    return json(201, { ca: { id: ca.id, role: ca.role, subject: ca.subject, certDer: ca.certDer } });
+  }
+
+  private pkiCaIntermediate(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    const subject = parseDn(b.subject);
+    if (!subject || typeof b.issuerId !== 'string') return json(400, { error: 'fields "subject" and "issuerId" are required' });
+    const ca = this.pki.createIntermediateCa(subject, b.issuerId);
+    return json(201, { ca: { id: ca.id, role: ca.role, issuerId: ca.issuerId, subject: ca.subject, certDer: ca.certDer } });
+  }
+
+  private pkiCas(): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const cas = this.pki.ca.listCas();
+    return json(200, { cas: cas.map((c) => ({ id: c.id, role: c.role, subject: c.subject, issuerId: c.issuerId, createdAt: c.createdAt })), count: cas.length });
+  }
+
+  private pkiCertificatesIssue(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.caId !== 'string' || !Array.isArray(b.subject) || !b.subjectPublicKeyJwk || typeof b.subjectPublicKeyJwk !== 'object')
+      return json(400, { error: 'fields "caId", "subject" (array), and "subjectPublicKeyJwk" are required' });
+    const cert = this.pki.issueCertificate({
+      caId: b.caId,
+      subject: (b.subject as Array<Record<string, unknown>>).map((s) => ({ oid: String(s.oid), value: String(s.value) })),
+      subjectPublicKeyJwk: b.subjectPublicKeyJwk as Record<string, string>,
+      ...(Array.isArray(b.sanDnsNames) ? { sanDnsNames: b.sanDnsNames.map(String) } : {}),
+      ...(typeof b.validityDays === 'number' ? { validityDays: b.validityDays } : {}),
+      ...(Array.isArray(b.extendedKeyUsage) ? { extendedKeyUsage: b.extendedKeyUsage.map(String) } : {}),
+    });
+    return json(201, {
+      certificate: {
+        id: cert.id, caId: cert.caId, serialNumber: cert.serialNumber.toString(),
+        subject: cert.subject, sanDnsNames: cert.sanDnsNames,
+        notAfter: cert.notAfter.toISOString(), certDer: cert.certDer,
+      },
+    });
+  }
+
+  private pkiCertificatesList(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const status = req.query.status as 'valid' | 'revoked' | 'expired' | undefined;
+    const certs = status ? this.pki.ca.list(status) : this.pki.ca.list();
+    const ca = this.pki.ca;
+    return json(200, { certificates: certs.map((c) => ({ id: c.id, caId: c.caId, serialNumber: c.serialNumber.toString(), subject: c.subject, status: ca.effectiveStatus(c) })), count: certs.length });
+  }
+
+  private pkiCertificatesRevoke(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const cert = this.pki.revokeCertificate(b.id, typeof b.reason === 'string' ? b.reason : undefined);
+    return json(200, { certificate: { id: cert.id, status: cert.status, revokedAt: cert.revokedAt, revocationReason: cert.revocationReason } });
+  }
+
+  private pkiCrl(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    if (!req.query.caId) return json(400, { error: 'query parameter "caId" is required' });
+    const crl = this.pki.ca.latestCrl(req.query.caId);
+    return crl ? json(200, { crl: { der: crl.der, number: crl.number.toString(), revokedCount: crl.revokedCount, thisUpdate: crl.thisUpdate.toISOString(), nextUpdate: crl.nextUpdate.toISOString() } }) : json(404, { error: 'no CRL for this CA yet' });
+  }
+
+  private pkiRaCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (!Array.isArray(b.domains) || !b.publicKeyJwk || typeof b.publicKeyJwk !== 'object' || (b.method !== 'dns-txt' && b.method !== 'http-01' && b.method !== 'email'))
+      return json(400, { error: 'fields "domains" (array), "publicKeyJwk", and "method" (dns-txt|http-01|email) are required' });
+    const request = this.pki.createRequest({
+      domains: b.domains.map(String),
+      subject: [{ oid: '2.5.4.3', value: String(b.domains[0]) }],
+      publicKeyJwk: b.publicKeyJwk as Record<string, string>,
+      method: b.method,
+      requestedBy: req.principal?.username ?? 'api',
+    });
+    return json(201, { request: { id: request.id, domains: request.domains, method: request.method, status: request.status, proof: this.pki.ra.proofLocation(request) } });
+  }
+
+  private pkiRaValidate(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.location !== 'string' || typeof b.token !== 'string')
+      return json(400, { error: 'fields "id", "location", and "token" are required' });
+    const request = this.pki.ra.validate(b.id, { location: b.location, token: b.token });
+    return request ? json(200, { request: { id: request.id, status: request.status, validation: request.validation } }) : json(404, { error: 'request not found' });
+  }
+
+  private pkiRaApprove(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const request = this.pki.ra.approve(b.id, req.principal?.username ?? 'api');
+    return request ? json(200, { request: { id: request.id, status: request.status } }) : json(404, { error: 'request not found or not validated' });
+  }
+
+  private pkiIdpClients(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || !Array.isArray(b.redirectUris))
+      return json(400, { error: 'fields "name" and "redirectUris" (array) are required' });
+    const client = this.pki.registerIdpClient({
+      name: b.name,
+      redirectUris: b.redirectUris.map(String),
+      ...(Array.isArray(b.scopes) ? { scopes: b.scopes.map(String) } : {}),
+    });
+    return json(201, { clientId: client.clientId, clientSecret: client.clientSecret, redirectUris: client.redirectUris, scopes: client.scopes });
+  }
+
+  private pkiIdpAuthorize(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.clientId !== 'string' || typeof b.redirectUri !== 'string' || typeof b.userId !== 'string')
+      return json(400, { error: 'fields "clientId", "redirectUri", and "userId" are required' });
+    const { code, redirectUri } = this.pki.idpAuthorize({ clientId: b.clientId, redirectUri: b.redirectUri, userId: b.userId, ...(typeof b.scope === 'string' ? { scope: b.scope } : {}) });
+    return json(200, { code, redirectUri });
+  }
+
+  private pkiIdpToken(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.code !== 'string' || typeof b.clientId !== 'string' || typeof b.clientSecret !== 'string' || typeof b.redirectUri !== 'string')
+      return json(400, { error: 'fields "code", "clientId", "clientSecret", and "redirectUri" are required' });
+    try {
+      const tokens = this.pki.idpToken({ code: b.code, clientId: b.clientId, clientSecret: b.clientSecret, redirectUri: b.redirectUri });
+      return json(200, tokens);
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private pkiIdpIntrospect(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.token !== 'string') return json(400, { error: 'field "token" is required' });
+    return json(200, this.pki.idp.introspect(b.token));
+  }
+
+  private pkiIdpUserinfo(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    // The IdP access token travels in x-idp-token (the Authorization header
+    // carries the platform session used for the route's RBAC check).
+    const token = (req.headers['x-idp-token'] as string | undefined) ?? this.bearer(req);
+    if (!token) return json(401, { error: 'x-idp-token header required' });
+    const info = this.pki.idpUserinfo(token);
+    return info ? json(200, info) : json(401, { error: 'invalid or expired token' });
+  }
+
+  private pkiIdpDiscovery(): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    return json(200, this.pki.idp.discovery());
+  }
+
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.disasterRecovery) return json(501, { error: 'disaster-recovery module not registered' });
     const schedulers = this.disasterRecovery.listSchedulers();
@@ -3585,6 +3856,33 @@ function toBigInt(v: unknown): bigint | undefined {
   if (typeof v === 'bigint') return v;
   if (typeof v === 'number') return Number.isInteger(v) ? BigInt(v) : undefined;
   if (typeof v === 'string' && /^-?\d+$/.test(v)) return BigInt(v);
+  return undefined;
+}
+
+/** Parse a DN from an array of {oid,value} or an object map. */
+function parseDn(v: unknown): Array<{ oid: string; value: string }> | undefined {
+  if (Array.isArray(v)) {
+    const out: Array<{ oid: string; value: string }> = [];
+    for (const item of v) {
+      if (!item || typeof item !== 'object') return undefined;
+      const rec = item as Record<string, unknown>;
+      if (typeof rec.oid !== 'string' || typeof rec.value !== 'string') return undefined;
+      out.push({ oid: rec.oid, value: rec.value });
+    }
+    return out.length > 0 ? out : undefined;
+  }
+  if (v && typeof v === 'object') {
+    const map: Record<string, string> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val !== 'string') return undefined;
+      map[k] = val;
+    }
+    const OID_BY_NAME: Record<string, string> = {
+      CN: '2.5.4.3', C: '2.5.4.6', L: '2.5.4.7', ST: '2.5.4.8',
+      O: '2.5.4.10', OU: '2.5.4.11', emailAddress: '1.2.840.113549.1.9.1',
+    };
+    return Object.entries(map).map(([k, value]) => ({ oid: OID_BY_NAME[k.toUpperCase()] ?? k, value }));
+  }
   return undefined;
 }
 

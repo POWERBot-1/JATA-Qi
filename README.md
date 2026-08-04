@@ -52,6 +52,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/knowledge-graph` | Entities, relations, SPO triple store, BFS traversal, heuristic extractor, Graph-RAG fusion |
 | `@jataqi/agent-runtime` | Tool system, ReAct agent loop, Echo/Scripted/OpenAI LLMs, built-in knowledge+graph tools, session memory |
 | `@jataqi/automation` | **SOMA AI (Phase 6)** — Intelligent Automation Engine: schedule/event/manual triggers, chained actions (memory, notifications, knowledge, agents, tools), concurrency caps, timeouts, execution history |
+| `@jataqi/pki` | **PRX Part C** — X.509 certificate authority (root/intermediate), Registration Authority with CA/B Forum domain validation, CRLs, OIDC-lite Identity Provider (JWT ID tokens, JWKS, introspection) |
+| `@jataqi/fx` | **KARIS FX (Phase 6)** — Foreign Exchange Intelligence: rate engine, cross rates, bid/ask spreads, conversions with margin, history, trend + volatility analytics |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -168,6 +170,11 @@ node packages/cli/dist/src/index.js brands list
 node packages/cli/dist/src/index.js automation create "nightly digest" --trigger schedule --interval 3600000
 node packages/cli/dist/src/index.js automation list
 node packages/cli/dist/src/index.js automation run <id>
+node packages/cli/dist/src/index.js fx set USD KES 128.5 --ask 129.0
+node packages/cli/dist/src/index.js fx convert USD KES 10000
+node packages/cli/dist/src/index.js pki root "JATA Qi Root"
+node packages/cli/dist/src/index.js pki issue <caId> api.example.com --san api.example.com
+node packages/cli/dist/src/index.js pki client "my app" https://app.example.com/cb
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -276,6 +283,11 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | POST | `/search/history` | `search:read` | Record a search into memory history |
 | GET | `/automations` · `/automation?id=` · `/automations/executions` · `/automations/stats` | `automation:read` | SOMA AI automation reads |
 | POST | `/automations` · `/automations/run` · `/automations/status` · `/automations/remove` | `automation:write` | SOMA AI automation management + manual runs |
+| POST | `/fx/rates` · `/fx/convert` | `finance:write` / `finance:read` | KARIS FX rates + conversion |
+| GET | `/fx/rates` · `/fx/rate` · `/fx/history` · `/fx/analytics` · `/fx/currencies` · `/fx/stats` | `finance:read` | KARIS FX reads |
+| GET | `/pki/status` · `/pki/cas` · `/pki/certificates` · `/pki/crl` · `/pki/idp/discovery` | `pki:read` | PKI reads |
+| POST | `/pki/ca/root` · `/pki/ca/intermediate` · `/pki/certificates` · `/pki/certificates/revoke` · `/pki/ra/*` · `/pki/idp/clients` · `/pki/idp/authorize` | `pki:write` / `pki:read` | PKI operations |
+| POST | `/pki/idp/token` · `/pki/idp/introspect` | – | OIDC token + introspection endpoints |
 
 ### Security model
 
@@ -373,6 +385,8 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Universal Search & Discovery** (Phase 6 — federated search across knowledge, memory, graph, conversations, and tools with recency decay, learned personalization boosts, facets, suggestions, and search history)
 - ✅ **SOMA AI — Intelligent Automation Engine** (Phase 6 — scheduled / bus-event / manual automations with chained platform actions, concurrency caps, timeouts, execution history, stats)
 - ✅ **Self-Evolution × CLP 4/5** (Phase 7 extension — evolution proposals from concluded prompt experiments; distillation progress observations)
+- ✅ **PKI — PRX Part C** (X.509 CA root/intermediate hierarchy verified by OpenSSL, RFC 5280 DER certificates, revocation + CRLs, Registration Authority with dns-txt/http-01/email validation, OIDC-lite Identity Provider with JWT ID tokens + JWKS)
+- ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
