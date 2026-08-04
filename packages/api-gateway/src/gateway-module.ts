@@ -47,6 +47,16 @@ import type { RegistryModule } from '@jataqi/registry';
 import type { RegistrarModule } from '@jataqi/registrar';
 import type { ModelRuntimeModule } from '@jataqi/model-runtime';
 import type { AiSafetyModule } from '@jataqi/ai-safety';
+import type { DigitalMemoryModule } from '@jataqi/memory';
+import type { ContinuousLearningModule } from '@jataqi/learning';
+import type { AiLearningModule } from '@jataqi/ai-learning';
+import type { DesignSystemModule } from '@jataqi/design-system';
+import type { BrandingModule } from '@jataqi/branding';
+import type { UniversalWalletModule } from '@jataqi/universal-wallet';
+import type { CryptoModule } from '@jataqi/crypto';
+import type { DashboardModule } from '@jataqi/dashboard';
+import type { LinkIntelligenceModule } from '@jataqi/link-intelligence';
+import type { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
 import type { GatewayHandle, GatewayOptions, GatewayRequest, GatewayResponse, ResolvedCorsPolicy, RouteHandler, TlsConfig } from './types.js';
@@ -101,6 +111,16 @@ export class ApiGatewayModule implements IModule {
   private dns?: DnsModule;
   private registry?: RegistryModule;
   private registrar?: RegistrarModule;
+  private memory?: DigitalMemoryModule;
+  private learning?: ContinuousLearningModule;
+  private aiLearning?: AiLearningModule;
+  private designSystem?: DesignSystemModule;
+  private branding?: BrandingModule;
+  private wallet?: UniversalWalletModule;
+  private crypto?: CryptoModule;
+  private dashboard?: DashboardModule;
+  private linkIntel?: LinkIntelligenceModule;
+  private multimodalIntel?: MultimodalIntelligenceModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -163,6 +183,16 @@ export class ApiGatewayModule implements IModule {
     this.dns = this.tryModule<DnsModule>('dns');
     this.registry = this.tryModule<RegistryModule>('registry');
     this.registrar = this.tryModule<RegistrarModule>('registrar');
+    this.memory = this.tryModule<DigitalMemoryModule>('memory');
+    this.learning = this.tryModule<ContinuousLearningModule>('learning');
+    this.aiLearning = this.tryModule<AiLearningModule>('ai-learning');
+    this.designSystem = this.tryModule<DesignSystemModule>('design-system');
+    this.branding = this.tryModule<BrandingModule>('branding');
+    this.wallet = this.tryModule<UniversalWalletModule>('universal-wallet');
+    this.crypto = this.tryModule<CryptoModule>('crypto');
+    this.dashboard = this.tryModule<DashboardModule>('dashboard');
+    this.linkIntel = this.tryModule<LinkIntelligenceModule>('link-intelligence');
+    this.multimodalIntel = this.tryModule<MultimodalIntelligenceModule>('multimodal-intelligence');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -500,6 +530,96 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/registrar/register', auth('commerce:read', (req) => this.registrarRegister(req)));
     route('POST', '/registrar/renew', auth('commerce:read', (req) => this.registrarRenew(req)));
     route('GET', '/registrar/portfolio', auth('commerce:read', (req) => this.registrarPortfolio(req)));
+    // Digital Memory Engine (CLP Phase 1) — governed platform-event memory.
+    route('POST', '/memory', auth('memory:write', (req) => this.memoryRecord(req)));
+    route('GET', '/memory', auth('memory:read', (req) => this.memoryQuery(req)));
+    route('GET', '/memory/stats', auth('memory:read', (req) => this.memoryStats(req)));
+    route('GET', '/memory/export', auth('memory:read', (req) => this.memoryExport(req)));
+    route('POST', '/memory/delete', auth('memory:write', (req) => this.memoryDelete(req)));
+    route('POST', '/memory/policy', auth('memory:write', (req) => this.memoryPolicy(req)));
+    route('POST', '/memory/sweep', auth('memory:write', (req) => this.memorySweep(req)));
+    // Continuous Learning (CLP Phase 2/6) — insights, recommendations, personalization.
+    route('POST', '/learning/analyze', auth('learning:read', (req) => this.learningAnalyze(req)));
+    route('GET', '/learning/insights', auth('learning:read', (req) => this.learningInsights(req)));
+    route('GET', '/learning/recommendations', auth('learning:read', (req) => this.learningRecommendations(req)));
+    route('POST', '/learning/recommendation/review', auth('learning:write', (req) => this.learningReview(req)));
+    route('POST', '/learning/recommendation/deploy', auth('learning:write', (req) => this.learningDeploy(req)));
+    route('POST', '/learning/preference', auth('learning:write', (req) => this.learningPreference(req)));
+    route('GET', '/learning/adaptation', auth('learning:read', (req) => this.learningAdaptation(req)));
+    // AI Learning Platform (CLP Phase 3) — prompt registry, quality, drift.
+    route('GET', '/ai-learning/prompts', auth('learning:read', (req) => this.aiPromptsList(req)));
+    route('POST', '/ai-learning/prompts', auth('learning:write', (req) => this.aiPromptsCreate(req)));
+    route('POST', '/ai-learning/prompts/version', auth('learning:write', (req) => this.aiPromptsVersion(req)));
+    route('POST', '/ai-learning/prompts/approve', auth('learning:write', (req) => this.aiPromptsApprove(req)));
+    route('POST', '/ai-learning/prompts/activate', auth('learning:write', (req) => this.aiPromptsActivate(req)));
+    route('GET', '/ai-learning/prompts/render', auth('learning:read', (req) => this.aiPromptsRender(req)));
+    route('POST', '/ai-learning/outcomes', auth('learning:write', (req) => this.aiOutcomesRecord(req)));
+    route('GET', '/ai-learning/metrics', auth('learning:read', (req) => this.aiMetrics(req)));
+    route('GET', '/ai-learning/benchmarks', auth('learning:read', () => this.aiBenchmarks()));
+    route('POST', '/ai-learning/drift', auth('learning:read', () => this.aiDrift()));
+    // Design system — universal design language (tokens, adaptive theming, CSS).
+    route('GET', '/design-system/tokens', auth('design:read', (req) => this.designTokens(req)));
+    route('GET', '/design-system/css', auth('design:read', (req) => this.designCss(req)));
+    route('POST', '/design-system/mode', auth('design:write', (req) => this.designMode(req)));
+    route('POST', '/design-system/adaptive', auth('design:write', (req) => this.designAdaptive(req)));
+    // Branding — brand identity for the 15 JATA Qi products.
+    route('GET', '/branding/products', auth('design:read', () => this.brandingProducts()));
+    route('GET', '/branding/brand', auth('design:read', (req) => this.brandingGet(req)));
+    route('POST', '/branding/logo', auth('design:write', (req) => this.brandingLogo(req)));
+    route('POST', '/branding/app-icon', auth('design:write', (req) => this.brandingAppIcon(req)));
+    route('POST', '/branding/splash', auth('design:write', (req) => this.brandingSplash(req)));
+    route('POST', '/branding/marketing', auth('design:write', (req) => this.brandingMarketing(req)));
+    route('POST', '/branding/business-card', auth('design:write', (req) => this.brandingBusinessCard(req)));
+    // Universal Wallet (Phase 2) — double-entry wallet engine.
+    route('POST', '/wallet/open', auth('finance:write', (req) => this.walletOpen(req)));
+    route('GET', '/wallet', auth('finance:read', (req) => this.walletList(req)));
+    route('GET', '/wallet/currencies', auth('finance:read', () => this.walletCurrencies()));
+    route('GET', '/wallet/balance', auth('finance:read', (req) => this.walletBalance(req)));
+    route('GET', '/wallet/ledger', auth('finance:read', (req) => this.walletLedger(req)));
+    route('GET', '/wallet/summary', auth('finance:read', () => this.walletSummary()));
+    route('POST', '/wallet/deposit', auth('finance:write', (req) => this.walletDeposit(req)));
+    route('POST', '/wallet/withdraw', auth('finance:write', (req) => this.walletWithdraw(req)));
+    route('POST', '/wallet/transfer', auth('finance:write', (req) => this.walletTransfer(req)));
+    route('POST', '/wallet/status', auth('finance:write', (req) => this.walletStatus(req)));
+    // KRT Digital Asset Platform (Phase 4) — tokens, NFTs, staking, exchange, custody.
+    route('POST', '/crypto/assets', auth('finance:write', (req) => this.cryptoAssetsRegister(req)));
+    route('GET', '/crypto/assets', auth('finance:read', (req) => this.cryptoAssetsList(req)));
+    route('POST', '/crypto/mint', auth('finance:write', (req) => this.cryptoMint(req)));
+    route('POST', '/crypto/burn', auth('finance:write', (req) => this.cryptoBurn(req)));
+    route('POST', '/crypto/transfer', auth('finance:write', (req) => this.cryptoTransfer(req)));
+    route('GET', '/crypto/balance', auth('finance:read', (req) => this.cryptoBalance(req)));
+    route('POST', '/crypto/nft/mint', auth('finance:write', (req) => this.cryptoNftMint(req)));
+    route('POST', '/crypto/nft/transfer', auth('finance:write', (req) => this.cryptoNftTransfer(req)));
+    route('POST', '/crypto/stake', auth('finance:write', (req) => this.cryptoStake(req)));
+    route('POST', '/crypto/quote', auth('finance:read', (req) => this.cryptoQuote(req)));
+    route('POST', '/crypto/swap', auth('finance:write', (req) => this.cryptoSwap(req)));
+    route('POST', '/crypto/custody', auth('finance:write', (req) => this.cryptoCustody(req)));
+    route('POST', '/crypto/contracts', auth('finance:write', (req) => this.cryptoContracts(req)));
+    route('GET', '/crypto/summary', auth('finance:read', () => this.cryptoSummary()));
+    // Adaptive Dashboard (Phase 5 step 3) — widget framework + layout + AI personalization.
+    route('POST', '/dashboard/layouts', auth('dashboard:write', (req) => this.dashboardLayoutsCreate(req)));
+    route('GET', '/dashboard/layouts', auth('dashboard:read', (req) => this.dashboardLayoutsList(req)));
+    route('POST', '/dashboard/adapt', auth('dashboard:write', (req) => this.dashboardAdapt(req)));
+    route('POST', '/dashboard/widgets', auth('dashboard:write', (req) => this.dashboardWidgetsAdd(req)));
+    route('GET', '/dashboard/widgets', auth('dashboard:read', (req) => this.dashboardWidgetsList(req)));
+    route('POST', '/dashboard/widgets/move', auth('dashboard:write', (req) => this.dashboardWidgetsMove(req)));
+    route('POST', '/dashboard/widgets/resize', auth('dashboard:write', (req) => this.dashboardWidgetsResize(req)));
+    route('POST', '/dashboard/auto-arrange', auth('dashboard:write', (req) => this.dashboardAutoArrange(req)));
+    route('GET', '/dashboard/analytics', auth('dashboard:read', () => this.dashboardAnalytics()));
+    // Universal Link Intelligence — classify, extract, gap analysis, proposals.
+    route('POST', '/link/process', auth('knowledge:write', (req) => this.linkProcess(req)));
+    route('POST', '/link/process-batch', auth('knowledge:write', (req) => this.linkProcessBatch(req)));
+    route('GET', '/link/results', auth('knowledge:read', () => this.linkResults()));
+    route('GET', '/link/summary', auth('knowledge:read', () => this.linkSummary()));
+    route('POST', '/link/proposals/validate', auth('knowledge:write', (req) => this.linkValidate(req)));
+    route('POST', '/link/evolve', auth('knowledge:write', (req) => this.linkEvolve(req)));
+    // Universal Multimodal Intelligence — acquisition framework for every modality.
+    route('POST', '/multimodal/sources', auth('knowledge:write', (req) => this.multimodalSourcesRegister(req)));
+    route('GET', '/multimodal/sources', auth('knowledge:read', (req) => this.multimodalSourcesList(req)));
+    route('POST', '/multimodal/sources/authorize', auth('knowledge:write', (req) => this.multimodalSourcesAuthorize(req)));
+    route('POST', '/multimodal/sources/revoke', auth('knowledge:write', (req) => this.multimodalSourcesRevoke(req)));
+    route('POST', '/multimodal/acquire', auth('knowledge:write', (req) => this.multimodalAcquire(req)));
+    route('POST', '/multimodal/acquire-batch', auth('knowledge:write', (req) => this.multimodalAcquireBatch(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -802,7 +922,9 @@ export class ApiGatewayModule implements IModule {
       'model-registry', 'scheduler', 'compute', 'robotics', 'digital-twin',
       'tool-intelligence', 'readiness', 'provenance', 'commerce',
       'organizations', 'notifications', 'policies', 'feature-flags', 'privacy',
-      'policy-governance', 'api-gateway',
+      'policy-governance', 'api-gateway', 'memory', 'learning', 'ai-learning',
+      'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
+      'link-intelligence', 'multimodal-intelligence',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -1463,6 +1585,801 @@ export class ApiGatewayModule implements IModule {
     const reg = this.registrar.getRegistrar(registrarId);
     if (!reg) return json(404, { error: 'registrar not found' });
     return json(200, { domains: reg.portfolio(registrantId) });
+  }
+
+  // --- Digital Memory Engine (CLP Phase 1) --------------------------------
+
+  private async memoryRecord(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.category !== 'string' || typeof b.summary !== 'string')
+      return json(400, { error: 'fields "category" and "summary" are required' });
+    const result = await this.memory.record({
+      category: b.category,
+      summary: b.summary,
+      ...(typeof b.userId === 'string' ? { userId: b.userId } : {}),
+      ...(typeof b.orgId === 'string' ? { orgId: b.orgId } : {}),
+      ...(typeof b.sessionId === 'string' ? { sessionId: b.sessionId } : {}),
+      ...(typeof b.correlationId === 'string' ? { correlationId: b.correlationId } : {}),
+      ...(b.data && typeof b.data === 'object' ? { data: b.data as Record<string, unknown> } : {}),
+      ...(Array.isArray(b.tags) ? { tags: b.tags as string[] } : {}),
+      ...(typeof b.sensitivity === 'string' ? { sensitivity: b.sensitivity as never } : {}),
+      ...(typeof b.retentionDays === 'number' ? { retentionDays: b.retentionDays } : {}),
+    });
+    return result.recorded ? json(201, { event: result.event }) : json(202, { recorded: false, reason: result.reason });
+  }
+
+  private memoryQuery(req: GatewayRequest): GatewayResponse {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    const q = req.query;
+    const events = this.memory.query({
+      ...(q.orgId ? { orgId: q.orgId } : {}),
+      ...(q.category ? { category: q.category } : {}),
+      ...(q.userId ? { userId: q.userId } : {}),
+      ...(q.sessionId ? { sessionId: q.sessionId } : {}),
+      ...(q.text ? { text: q.text } : {}),
+      ...(q.fromTs ? { fromTs: Number(q.fromTs) } : {}),
+      ...(q.toTs ? { toTs: Number(q.toTs) } : {}),
+      ...(q.limit ? { limit: Number(q.limit) } : {}),
+    });
+    return json(200, { events, count: events.length });
+  }
+
+  private memoryStats(req: GatewayRequest): GatewayResponse {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    return json(200, { stats: this.memory.stats(req.query.orgId) });
+  }
+
+  private memoryExport(req: GatewayRequest): GatewayResponse {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    const events = this.memory.exportFor({ userId: req.query.userId, orgId: req.query.orgId });
+    return json(200, { events, count: events.length });
+  }
+
+  private async memoryDelete(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.userId !== 'string' && typeof b.orgId !== 'string')
+      return json(400, { error: 'at least one of "userId" or "orgId" is required (right to delete)' });
+    const deleted = await this.memory.deleteForSubject({ userId: b.userId as string | undefined, orgId: b.orgId as string | undefined });
+    return json(200, { deleted });
+  }
+
+  private async memoryPolicy(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.orgId !== 'string') return json(400, { error: 'field "orgId" is required' });
+    this.memory.setPolicy({
+      orgId: b.orgId,
+      ...(Array.isArray(b.allowedCategories) ? { allowedCategories: b.allowedCategories as string[] } : {}),
+      ...(Array.isArray(b.blockedCategories) ? { blockedCategories: b.blockedCategories as string[] } : {}),
+      ...(Array.isArray(b.consentRequiredCategories) ? { consentRequiredCategories: b.consentRequiredCategories as string[] } : {}),
+      ...(typeof b.retentionDays === 'number' ? { retentionDays: b.retentionDays } : {}),
+      ...(typeof b.disabled === 'boolean' ? { disabled: b.disabled } : {}),
+    });
+    return json(200, { ok: true });
+  }
+
+  private async memorySweep(_req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.memory) return json(501, { error: 'memory module not registered' });
+    const swept = await this.memory.sweep();
+    return json(200, { swept });
+  }
+
+  // --- Continuous Learning + Personalization (CLP Phase 2/6) --------------
+
+  private async learningAnalyze(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const b = this.asObject(req.body);
+    const result = await this.learning.analyze(typeof b.orgId === 'string' ? b.orgId : undefined);
+    return json(200, result);
+  }
+
+  private learningInsights(req: GatewayRequest): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const insights = this.learning.getInsights({ orgId: req.query.orgId });
+    return json(200, { insights, count: insights.length });
+  }
+
+  private learningRecommendations(req: GatewayRequest): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const recommendations = this.learning.getRecommendations({
+      ...(req.query.orgId ? { orgId: req.query.orgId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { recommendations, count: recommendations.length });
+  }
+
+  private learningReview(req: GatewayRequest): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || (b.decision !== 'accepted' && b.decision !== 'rejected') || typeof b.reviewer !== 'string')
+      return json(400, { error: 'fields "id", "decision" (accepted|rejected), and "reviewer" are required' });
+    const rec = this.learning.reviewRecommendation(b.id, b.decision, b.reviewer);
+    return rec ? json(200, { recommendation: rec }) : json(404, { error: 'recommendation not found' });
+  }
+
+  private learningDeploy(req: GatewayRequest): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const rec = this.learning.deployRecommendation(b.id);
+    return rec ? json(200, { recommendation: rec }) : json(404, { error: 'recommendation not found' });
+  }
+
+  private learningPreference(req: GatewayRequest): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.userId !== 'string' || typeof b.key !== 'string' || b.value === undefined)
+      return json(400, { error: 'fields "userId", "key", and "value" are required' });
+    this.learning.setPreference(b.userId, b.key as never, b.value, typeof b.orgId === 'string' ? b.orgId : undefined);
+    return json(200, { ok: true });
+  }
+
+  private learningAdaptation(req: GatewayRequest): GatewayResponse {
+    if (!this.learning) return json(501, { error: 'learning module not registered' });
+    if (!req.query.userId) return json(400, { error: 'query parameter "userId" is required' });
+    const adaptation = this.learning.adapt(req.query.userId);
+    return adaptation ? json(200, { adaptation }) : json(200, { adaptation: null });
+  }
+
+  // --- AI Learning Platform (CLP Phase 3) ---------------------------------
+
+  private aiPromptsList(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const prompts = this.aiLearning.listPrompts(req.query.category);
+    return json(200, { prompts, count: prompts.length });
+  }
+
+  private aiPromptsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.content !== 'string' || typeof b.category !== 'string')
+      return json(400, { error: 'fields "name", "content", and "category" are required' });
+    const prompt = this.aiLearning.createPrompt({
+      name: b.name, content: b.content, category: b.category,
+      ...(typeof b.description === 'string' ? { description: b.description } : {}),
+    });
+    return json(201, { prompt });
+  }
+
+  private aiPromptsVersion(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.templateId !== 'string' || typeof b.content !== 'string')
+      return json(400, { error: 'fields "templateId" and "content" are required' });
+    const version = this.aiLearning.newVersion(b.templateId, b.content, typeof b.notes === 'string' ? b.notes : undefined);
+    return json(201, { version });
+  }
+
+  private aiPromptsApprove(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.templateId !== 'string' || typeof b.versionId !== 'string' || typeof b.approver !== 'string')
+      return json(400, { error: 'fields "templateId", "versionId", and "approver" are required' });
+    const version = this.aiLearning.approve(b.templateId, b.versionId, b.approver);
+    return version ? json(200, { version }) : json(404, { error: 'template/version not found' });
+  }
+
+  private aiPromptsActivate(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.templateId !== 'string' || typeof b.versionId !== 'string')
+      return json(400, { error: 'fields "templateId" and "versionId" are required' });
+    const version = this.aiLearning.activate(b.templateId, b.versionId);
+    return version ? json(200, { version }) : json(404, { error: 'template/version not found' });
+  }
+
+  private aiPromptsRender(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    if (!req.query.templateId) return json(400, { error: 'query parameter "templateId" is required' });
+    let vars: Record<string, string> = {};
+    if (req.query.vars) {
+      try { vars = JSON.parse(req.query.vars) as Record<string, string>; } catch { return json(400, { error: 'query parameter "vars" must be a JSON object' }); }
+    }
+    const text = this.aiLearning.render(req.query.templateId, vars);
+    return json(200, { text });
+  }
+
+  private aiOutcomesRecord(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.model !== 'string' || typeof b.provider !== 'string' || typeof b.latencyMs !== 'number')
+      return json(400, { error: 'fields "model", "provider", and "latencyMs" are required' });
+    const outcome = this.aiLearning.recordOutcome({
+      ...(typeof b.promptTemplateId === 'string' ? { promptTemplateId: b.promptTemplateId } : {}),
+      ...(typeof b.promptVersionId === 'string' ? { promptVersionId: b.promptVersionId } : {}),
+      model: b.model,
+      provider: b.provider,
+      outcome: b.outcome === 'edited' || b.outcome === 'rejected' ? b.outcome : 'accepted',
+      ...(typeof b.rating === 'number' ? { rating: b.rating } : {}),
+      latencyMs: b.latencyMs,
+      ...(typeof b.costUsd === 'number' ? { costUsd: b.costUsd } : {}),
+      ...(typeof b.confidence === 'number' ? { confidence: b.confidence } : {}),
+      ...(typeof b.tokensIn === 'number' ? { tokensIn: b.tokensIn } : {}),
+      ...(typeof b.tokensOut === 'number' ? { tokensOut: b.tokensOut } : {}),
+      ts: Date.now(),
+      ...(typeof b.userId === 'string' ? { userId: b.userId } : {}),
+      ...(typeof b.orgId === 'string' ? { orgId: b.orgId } : {}),
+    });
+    return json(201, { outcome });
+  }
+
+  private aiMetrics(req: GatewayRequest): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    if (req.query.templateId) return json(200, { metrics: this.aiLearning.promptMetrics(req.query.templateId) });
+    if (req.query.model) return json(200, { metrics: this.aiLearning.modelMetrics(req.query.model) });
+    return json(400, { error: 'query parameter "templateId" or "model" is required' });
+  }
+
+  private aiBenchmarks(): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    return json(200, { benchmarks: this.aiLearning.modelBenchmarks() });
+  }
+
+  private aiDrift(): GatewayResponse {
+    if (!this.aiLearning) return json(501, { error: 'ai-learning module not registered' });
+    return json(200, { alerts: this.aiLearning.detectDrift() });
+  }
+
+  // --- Design system ------------------------------------------------------
+
+  private designTokens(req: GatewayRequest): GatewayResponse {
+    if (!this.designSystem) return json(501, { error: 'design-system module not registered' });
+    const mode = req.query.mode === 'light' || req.query.mode === 'dark' ? req.query.mode : undefined;
+    const brand = this.parseBrandOverride(req.query.brand);
+    if (req.query.brand && brand === undefined) return json(400, { error: 'query parameter "brand" must be a JSON object {primary?, secondary?, accent?}' });
+    return json(200, { mode: mode ?? this.designSystem.currentMode, tokens: this.designSystem.tokens(mode, brand) });
+  }
+
+  private designCss(req: GatewayRequest): GatewayResponse {
+    if (!this.designSystem) return json(501, { error: 'design-system module not registered' });
+    const brand = this.parseBrandOverride(req.query.brand);
+    if (req.query.brand && brand === undefined) return json(400, { error: 'query parameter "brand" must be a JSON object {primary?, secondary?, accent?}' });
+    return json(200, { css: this.designSystem.stylesheet(brand) });
+  }
+
+  /** Parse a ?brand= JSON query value into a design-system BrandOverride. */
+  private parseBrandOverride(raw: string | undefined): { primary?: string; secondary?: string; accent?: string } | undefined {
+    if (!raw) return undefined;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== 'object') return undefined;
+      return {
+        ...(typeof parsed.primary === 'string' ? { primary: parsed.primary } : {}),
+        ...(typeof parsed.secondary === 'string' ? { secondary: parsed.secondary } : {}),
+        ...(typeof parsed.accent === 'string' ? { accent: parsed.accent } : {}),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private designMode(req: GatewayRequest): GatewayResponse {
+    if (!this.designSystem) return json(501, { error: 'design-system module not registered' });
+    const b = this.asObject(req.body);
+    if (b.mode !== 'light' && b.mode !== 'dark') return json(400, { error: 'field "mode" must be "light" or "dark"' });
+    this.designSystem.setMode(b.mode);
+    return json(200, { mode: this.designSystem.currentMode });
+  }
+
+  private designAdaptive(req: GatewayRequest): GatewayResponse {
+    if (!this.designSystem) return json(501, { error: 'design-system module not registered' });
+    const b = this.asObject(req.body);
+    const mode = this.designSystem.applyAdaptive({
+      ...(b.preference === 'light' || b.preference === 'dark' || b.preference === 'auto' ? { preference: b.preference } : {}),
+      ...(typeof b.hour === 'number' ? { hour: b.hour } : {}),
+    });
+    return json(200, { mode });
+  }
+
+  // --- Branding -----------------------------------------------------------
+
+  private brandingProducts(): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    return json(200, { products: this.branding.listProducts() });
+  }
+
+  private brandingGet(req: GatewayRequest): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    if (!req.query.productId) return json(400, { error: 'query parameter "productId" is required' });
+    const brand = this.branding.getBrand(req.query.productId);
+    return brand ? json(200, { brand }) : json(404, { error: 'product not found' });
+  }
+
+  private brandingLogo(req: GatewayRequest): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.productId !== 'string') return json(400, { error: 'field "productId" is required' });
+    const logo = this.branding.generateLogo(b.productId, typeof b.size === 'number' ? b.size : undefined);
+    return json(200, { logo });
+  }
+
+  private brandingAppIcon(req: GatewayRequest): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.productId !== 'string') return json(400, { error: 'field "productId" is required' });
+    const icon = this.branding.generateAppIcon(b.productId, typeof b.size === 'number' ? b.size : undefined);
+    return json(200, { icon });
+  }
+
+  private brandingSplash(req: GatewayRequest): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.productId !== 'string') return json(400, { error: 'field "productId" is required' });
+    return json(200, { splash: this.branding.generateSplashScreen(b.productId) });
+  }
+
+  private brandingMarketing(req: GatewayRequest): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.productId !== 'string' || typeof b.name !== 'string')
+      return json(400, { error: 'fields "productId" and "name" are required' });
+    const template = this.branding.generateMarketingTemplate(
+      b.productId, b.name,
+      typeof b.width === 'number' ? b.width : undefined,
+      typeof b.height === 'number' ? b.height : undefined,
+    );
+    return json(200, { template });
+  }
+
+  private brandingBusinessCard(req: GatewayRequest): GatewayResponse {
+    if (!this.branding) return json(501, { error: 'branding module not registered' });
+    const b = this.asObject(req.body);
+    const card = b.card;
+    if (typeof b.productId !== 'string' || !card || typeof card !== 'object' ||
+        typeof (card as Record<string, unknown>).name !== 'string' ||
+        typeof (card as Record<string, unknown>).title !== 'string' ||
+        typeof (card as Record<string, unknown>).email !== 'string' ||
+        typeof (card as Record<string, unknown>).company !== 'string' ||
+        typeof (card as Record<string, unknown>).backgroundColor !== 'string' ||
+        typeof (card as Record<string, unknown>).textColor !== 'string' ||
+        typeof (card as Record<string, unknown>).accentColor !== 'string') {
+      return json(400, { error: 'fields "productId" and "card" (name, title, email, company, backgroundColor, textColor, accentColor) are required' });
+    }
+    const rendered = this.branding.generateBusinessCard(card as never, b.productId);
+    return json(200, { card: rendered });
+  }
+
+  // --- Universal Wallet (Phase 2) -----------------------------------------
+
+  private walletOpen(req: GatewayRequest): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.ownerId !== 'string' || typeof b.role !== 'string')
+      return json(400, { error: 'fields "ownerId" and "role" are required' });
+    const wallet = this.wallet.openWallet(b.ownerId, b.role as never, typeof b.orgId === 'string' ? b.orgId : undefined);
+    return json(201, { wallet: jsonSafe(wallet) });
+  }
+
+  private walletList(req: GatewayRequest): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    const wallets = this.wallet.listWallets({
+      ...(req.query.ownerId ? { ownerId: req.query.ownerId } : {}),
+      ...(req.query.role ? { role: req.query.role as never } : {}),
+      ...(req.query.orgId ? { orgId: req.query.orgId } : {}),
+    });
+    return json(200, { wallets: jsonSafe(wallets), count: wallets.length });
+  }
+
+  private walletCurrencies(): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    return json(200, { currencies: this.wallet.listCurrencies() });
+  }
+
+  private walletBalance(req: GatewayRequest): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    if (!req.query.walletId || !req.query.currency) return json(400, { error: 'query parameters "walletId" and "currency" are required' });
+    const wallet = this.wallet.getWallet(req.query.walletId);
+    if (!wallet) return json(404, { error: 'wallet not found' });
+    return json(200, { walletId: wallet.id, currency: req.query.currency, balance: this.wallet.balance(wallet.id, req.query.currency).toString() });
+  }
+
+  private walletLedger(req: GatewayRequest): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    const entries = this.wallet.history({
+      ...(req.query.walletId ? { walletId: req.query.walletId } : {}),
+      ...(req.query.currency ? { currency: req.query.currency } : {}),
+      ...(req.query.category ? { category: req.query.category as never } : {}),
+      ...(req.query.fromTs ? { fromTs: Number(req.query.fromTs) } : {}),
+      ...(req.query.toTs ? { toTs: Number(req.query.toTs) } : {}),
+      ...(req.query.limit ? { limit: Number(req.query.limit) } : {}),
+    });
+    return json(200, { entries: jsonSafe(entries), count: entries.length });
+  }
+
+  private walletSummary(): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    return json(200, { summary: jsonSafe(this.wallet.summary()), ledgerBalanced: this.wallet.verifyLedger() });
+  }
+
+  private walletDeposit(req: GatewayRequest): GatewayResponse {
+    return this.walletMovement(req, 'deposit');
+  }
+
+  private walletWithdraw(req: GatewayRequest): GatewayResponse {
+    return this.walletMovement(req, 'withdraw');
+  }
+
+  private walletTransfer(req: GatewayRequest): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.from !== 'string' || typeof b.to !== 'string' || typeof b.currency !== 'string' || typeof b.description !== 'string')
+      return json(400, { error: 'fields "from", "to", "currency", and "description" are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number (minor units)' });
+    const tx = this.wallet.transfer(b.from, b.to, b.currency, amount, b.description,
+      b.metadata && typeof b.metadata === 'object' ? b.metadata as Record<string, unknown> : undefined);
+    return json(201, { transaction: jsonSafe(tx) });
+  }
+
+  private walletStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.walletId !== 'string' || (b.status !== 'active' && b.status !== 'frozen' && b.status !== 'closed'))
+      return json(400, { error: 'fields "walletId" and "status" (active|frozen|closed) are required' });
+    const wallet = this.wallet.getWallet(b.walletId);
+    if (!wallet) return json(404, { error: 'wallet not found' });
+    this.wallet.setWalletStatus(b.walletId, b.status);
+    return json(200, { wallet: jsonSafe(this.wallet.getWallet(b.walletId)) });
+  }
+
+  private walletMovement(req: GatewayRequest, kind: 'deposit' | 'withdraw'): GatewayResponse {
+    if (!this.wallet) return json(501, { error: 'universal-wallet module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.walletId !== 'string' || typeof b.currency !== 'string' || typeof b.description !== 'string')
+      return json(400, { error: 'fields "walletId", "currency", and "description" are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number (minor units)' });
+    const tx = kind === 'deposit'
+      ? this.wallet.deposit(b.walletId, b.currency, amount, b.description, b.metadata && typeof b.metadata === 'object' ? b.metadata as Record<string, unknown> : undefined)
+      : this.wallet.withdraw(b.walletId, b.currency, amount, b.description, b.metadata && typeof b.metadata === 'object' ? b.metadata as Record<string, unknown> : undefined);
+    return json(201, { transaction: jsonSafe(tx) });
+  }
+
+  // --- KRT Digital Asset Platform (Phase 4) -------------------------------
+
+  private cryptoAssetsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.symbol !== 'string' || typeof b.name !== 'string' || typeof b.decimals !== 'number' || typeof b.chain !== 'string')
+      return json(400, { error: 'fields "symbol", "name", "decimals", and "chain" are required' });
+    const totalSupply = toBigInt(b.totalSupply);
+    if (totalSupply === undefined) return json(400, { error: 'field "totalSupply" must be an integer string or number' });
+    const asset = this.crypto.registerAsset({
+      symbol: b.symbol, name: b.name,
+      type: b.type === 'non_fungible' || b.type === 'semi_fungible' ? b.type : 'fungible',
+      decimals: b.decimals, totalSupply, chain: b.chain,
+      ...(typeof b.contractAddress === 'string' ? { contractAddress: b.contractAddress } : {}),
+      ...(b.metadata && typeof b.metadata === 'object' ? { metadata: b.metadata as Record<string, unknown> } : {}),
+    });
+    return json(201, { asset: jsonSafe(asset) });
+  }
+
+  private cryptoAssetsList(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    if (req.query.symbol) {
+      const asset = this.crypto.getAsset(req.query.symbol);
+      return asset ? json(200, { assets: jsonSafe([asset]) }) : json(404, { error: 'asset not found' });
+    }
+    return json(200, { assets: jsonSafe(this.crypto.listAssets()), summary: this.crypto.summary() });
+  }
+
+  private cryptoMint(req: GatewayRequest): GatewayResponse {
+    return this.cryptoMovement(req, 'mint');
+  }
+
+  private cryptoBurn(req: GatewayRequest): GatewayResponse {
+    return this.cryptoMovement(req, 'burn');
+  }
+
+  private cryptoTransfer(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.from !== 'string' || typeof b.to !== 'string' || typeof b.symbol !== 'string')
+      return json(400, { error: 'fields "from", "to", and "symbol" are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number (minor units)' });
+    const tx = this.crypto.transfer(b.from, b.to, b.symbol, amount);
+    return json(201, { transaction: jsonSafe(tx) });
+  }
+
+  private cryptoBalance(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    if (!req.query.address || !req.query.symbol) return json(400, { error: 'query parameters "address" and "symbol" are required' });
+    return json(200, { address: req.query.address, symbol: req.query.symbol, balance: this.crypto.getBalance(req.query.address, req.query.symbol).toString() });
+  }
+
+  private cryptoNftMint(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.collectionId !== 'string' || typeof b.to !== 'string')
+      return json(400, { error: 'fields "collectionId" and "to" are required' });
+    const nft = this.crypto.mintNft(b.collectionId, b.to, typeof b.tokenURI === 'string' ? b.tokenURI : undefined,
+      b.metadata && typeof b.metadata === 'object' ? b.metadata as Record<string, unknown> : undefined);
+    return json(201, { nft: jsonSafe(nft) });
+  }
+
+  private cryptoNftTransfer(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.tokenId !== 'string' || typeof b.from !== 'string' || typeof b.to !== 'string')
+      return json(400, { error: 'fields "tokenId", "from", and "to" are required' });
+    const nft = this.crypto.transferNft(b.tokenId, b.from, b.to);
+    return json(200, { nft: jsonSafe(nft) });
+  }
+
+  private cryptoStake(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.staker !== 'string' || typeof b.assetSymbol !== 'string')
+      return json(400, { error: 'fields "staker" and "assetSymbol" are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number (minor units)' });
+    const position = this.crypto.stake(b.staker, b.assetSymbol, amount, {
+      ...(typeof b.apr === 'number' ? { apr: b.apr } : {}),
+      ...(typeof b.lockupDays === 'number' ? { lockupDays: b.lockupDays } : {}),
+    });
+    return json(201, { position: jsonSafe(position) });
+  }
+
+  private cryptoQuote(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.from !== 'string' || typeof b.to !== 'string')
+      return json(400, { error: 'fields "from" and "to" are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number (minor units)' });
+    const quote = this.crypto.quote(b.from, b.to, amount);
+    return json(200, { quote: jsonSafe(quote) });
+  }
+
+  private cryptoSwap(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    const quote = b.quote;
+    if (!quote || typeof quote !== 'object' || typeof (quote as Record<string, unknown>).fromAsset !== 'string' || typeof b.fromAddress !== 'string')
+      return json(400, { error: 'fields "quote" (from /crypto/quote) and "fromAddress" are required' });
+    const result = this.crypto.swap(quote as never, b.fromAddress);
+    return json(200, { result: jsonSafe(result) });
+  }
+
+  private cryptoCustody(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.address !== 'string' || typeof b.owner !== 'string' || (b.type !== 'hot' && b.type !== 'warm' && b.type !== 'cold'))
+      return json(400, { error: 'fields "address", "owner", and "type" (hot|warm|cold) are required' });
+    return json(201, { wallet: jsonSafe(this.crypto.createCustodyWallet(b.address, b.type, b.owner)) });
+  }
+
+  private cryptoContracts(req: GatewayRequest): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.chain !== 'string' || !Array.isArray(b.abi))
+      return json(400, { error: 'fields "name", "chain", and "abi" (array) are required' });
+    const contract = this.crypto.registerContract({
+      name: b.name, chain: b.chain, abi: b.abi as never,
+      ...(typeof b.address === 'string' ? { address: b.address } : {}),
+    });
+    return json(201, { contract });
+  }
+
+  private cryptoSummary(): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    return json(200, { summary: this.crypto.summary() });
+  }
+
+  private cryptoMovement(req: GatewayRequest, kind: 'mint' | 'burn'): GatewayResponse {
+    if (!this.crypto) return json(501, { error: 'crypto module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.to !== 'string' || typeof b.symbol !== 'string')
+      return json(400, { error: 'fields "to" and "symbol" are required' });
+    const amount = toBigInt(b.amount);
+    if (amount === undefined) return json(400, { error: 'field "amount" must be an integer string or number (minor units)' });
+    const tx = kind === 'mint' ? this.crypto.mint(b.to, b.symbol, amount) : this.crypto.burn(b.to, b.symbol, amount);
+    return json(201, { transaction: jsonSafe(tx) });
+  }
+
+  // --- Adaptive Dashboard (Phase 5 step 3) --------------------------------
+
+  private dashboardLayoutsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.ownerId !== 'string')
+      return json(400, { error: 'fields "name" and "ownerId" are required' });
+    const layout = this.dashboard.createLayout({
+      name: b.name, ownerId: b.ownerId,
+      ...(typeof b.role === 'string' ? { role: b.role } : {}),
+      ...(typeof b.orgId === 'string' ? { orgId: b.orgId } : {}),
+    });
+    return json(201, { layout });
+  }
+
+  private dashboardLayoutsList(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const layouts = req.query.orgId
+      ? this.dashboard.layoutsForOrg(req.query.orgId)
+      : req.query.ownerId
+        ? this.dashboard.layoutsForUser(req.query.ownerId)
+        : this.dashboard.layouts.listAll();
+    return json(200, { layouts, count: layouts.length });
+  }
+
+  private async dashboardAdapt(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.layoutId !== 'string' || typeof b.userId !== 'string')
+      return json(400, { error: 'fields "layoutId" and "userId" are required' });
+    const applied = await this.dashboard.adapt(b.layoutId, b.userId, typeof b.role === 'string' ? b.role : undefined);
+    return json(200, { applied });
+  }
+
+  private dashboardWidgetsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.layoutId !== 'string' || typeof b.widgetDefId !== 'string')
+      return json(400, { error: 'fields "layoutId" and "widgetDefId" are required' });
+    const widget = this.dashboard.addWidget(b.layoutId, b.widgetDefId, {
+      ...(typeof b.size === 'string' ? { size: b.size as never } : {}),
+      ...(typeof b.title === 'string' ? { title: b.title } : {}),
+      ...(b.config && typeof b.config === 'object' ? { config: b.config as Record<string, unknown> } : {}),
+    });
+    return json(201, { widget });
+  }
+
+  private dashboardWidgetsList(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const widgets = this.dashboard.listWidgets(req.query.category as never, req.query.role);
+    return json(200, { widgets, count: widgets.length });
+  }
+
+  private dashboardWidgetsMove(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.layoutId !== 'string' || typeof b.widgetId !== 'string' || typeof b.col !== 'number' || typeof b.row !== 'number')
+      return json(400, { error: 'fields "layoutId", "widgetId", "col", and "row" are required' });
+    this.dashboard.moveWidget(b.layoutId, b.widgetId, b.col, b.row);
+    return json(200, { ok: true });
+  }
+
+  private dashboardWidgetsResize(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.layoutId !== 'string' || typeof b.widgetId !== 'string' || typeof b.size !== 'string')
+      return json(400, { error: 'fields "layoutId", "widgetId", and "size" are required' });
+    this.dashboard.resizeWidget(b.layoutId, b.widgetId, b.size as never);
+    return json(200, { ok: true });
+  }
+
+  private dashboardAutoArrange(req: GatewayRequest): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.layoutId !== 'string') return json(400, { error: 'field "layoutId" is required' });
+    this.dashboard.autoArrange(b.layoutId);
+    return json(200, { ok: true });
+  }
+
+  private dashboardAnalytics(): GatewayResponse {
+    if (!this.dashboard) return json(501, { error: 'dashboard module not registered' });
+    return json(200, { analytics: this.dashboard.analytics() });
+  }
+
+  // --- Universal Link Intelligence ----------------------------------------
+
+  private async linkProcess(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.linkIntel) return json(501, { error: 'link-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.url !== 'string') return json(400, { error: 'field "url" is required' });
+    const result = await this.linkIntel.processLink(b.url, typeof b.content === 'string' ? b.content : undefined);
+    return json(201, { result });
+  }
+
+  private async linkProcessBatch(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.linkIntel) return json(501, { error: 'link-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (!Array.isArray(b.links)) return json(400, { error: 'field "links" (array of {url, content?}) is required' });
+    const links = (b.links as Array<Record<string, unknown>>).filter((l) => typeof l?.url === 'string');
+    const results = await this.linkIntel.processLinks(links.map((l) => ({
+      url: l.url as string,
+      ...(typeof l.content === 'string' ? { content: l.content } : {}),
+    })));
+    return json(200, { results, count: results.length });
+  }
+
+  private linkResults(): GatewayResponse {
+    if (!this.linkIntel) return json(501, { error: 'link-intelligence module not registered' });
+    return json(200, { results: this.linkIntel.getResults(), count: this.linkIntel.getResults().length });
+  }
+
+  private linkSummary(): GatewayResponse {
+    if (!this.linkIntel) return json(501, { error: 'link-intelligence module not registered' });
+    return json(200, { summary: this.linkIntel.summary() });
+  }
+
+  private linkValidate(req: GatewayRequest): GatewayResponse {
+    if (!this.linkIntel) return json(501, { error: 'link-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (!b.proposal || typeof b.proposal !== 'object') return json(400, { error: 'field "proposal" is required' });
+    const validation = this.linkIntel.validateProposal(b.proposal as never);
+    return json(200, { validation });
+  }
+
+  private async linkEvolve(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.linkIntel) return json(501, { error: 'link-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (!b.proposal || typeof b.proposal !== 'object' || typeof b.createdBy !== 'string')
+      return json(400, { error: 'fields "proposal" and "createdBy" are required' });
+    const evolutionId = await this.linkIntel.submitForEvolution(b.proposal as never, b.createdBy);
+    return evolutionId ? json(200, { evolutionId }) : json(200, { evolutionId: null });
+  }
+
+  // --- Universal Multimodal Intelligence ----------------------------------
+
+  private multimodalSourcesRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.multimodalIntel) return json(501, { error: 'multimodal-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.modality !== 'string' || typeof b.name !== 'string')
+      return json(400, { error: 'fields "modality" and "name" are required' });
+    const source = this.multimodalIntel.registerSource({
+      modality: b.modality as never,
+      name: b.name,
+      requiresAuth: typeof b.requiresAuth === 'boolean' ? b.requiresAuth : false,
+      ...(b.config && typeof b.config === 'object' ? { config: b.config as Record<string, unknown> } : {}),
+      ...(typeof b.id === 'string' ? { id: b.id } : {}),
+    });
+    return json(201, { source });
+  }
+
+  private multimodalSourcesList(req: GatewayRequest): GatewayResponse {
+    if (!this.multimodalIntel) return json(501, { error: 'multimodal-intelligence module not registered' });
+    const sources = this.multimodalIntel.listSources(req.query.modality as never);
+    return json(200, { sources, count: sources.length });
+  }
+
+  private multimodalSourcesAuthorize(req: GatewayRequest): GatewayResponse {
+    if (!this.multimodalIntel) return json(501, { error: 'multimodal-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.sourceId !== 'string' || typeof b.grantedBy !== 'string' || typeof b.scope !== 'string')
+      return json(400, { error: 'fields "sourceId", "grantedBy", and "scope" are required' });
+    const source = this.multimodalIntel.authorize(b.sourceId, {
+      grantedBy: b.grantedBy, scope: b.scope,
+      ...(typeof b.expiresAt === 'number' ? { expiresAt: b.expiresAt } : {}),
+      ...(typeof b.legalBasis === 'string' ? { legalBasis: b.legalBasis } : {}),
+    });
+    return source ? json(200, { source }) : json(404, { error: 'source not found' });
+  }
+
+  private multimodalSourcesRevoke(req: GatewayRequest): GatewayResponse {
+    if (!this.multimodalIntel) return json(501, { error: 'multimodal-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.sourceId !== 'string') return json(400, { error: 'field "sourceId" is required' });
+    return json(200, { revoked: this.multimodalIntel.revoke(b.sourceId) });
+  }
+
+  private async multimodalAcquire(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.multimodalIntel) return json(501, { error: 'multimodal-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.content !== 'string') return json(400, { error: 'field "content" is required' });
+    if (typeof b.sourceId === 'string') {
+      const result = await this.multimodalIntel.acquire(b.sourceId, b.content);
+      return json(200, { result });
+    }
+    if (typeof b.modality === 'string') {
+      const result = await this.multimodalIntel.acquireDirect(b.modality as never, b.content, typeof b.name === 'string' ? b.name : undefined);
+      return json(200, { result });
+    }
+    return json(400, { error: 'field "sourceId" or "modality" is required' });
+  }
+
+  private async multimodalAcquireBatch(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.multimodalIntel) return json(501, { error: 'multimodal-intelligence module not registered' });
+    const b = this.asObject(req.body);
+    if (!Array.isArray(b.inputs)) return json(400, { error: 'field "inputs" (array of {sourceId, content}) is required' });
+    const inputs = (b.inputs as Array<Record<string, unknown>>)
+      .filter((i) => typeof i?.sourceId === 'string' && typeof i.content === 'string')
+      .map((i) => ({ sourceId: i.sourceId as string, content: i.content as string }));
+    const results = await this.multimodalIntel.acquireBatch(inputs);
+    return json(200, { results, count: results.length });
   }
 
 
@@ -2369,6 +3286,30 @@ export class ApiGatewayModule implements IModule {
 
 function json(status: number, body: unknown): GatewayResponse {
   return { status, body };
+}
+
+/**
+ * Recursively convert bigint values to decimal strings so wallet/crypto
+ * payloads (exact integer arithmetic) survive JSON serialization.
+ */
+function jsonSafe(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (value instanceof Map) return jsonSafe(Object.fromEntries(value));
+  if (Array.isArray(value)) return value.map((v) => jsonSafe(v));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = jsonSafe(v);
+    return out;
+  }
+  return value;
+}
+
+/** Parse an integer amount from a JSON body value into bigint minor units. */
+function toBigInt(v: unknown): bigint | undefined {
+  if (typeof v === 'bigint') return v;
+  if (typeof v === 'number') return Number.isInteger(v) ? BigInt(v) : undefined;
+  if (typeof v === 'string' && /^-?\d+$/.test(v)) return BigInt(v);
+  return undefined;
 }
 
 /** Map a DNS type name (case-insensitive) to its numeric code. */

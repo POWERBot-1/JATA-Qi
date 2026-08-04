@@ -80,6 +80,14 @@ export class CryptoModule implements IModule {
 
   getBalance(address: string, symbol: string): bigint { return this.assets.getBalance(address, symbol); }
 
+  /** All registered assets (tokens + NFT collections). */
+  listAssets(): DigitalAsset[] { return this.assets.listAssets(); }
+
+  /** Look up an asset by id or symbol. */
+  getAsset(idOrSymbol: string): DigitalAsset | undefined {
+    return this.assets.getAsset(idOrSymbol) ?? this.assets.getAssetBySymbol(idOrSymbol);
+  }
+
   // ---- staking ------------------------------------------------------------
 
   stake(staker: string, assetSymbol: string, amount: bigint, opts?: { apr?: number; lockupDays?: number }): StakePosition {

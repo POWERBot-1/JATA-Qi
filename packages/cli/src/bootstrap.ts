@@ -69,6 +69,16 @@ import { AccreditationModule, type OperationMode } from '@jataqi/accreditation';
 import { DnsModule } from '@jataqi/dns';
 import { RegistryModule } from '@jataqi/registry';
 import { RegistrarModule } from '@jataqi/registrar';
+import { DigitalMemoryModule } from '@jataqi/memory';
+import { ContinuousLearningModule } from '@jataqi/learning';
+import { AiLearningModule } from '@jataqi/ai-learning';
+import { DesignSystemModule } from '@jataqi/design-system';
+import { BrandingModule } from '@jataqi/branding';
+import { UniversalWalletModule } from '@jataqi/universal-wallet';
+import { CryptoModule } from '@jataqi/crypto';
+import { DashboardModule } from '@jataqi/dashboard';
+import { LinkIntelligenceModule } from '@jataqi/link-intelligence';
+import { MultimodalIntelligenceModule } from '@jataqi/multimodal-intelligence';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -217,6 +227,26 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new TracingModule(readTracingConfigFromEnv()));
   kernel.register(new RealtimeModule());
   kernel.register(new AiSafetyModule());
+  // Continuous Learning Platform (CLP Phases 1–7): governed memory, learning
+  // + personalization, and the AI learning platform (prompt registry, quality,
+  // drift). Soft dependencies — each degrades gracefully if the others are
+  // absent, so registration order is safe either way.
+  kernel.register(new DigitalMemoryModule());
+  kernel.register(new ContinuousLearningModule());
+  kernel.register(new AiLearningModule());
+  // Brand & product experience layer: shared design language, brand identity
+  // for the 15 products, and the adaptive dashboard engine.
+  kernel.register(new DesignSystemModule());
+  kernel.register(new BrandingModule());
+  kernel.register(new DashboardModule());
+  // Finance stack (Phase 2/4): universal double-entry wallet + KRT digital
+  // asset platform (token/NFT engine, staking, exchange, custody).
+  kernel.register(new UniversalWalletModule());
+  kernel.register(new CryptoModule());
+  // Intelligence acquisition: universal link intelligence + multimodal
+  // intelligence (both feed the knowledge graph + memory when available).
+  kernel.register(new LinkIntelligenceModule());
+  kernel.register(new MultimodalIntelligenceModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

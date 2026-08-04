@@ -77,7 +77,17 @@
     "@jataqi/accreditation": "0.1.0",
     "@jataqi/dns": "0.1.0",
     "@jataqi/registry": "0.1.0",
-    "@jataqi/registrar": "0.1.0"
+    "@jataqi/registrar": "0.1.0",
+    "@jataqi/memory": "0.1.0",
+    "@jataqi/learning": "0.1.0",
+    "@jataqi/ai-learning": "0.1.0",
+    "@jataqi/design-system": "0.1.0",
+    "@jataqi/branding": "0.1.0",
+    "@jataqi/universal-wallet": "0.1.0",
+    "@jataqi/crypto": "0.1.0",
+    "@jataqi/dashboard": "0.1.0",
+    "@jataqi/link-intelligence": "0.1.0",
+    "@jataqi/multimodal-intelligence": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

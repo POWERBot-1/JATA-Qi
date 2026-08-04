@@ -1,6 +1,6 @@
 # JATA Qi Module Registry
 
-22 packages, 250 tests. Every package is a kernel module (`IModule`) registered
+89 packages, 1500+ tests. Every package is a kernel module (`IModule`) registered
 through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 
 | Package | id | Depends on | Purpose |
@@ -26,6 +26,18 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/digital-twin` | `digital-twin` | storage | stateful twins, step/project |
 | `@jataqi/tool-intelligence` | `tool-intelligence` | storage | Universal AI Tool Layer: registry, adapters, risk, approvals, fallback |
 | `@jataqi/readiness` | `readiness` | – | honest capability/readiness matrix |
+| `@jataqi/memory` | `memory` | storage | Digital Memory Engine (CLP P1) — governed platform-event memory |
+| `@jataqi/learning` | `learning` | memory | Continuous Learning + Personalization (CLP P2/6) |
+| `@jataqi/ai-learning` | `ai-learning` | – | AI Learning Platform (CLP P3) — prompt registry, quality, drift |
+| `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
+| `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
+| `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |
+| `@jataqi/dashboard` | `dashboard` | learning | adaptive dashboard — widget framework + layout + AI personalization |
+| `@jataqi/universal-wallet` | `universal-wallet` | – | double-entry wallet engine (finance/commerce/game consolidation) |
+| `@jataqi/payments` | `flutterwave` | – | payment provider bridges (M-Pesa, Flutterwave, Pesapal, Stripe, …) |
+| `@jataqi/crypto` | `crypto` | – | KRT digital asset platform — tokens, NFTs, staking, exchange, custody |
+| `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
+| `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
 | `@jataqi/cli` | – | all | bootstrap (`createJataQi`) + CLI binary |
 
 ## Discovering modules at runtime

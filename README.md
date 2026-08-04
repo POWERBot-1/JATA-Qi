@@ -229,6 +229,30 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/models` | `model:read` | List registered models |
 | POST | `/models/select` | `model:read` | `{capabilities, prefer}` select best model |
 | GET | `/scheduler/stats` | `metrics:read` | Compute scheduler queue stats |
+| POST | `/memory` | `memory:write` | Record a governed memory event |
+| GET | `/memory` | `memory:read` | Query the memory event stream |
+| GET | `/memory/export` · `POST /memory/delete` | `memory:read` / `memory:write` | Right-to-export / right-to-delete |
+| POST | `/memory/policy` · `/memory/sweep` | `memory:write` | Org memory policy · retention sweep |
+| POST | `/learning/analyze` | `learning:read` | Derive insights + recommendations from memory |
+| GET | `/learning/insights` · `/learning/recommendations` · `/learning/adaptation` | `learning:read` | Learning + personalization reads |
+| POST | `/learning/recommendation/review` · `/deploy` · `/learning/preference` | `learning:write` | Review/deploy recommendations, set preferences |
+| GET | `/ai-learning/prompts` · `/metrics` · `/benchmarks` | `learning:read` | Prompt registry + quality reads |
+| POST | `/ai-learning/prompts` · `/version` · `/approve` · `/activate` · `/outcomes` | `learning:write` | Prompt lifecycle + outcome tracking |
+| POST | `/ai-learning/drift` | `learning:read` | Run drift detection |
+| GET | `/design-system/tokens` · `/css` | `design:read` | Design tokens + generated stylesheet |
+| POST | `/design-system/mode` · `/adaptive` | `design:write` | Theme mode + adaptive theming |
+| GET | `/branding/products` · `/brand` | `design:read` | Brand kits for the 15 products |
+| POST | `/branding/logo` · `/app-icon` · `/splash` · `/marketing` · `/business-card` | `design:write` | Brand asset generation |
+| POST | `/wallet/open` · `/deposit` · `/withdraw` · `/transfer` · `/status` | `finance:write` | Wallet operations (double-entry) |
+| GET | `/wallet` · `/balance` · `/ledger` · `/summary` · `/currencies` | `finance:read` | Wallet reads + ledger verification |
+| POST | `/crypto/assets` · `/mint` · `/burn` · `/transfer` · `/nft/*` · `/stake` · `/swap` · `/custody` · `/contracts` | `finance:write` | KRT token/NFT/staking/exchange operations |
+| GET | `/crypto/assets` · `/balance` · `/summary` | `finance:read` | KRT reads |
+| POST | `/dashboard/layouts` · `/widgets` · `/adapt` · `/auto-arrange` | `dashboard:write` | Dashboard layout + widget management |
+| GET | `/dashboard/layouts` · `/widgets` · `/analytics` | `dashboard:read` | Dashboard reads |
+| POST | `/link/process` · `/process-batch` · `/proposals/validate` · `/evolve` | `knowledge:write` | Link intelligence pipeline |
+| GET | `/link/results` · `/link/summary` | `knowledge:read` | Link intelligence reads |
+| POST | `/multimodal/sources` · `/sources/authorize` · `/sources/revoke` · `/acquire` · `/acquire-batch` | `knowledge:write` | Multimodal acquisition |
+| GET | `/multimodal/sources` | `knowledge:read` | Registered acquisition sources |
 
 ### Security model
 
@@ -317,8 +341,22 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Model Registry** (catalog + cost/latency/quality model selection)
 - ✅ **Compute Scheduler** (priority task queue, targets, capacity, dependencies)
 - ✅ **HTTP API Gateway** (`/`, `/openapi.json`, `/health`, `/auth/*`, `/qil`, `/objective`, `/workflows`, `/simulate`, `/team`, `/models`, `/metrics`, `/plugins`, `/scheduler/stats`, `/ask`, `/audit`, `/stats`; bearer auth, RBAC, rate limiting)
+- ✅ **Digital Memory Engine** (CLP Phase 1 — governed platform-event memory, consent/retention policies, right-to-delete/export)
+- ✅ **Continuous Learning + Personalization** (CLP Phase 2/6 — insights, recommendations, per-user adaptation)
+- ✅ **AI Learning Platform** (CLP Phase 3 — prompt registry lifecycle, response quality tracking, drift detection, model benchmarks)
+- ✅ **Self-Evolution** (CLP Phase 7 — governed proposals, experiments, rollback; consumes memory + learning + drift)
+- ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
+- ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
+- ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
+- ✅ **Adaptive Dashboard** (Phase 5 step 3 — widget framework, responsive layout engine, AI personalization)
+- ✅ **Universal Wallet** (Phase 2 — double-entry ledger consolidating finance/commerce/game-economy wallets; escrow, treasury, multi-currency)
+- ✅ **Payments** (Phase 3 — M-Pesa, Flutterwave, Pesapal, Airtel Money, PayPal, Stripe adapters)
+- ✅ **Crypto / KRT** (Phase 4 — tokens + NFTs, HD wallets, custody, staking, exchange, smart-contract registry)
+- ✅ **Link Intelligence** (classify → extract → gap analysis → governed self-evolution proposals)
+- ✅ **Multimodal Intelligence** (acquisition framework for text/document/image/audio/video/code/web/device/API sources)
 - ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`)
 - ✅ **Alpha vertical slice** (authenticate → QiL workflow → agents → knowledge → response → audit)
+- ✅ **Intelligence gateway routes** (`/memory`, `/learning/*`, `/ai-learning/*`, `/design-system/*`, `/branding/*`, `/wallet/*`, `/crypto/*`, `/dashboard/*`, `/link/*`, `/multimodal/*`; bearer auth, RBAC, rate limiting)
 
 ## License
 

@@ -114,7 +114,7 @@ export const SecurityEvents = Object.freeze({
  */
 export const DEFAULT_ROLE_POLICY: Record<string, string[]> = Object.freeze({
   admin: ['*'],
-  developer: ['health:read', 'qil:run', 'knowledge:read', 'knowledge:write', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read', 'org:read', 'notification:read', 'policy:read', 'policy:evaluate', 'policy:audit'],
-  analyst: ['health:read', 'qil:run', 'knowledge:read', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read', 'org:read', 'notification:read', 'policy:read', 'policy:evaluate', 'policy:audit'],
+  developer: ['health:read', 'qil:run', 'knowledge:read', 'knowledge:write', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read', 'org:read', 'notification:read', 'policy:read', 'policy:evaluate', 'policy:audit', 'memory:read', 'memory:write', 'learning:read', 'learning:write', 'design:read', 'design:write', 'dashboard:read', 'dashboard:write', 'finance:read', 'finance:write'],
+  analyst: ['health:read', 'qil:run', 'knowledge:read', 'agent:run', 'audit:read', 'metrics:read', 'plugin:read', 'model:read', 'device:read', 'compute:run', 'tool:read', 'tool:invoke', 'approval:decide', 'commerce:read', 'org:read', 'notification:read', 'policy:read', 'policy:evaluate', 'policy:audit', 'memory:read', 'learning:read', 'design:read', 'dashboard:read', 'finance:read'],
   guest: ['health:read'],
 });
