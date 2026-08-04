@@ -63,6 +63,8 @@ import type { FxModule } from '@jataqi/fx';
 import type { PkiModule } from '@jataqi/pki';
 import type { MobilityModule } from '@jataqi/mobility';
 import type { LogisticsModule } from '@jataqi/logistics';
+import type { AgricultureModule } from '@jataqi/agriculture';
+import type { CircularModule } from '@jataqi/circular';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -134,6 +136,8 @@ export class ApiGatewayModule implements IModule {
   private pki?: PkiModule;
   private mobility?: MobilityModule;
   private logistics?: LogisticsModule;
+  private agriculture?: AgricultureModule;
+  private circular?: CircularModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -212,6 +216,8 @@ export class ApiGatewayModule implements IModule {
     this.pki = this.tryModule<PkiModule>('pki');
     this.mobility = this.tryModule<MobilityModule>('mobility');
     this.logistics = this.tryModule<LogisticsModule>('logistics');
+    this.agriculture = this.tryModule<AgricultureModule>('agriculture');
+    this.circular = this.tryModule<CircularModule>('circular');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -728,6 +734,30 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/logistics/warehouses', auth('logistics:write', (req) => this.logisticsWarehousesRegister(req)));
     route('GET', '/logistics/warehouses', auth('logistics:read', () => this.logisticsWarehousesList()));
     route('GET', '/logistics/stats', auth('logistics:read', () => this.logisticsStats()));
+    // Phase 7 — KARIS FARM agriculture intelligence.
+    route('POST', '/agriculture/farms', auth('agriculture:write', (req) => this.agricultureFarmsRegister(req)));
+    route('GET', '/agriculture/farms', auth('agriculture:read', (req) => this.agricultureFarmsList(req)));
+    route('POST', '/agriculture/fields', auth('agriculture:write', (req) => this.agricultureFieldsAdd(req)));
+    route('GET', '/agriculture/fields', auth('agriculture:read', (req) => this.agricultureFieldsList(req)));
+    route('POST', '/agriculture/crops', auth('agriculture:write', (req) => this.agricultureCropsPlant(req)));
+    route('GET', '/agriculture/crops', auth('agriculture:read', (req) => this.agricultureCropsList(req)));
+    route('POST', '/agriculture/crops/stage', auth('agriculture:write', (req) => this.agricultureCropsStage(req)));
+    route('POST', '/agriculture/harvests', auth('agriculture:write', (req) => this.agricultureHarvestsRecord(req)));
+    route('GET', '/agriculture/harvests', auth('agriculture:read', (req) => this.agricultureHarvestsList(req)));
+    route('POST', '/agriculture/herds', auth('agriculture:write', (req) => this.agricultureHerdsRegister(req)));
+    route('GET', '/agriculture/herds', auth('agriculture:read', (req) => this.agricultureHerdsList(req)));
+    route('GET', '/agriculture/stats', auth('agriculture:read', (req) => this.agricultureStats(req)));
+    // Phase 7 — KARIS LOOP circular economy.
+    route('POST', '/circular/streams', auth('circular:write', (req) => this.circularStreamsRegister(req)));
+    route('GET', '/circular/streams', auth('circular:read', () => this.circularStreamsList()));
+    route('POST', '/circular/collections', auth('circular:write', (req) => this.circularCollectionsRecord(req)));
+    route('GET', '/circular/collections', auth('circular:read', (req) => this.circularCollectionsList(req)));
+    route('POST', '/circular/collections/status', auth('circular:write', (req) => this.circularCollectionsStatus(req)));
+    route('POST', '/circular/takeback', auth('circular:write', (req) => this.circularTakebackRegister(req)));
+    route('GET', '/circular/takeback', auth('circular:read', (req) => this.circularTakebackList(req)));
+    route('POST', '/circular/takeback/status', auth('circular:write', (req) => this.circularTakebackStatus(req)));
+    route('GET', '/circular/score', auth('circular:read', (req) => this.circularScore(req)));
+    route('GET', '/circular/stats', auth('circular:read', () => this.circularStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1033,7 +1063,7 @@ export class ApiGatewayModule implements IModule {
       'policy-governance', 'api-gateway', 'memory', 'learning', 'ai-learning',
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
-      'fx', 'pki', 'mobility', 'logistics',
+      'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -3274,6 +3304,188 @@ export class ApiGatewayModule implements IModule {
   private logisticsStats(): GatewayResponse {
     if (!this.logistics) return json(501, { error: 'logistics module not registered' });
     return json(200, { stats: this.logistics.stats() });
+  }
+
+  // --- Phase 7 — KARIS FARM ---------------------------------------------
+
+  private agricultureFarmsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.ownerId !== 'string')
+      return json(400, { error: 'fields "name" and "ownerId" are required' });
+    return json(201, { farm: this.agriculture.registerFarm({
+      name: b.name, ownerId: b.ownerId,
+      ...(typeof b.location === 'string' ? { location: b.location } : {}),
+      ...(typeof b.areaHa === 'number' ? { areaHa: b.areaHa } : {}),
+    }) });
+  }
+
+  private agricultureFarmsList(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const farms = this.agriculture.listFarms(req.query.ownerId);
+    return json(200, { farms, count: farms.length });
+  }
+
+  private agricultureFieldsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.farmId !== 'string' || typeof b.name !== 'string')
+      return json(400, { error: 'fields "farmId" and "name" are required' });
+    return json(201, { field: this.agriculture.addField({
+      farmId: b.farmId, name: b.name,
+      ...(typeof b.areaHa === 'number' ? { areaHa: b.areaHa } : {}),
+      ...(typeof b.soilType === 'string' ? { soilType: b.soilType } : {}),
+    }) });
+  }
+
+  private agricultureFieldsList(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const fields = this.agriculture.listFields(req.query.farmId, req.query.status as never);
+    return json(200, { fields, count: fields.length });
+  }
+
+  private agricultureCropsPlant(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.fieldId !== 'string' || typeof b.crop !== 'string')
+      return json(400, { error: 'fields "fieldId" and "crop" are required' });
+    return json(201, { cycle: this.agriculture.plantCrop({
+      fieldId: b.fieldId, crop: b.crop,
+      ...(typeof b.variety === 'string' ? { variety: b.variety } : {}),
+      ...(typeof b.expectedYieldKg === 'number' ? { expectedYieldKg: b.expectedYieldKg } : {}),
+    }) });
+  }
+
+  private agricultureCropsList(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const cycles = this.agriculture.listCycles(req.query.fieldId, req.query.stage as never);
+    return json(200, { cycles, count: cycles.length });
+  }
+
+  private agricultureCropsStage(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.stage !== 'string')
+      return json(400, { error: 'fields "id" and "stage" are required' });
+    const cycle = this.agriculture.updateCycleStage(b.id, b.stage as never);
+    return cycle ? json(200, { cycle }) : json(404, { error: 'cycle not found' });
+  }
+
+  private async agricultureHarvestsRecord(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.cropCycleId !== 'string' || typeof b.yieldKg !== 'number')
+      return json(400, { error: 'fields "cropCycleId" and "yieldKg" are required' });
+    const result = await this.agriculture.recordHarvest({ cropCycleId: b.cropCycleId, yieldKg: b.yieldKg });
+    return json(201, result);
+  }
+
+  private agricultureHarvestsList(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const harvests = this.agriculture.harvestsList(req.query.farmId);
+    return json(200, { harvests, count: harvests.length });
+  }
+
+  private agricultureHerdsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.farmId !== 'string' || typeof b.type !== 'string' || typeof b.headCount !== 'number')
+      return json(400, { error: 'fields "farmId", "type", and "headCount" are required' });
+    return json(201, { herd: this.agriculture.registerHerd({ farmId: b.farmId, type: b.type as never, headCount: b.headCount }) });
+  }
+
+  private agricultureHerdsList(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    const herds = this.agriculture.listHerds(req.query.farmId);
+    return json(200, { herds, count: herds.length });
+  }
+
+  private agricultureStats(req: GatewayRequest): GatewayResponse {
+    if (!this.agriculture) return json(501, { error: 'agriculture module not registered' });
+    return json(200, { stats: this.agriculture.stats(req.query.farmId) });
+  }
+
+  // --- Phase 7 — KARIS LOOP ----------------------------------------------
+
+  private circularStreamsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string') return json(400, { error: 'field "name" is required' });
+    return json(201, { stream: this.circular.registerStream({
+      name: b.name,
+      ...(typeof b.type === 'string' ? { type: b.type as never } : {}),
+      ...(typeof b.co2ePerKg === 'number' ? { co2ePerKg: b.co2ePerKg } : {}),
+    }) });
+  }
+
+  private circularStreamsList(): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const streams = this.circular.listStreams();
+    return json(200, { streams, count: streams.length });
+  }
+
+  private async circularCollectionsRecord(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.streamId !== 'string' || typeof b.weightKg !== 'number' || typeof b.source !== 'string')
+      return json(400, { error: 'fields "streamId", "weightKg", and "source" are required' });
+    const collection = await this.circular.recordCollection({ streamId: b.streamId, weightKg: b.weightKg, source: b.source });
+    return json(201, { collection });
+  }
+
+  private circularCollectionsList(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const collections = this.circular.listCollections(req.query.streamId, req.query.status as never);
+    return json(200, { collections, count: collections.length });
+  }
+
+  private circularCollectionsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const collection = this.circular.updateCollectionStatus(b.id, b.status as never);
+    return collection ? json(200, { collection }) : json(404, { error: 'collection not found' });
+  }
+
+  private circularTakebackRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.productId !== 'string' || typeof b.productName !== 'string' || typeof b.returnedBy !== 'string')
+      return json(400, { error: 'fields "productId", "productName", and "returnedBy" are required' });
+    return json(201, { item: this.circular.registerTakeBack({
+      productId: b.productId, productName: b.productName,
+      composition: b.composition && typeof b.composition === 'object' ? b.composition as Record<string, number> : {},
+      returnedBy: b.returnedBy,
+    }) });
+  }
+
+  private circularTakebackList(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const items = this.circular.listTakeBack(req.query.status as never);
+    return json(200, { items, count: items.length });
+  }
+
+  private circularTakebackStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const item = this.circular.updateTakeBackStatus(b.id, b.status as never);
+    return item ? json(200, { item }) : json(404, { error: 'take-back item not found' });
+  }
+
+  private circularScore(req: GatewayRequest): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    const scope = req.query.scope === 'organization' ? 'organization' : 'product';
+    const scopeId = req.query.scopeId;
+    if (!scopeId) return json(400, { error: 'query parameter "scopeId" is required' });
+    return json(200, { score: this.circular.scoreCircularity(scope, scopeId) });
+  }
+
+  private circularStats(): GatewayResponse {
+    if (!this.circular) return json(501, { error: 'circular module not registered' });
+    return json(200, { stats: this.circular.stats() });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

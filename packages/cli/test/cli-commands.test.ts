@@ -100,6 +100,24 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"shipments": 0/);
   });
 
+  it('farm register + plant + stats work', async () => {
+    const farm = await jataqi('farm', 'farm', 'Green Acres', 'u1', '--area', '25');
+    assert.match(farm, /registered [0-9a-f-]{36}/);
+    const plant = await jataqi('farm', 'plant', 'nope', 'maize');
+    assert.match(plant, /unknown field/);
+    const stats = await jataqi('farm', 'stats');
+    assert.match(stats, /"farms": 0/);
+  });
+
+  it('circular stream + collect + stats work', async () => {
+    const stream = await jataqi('circular', 'stream', 'PET', '--type', 'plastic');
+    assert.match(stream, /registered [0-9a-f-]{36}/);
+    const collect = await jataqi('circular', 'collect', 'nope', '100', 'Nairobi');
+    assert.match(collect, /unknown stream/);
+    const stats = await jataqi('circular', 'stats');
+    assert.match(stats, /"streams": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

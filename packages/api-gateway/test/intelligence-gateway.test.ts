@@ -32,6 +32,8 @@ import { FxModule } from '@jataqi/fx';
 import { PkiModule } from '@jataqi/pki';
 import { MobilityModule } from '@jataqi/mobility';
 import { LogisticsModule } from '@jataqi/logistics';
+import { AgricultureModule } from '@jataqi/agriculture';
+import { CircularModule } from '@jataqi/circular';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -94,6 +96,8 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new PkiModule({ issuer: 'https://id.test.local' }));
     kernel.register(new MobilityModule());
     kernel.register(new LogisticsModule());
+    kernel.register(new AgricultureModule());
+    kernel.register(new CircularModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -807,6 +811,60 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const whoami = await jsonRequest('GET', `${base}/whoami`, undefined, session.token);
     assert.equal(whoami.status, 200);
     assert.equal((whoami.body as { principal: { username: string } }).principal.username, 'bridged');
+  });
+
+  // --- Phase 7 — KARIS FARM + KARIS LOOP via gateway ---------------------
+
+  it('agriculture: farm → field → plant → harvest → stats over HTTP', async () => {
+    const farm = await jsonRequest('POST', `${base}/agriculture/farms`, { name: 'Green Acres', ownerId: 'u1', areaHa: 25 }, token);
+    assert.equal(farm.status, 201);
+    const farmId = (farm.body as { farm: { id: string } }).farm.id;
+
+    const field = await jsonRequest('POST', `${base}/agriculture/fields`, { farmId, name: 'North Plot', areaHa: 8 }, token);
+    assert.equal(field.status, 201);
+    const fieldId = (field.body as { field: { id: string } }).field.id;
+
+    const planted = await jsonRequest('POST', `${base}/agriculture/crops`, { fieldId, crop: 'maize', expectedYieldKg: 3000 }, token);
+    assert.equal(planted.status, 201);
+    const cycleId = (planted.body as { cycle: { id: string } }).cycle.id;
+
+    const stage = await jsonRequest('POST', `${base}/agriculture/crops/stage`, { id: cycleId, stage: 'harvesting' }, token);
+    assert.equal(stage.status, 200);
+
+    const harvested = await jsonRequest('POST', `${base}/agriculture/harvests`, { cropCycleId: cycleId, yieldKg: 3400 }, token);
+    assert.equal(harvested.status, 201);
+    assert.equal((harvested.body as { harvest: { yieldKg: number } }).harvest.yieldKg, 3400);
+
+    const stats = await jsonRequest('GET', `${base}/agriculture/stats?farmId=${farmId}`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { stats: { totalHarvestedKg: number } }).stats.totalHarvestedKg, 3400);
+  });
+
+  it('circular: stream → collection → recycled → score → stats over HTTP', async () => {
+    const stream = await jsonRequest('POST', `${base}/circular/streams`, { name: 'PET', type: 'plastic', co2ePerKg: 1.5 }, token);
+    assert.equal(stream.status, 201);
+    const streamId = (stream.body as { stream: { id: string } }).stream.id;
+
+    const collection = await jsonRequest('POST', `${base}/circular/collections`, { streamId, weightKg: 200, source: 'Nairobi' }, token);
+    assert.equal(collection.status, 201);
+    const collectionId = (collection.body as { collection: { id: string } }).collection.id;
+
+    const processed = await jsonRequest('POST', `${base}/circular/collections/status`, { id: collectionId, status: 'recycled' }, token);
+    assert.equal(processed.status, 200);
+    assert.equal((processed.body as { collection: { status: string } }).collection.status, 'recycled');
+
+    const takeback = await jsonRequest('POST', `${base}/circular/takeback`, { productId: 'p1', productName: 'Phone', returnedBy: 'u1' }, token);
+    assert.equal(takeback.status, 201);
+    const itemId = (takeback.body as { item: { id: string } }).item.id;
+    await jsonRequest('POST', `${base}/circular/takeback/status`, { id: itemId, status: 'refurbished' }, token);
+
+    const score = await jsonRequest('GET', `${base}/circular/score?scope=product&scopeId=p1`, undefined, token);
+    assert.equal(score.status, 200);
+    assert.equal((score.body as { score: { score: number } }).score.score, 100);
+
+    const stats = await jsonRequest('GET', `${base}/circular/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { stats: { recycledKg: number } }).stats.recycledKg, 200);
   });
 
   // --- Authz guard --------------------------------------------------------

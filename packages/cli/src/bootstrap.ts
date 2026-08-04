@@ -85,6 +85,8 @@ import { FxModule } from '@jataqi/fx';
 import { PkiModule } from '@jataqi/pki';
 import { MobilityModule } from '@jataqi/mobility';
 import { LogisticsModule } from '@jataqi/logistics';
+import { AgricultureModule } from '@jataqi/agriculture';
+import { CircularModule } from '@jataqi/circular';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -271,6 +273,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Phase 7 — MOTO X mobility + PORTLINK logistics intelligence.
   kernel.register(new MobilityModule());
   kernel.register(new LogisticsModule());
+  // Phase 7 — KARIS FARM agriculture + KARIS LOOP circular economy.
+  kernel.register(new AgricultureModule());
+  kernel.register(new CircularModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

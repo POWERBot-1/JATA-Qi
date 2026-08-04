@@ -24,6 +24,8 @@ import type { FxModule } from '@jataqi/fx';
 import type { PkiModule } from '@jataqi/pki';
 import type { MobilityModule } from '@jataqi/mobility';
 import type { LogisticsModule } from '@jataqi/logistics';
+import type { AgricultureModule } from '@jataqi/agriculture';
+import type { CircularModule } from '@jataqi/circular';
 
 const HELP = `
 JATA Qi CLI
@@ -55,6 +57,8 @@ Commands:
   pki <sub>           PKI: status|root|cas|issue|list|revoke|crl|ra|client|discovery.
   mobility <sub>      MOTO X: vehicles|fleets|drivers|trip|telemetry|geofences|stats.
   logistics <sub>     PORTLINK: ports|vessels|containers|shipments|track|warehouses|stats.
+  farm <sub>          KARIS FARM: farms|fields|plant|harvest|herds|stats.
+  circular <sub>      KARIS LOOP: streams|collect|collections|takeback|score|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -83,6 +87,8 @@ async function main() {
   const pki = kernel.getModule<PkiModule>('pki');
   const mobility = kernel.getModule<MobilityModule>('mobility');
   const logistics = kernel.getModule<LogisticsModule>('logistics');
+  const agriculture = kernel.getModule<AgricultureModule>('agriculture');
+  const circular = kernel.getModule<CircularModule>('circular');
   let longRunning = false;
 
   try {
@@ -827,6 +833,116 @@ async function main() {
         }
         break;
       }
+      case 'farm': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'farms':
+            for (const f of agriculture.listFarms()) console.log(`- ${f.name} (${f.ownerId}) ${f.areaHa}ha`);
+            console.log(`${agriculture.listFarms().length} farm(s)`);
+            break;
+          case 'farm': {
+            const name = args[2], owner = args[3];
+            if (!name || !owner) { console.error('Usage: jataqi farm farm <name> <ownerId> [--area n]'); process.exit(1); }
+            const f = agriculture.registerFarm({ name, ownerId: owner, ...(flag('area') ? { areaHa: Number(flag('area')) } : {}) });
+            console.log(`registered ${f.id}`);
+            break;
+          }
+          case 'fields': {
+            const farmId = args[2];
+            const fields = farmId ? agriculture.listFields(farmId) : agriculture.listFields();
+            for (const f of fields) console.log(`- ${f.name} ${f.areaHa}ha [${f.status}]`);
+            console.log(`${fields.length} field(s)`);
+            break;
+          }
+          case 'plant': {
+            const fieldId = args[2], crop = args[3];
+            if (!fieldId || !crop) { console.error('Usage: jataqi farm plant <fieldId> <crop> [--yield n]'); process.exit(1); }
+            try {
+              const c = agriculture.plantCrop({ fieldId, crop, ...(flag('yield') ? { expectedYieldKg: Number(flag('yield')) } : {}) });
+              console.log(`planted ${c.crop} cycle=${c.id}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'harvest': {
+            const cycleId = args[2], yieldKg = args[3];
+            if (!cycleId || !yieldKg) { console.error('Usage: jataqi farm harvest <cycleId> <yieldKg>'); process.exit(1); }
+            const r = await agriculture.recordHarvest({ cropCycleId: cycleId, yieldKg: Number(yieldKg) });
+            console.log(`harvested ${r.harvest.yieldKg}kg of ${r.harvest.crop}`);
+            break;
+          }
+          case 'herds':
+            for (const h of agriculture.listHerds()) console.log(`- ${h.type} x${h.headCount} [${h.healthStatus}]`);
+            console.log(`${agriculture.listHerds().length} herd(s)`);
+            break;
+          case 'stats':
+            console.log(JSON.stringify(agriculture.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi farm farms|farm|fields|plant|harvest|herds|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'circular': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'streams':
+            for (const s of circular.listStreams()) console.log(`- ${s.name} (${s.type}) ${s.co2ePerKg}kgCO2e/kg ${s.active ? '' : '[inactive]'}`);
+            console.log(`${circular.listStreams().length} stream(s)`);
+            break;
+          case 'stream': {
+            const name = args[2];
+            if (!name) { console.error('Usage: jataqi circular stream <name> [--type plastic] [--co2e 1.5]'); process.exit(1); }
+            const s = circular.registerStream({ name, ...(flag('type') ? { type: flag('type') as never } : {}), ...(flag('co2e') ? { co2ePerKg: Number(flag('co2e')) } : {}) });
+            console.log(`registered ${s.id}`);
+            break;
+          }
+          case 'collect': {
+            const streamId = args[2], weightKg = args[3], source = args[4];
+            if (!streamId || !weightKg || !source) { console.error('Usage: jataqi circular collect <streamId> <weightKg> <source>'); process.exit(1); }
+            try {
+              const c = await circular.recordCollection({ streamId, weightKg: Number(weightKg), source });
+              console.log(`collected ${c.id} (${c.weightKg}kg)`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'collections':
+            for (const c of circular.listCollections()) console.log(`- ${c.id} ${c.weightKg}kg [${c.status}] from ${c.source}`);
+            console.log(`${circular.listCollections().length} collection(s)`);
+            break;
+          case 'takeback': {
+            const productId = args[2], productName = args[3], returnedBy = args[4];
+            if (!productId || !productName || !returnedBy) { console.error('Usage: jataqi circular takeback <productId> <productName> <returnedBy>'); process.exit(1); }
+            const item = circular.registerTakeBack({ productId, productName, composition: {}, returnedBy });
+            console.log(`registered ${item.id}`);
+            break;
+          }
+          case 'score': {
+            const scopeId = args[2];
+            if (!scopeId) { console.error('Usage: jataqi circular score <productId|orgId> [--scope product|organization]'); process.exit(1); }
+            const score = circular.scoreCircularity((flag('scope') === 'organization' ? 'organization' : 'product'), scopeId);
+            console.log(JSON.stringify(score, null, 2));
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(circular.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi circular streams|stream|collect|collections|takeback|score|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -836,7 +952,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

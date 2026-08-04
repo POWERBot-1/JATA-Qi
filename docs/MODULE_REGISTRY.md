@@ -35,6 +35,8 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/fx` | `fx` | memory, universal-wallet | KARIS FX (Phase 6) — rate engine, cross rates, conversions, trend/volatility analytics |
 | `@jataqi/mobility` | `mobility` | memory | MOTO X (Phase 7) — vehicles/fleets/drivers, dispatch, trips, telemetry, geofences |
 | `@jataqi/logistics` | `logistics` | memory | PORTLINK (Phase 7) — ports, vessels, containers, shipments + tracking, warehouses |
+| `@jataqi/agriculture` | `agriculture` | memory | KARIS FARM (Phase 7) — farms, fields, crop cycles, harvests, livestock |
+| `@jataqi/circular` | `circular` | memory | KARIS LOOP (Phase 7) — material streams, collections, take-back, circularity |
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
 | `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |
