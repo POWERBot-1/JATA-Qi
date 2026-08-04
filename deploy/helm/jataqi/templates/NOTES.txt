@@ -1,0 +1,17 @@
+JATA Qi has been deployed!
+
+1. Wait for the pod to become ready:
+   kubectl rollout status statefulset/{{ .Release.Name }} -n {{ .Release.Namespace }}
+
+2. Forward the gateway port:
+   kubectl port-forward svc/{{ .Release.Name }} {{ .Values.service.port }}:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+
+3. Check health:
+   curl http://127.0.0.1:{{ .Values.service.port }}/health
+   curl http://127.0.0.1:{{ .Values.service.port }}/readyz
+
+Notes:
+- Transport: {{ if .Values.jataqi.tls.enabled }}HTTPS (TLS){{ else }}HTTP (set jataqi.tls.enabled to terminate TLS){{ end }}
+- Storage: {{ .Values.jataqi.storage.driver }} at {{ .Values.jataqi.storage.fsRoot }}
+- Scaling: the gateway is stateless; raise replicaCount only with a shared/networked store.
+- Monitoring: {{ if .Values.monitoring.enabled }}ServiceMonitor enabled{{ else }}disabled (set monitoring.enabled){{ end }}.

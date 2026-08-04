@@ -1,0 +1,39 @@
+# JATA Qi — HorizontalPodAutoscaler. Scales replicas on CPU + memory pressure.
+# Effective only when `replicas > 1` is permitted by the storage backend (see
+# deployment.yaml). For single-writer SQLite keep maxReplicas: 1.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: jataqi
+  minReplicas: 1
+  maxReplicas: 1            # raise with a shared/networked store
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+    - type: Resource
+      resource:
+        name: memory
+        target: { type: Utilization, averageUtilization: 75 }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60

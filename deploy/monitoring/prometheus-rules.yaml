@@ -1,0 +1,58 @@
+# JATA Qi — Prometheus alerting rules (PrometheusRule CRD for the operator).
+# Alerts are derived from the gateway's RED metrics (jataqi_requests_total,
+# jataqi_request_duration_ms, jataqi_requests_in_flight).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: jataqi-alerts
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+    release: prometheus
+spec:
+  groups:
+    - name: jataqi.rules
+      rules:
+        - alert: JataQiHighErrorRate
+          expr: |
+            sum(rate(jataqi_requests_total{status=~"5.."}[5m]))
+              / clamp_min(sum(rate(jataqi_requests_total[5m])), 1) > 0.05
+          for: 5m
+          labels: { severity: critical, service: jataqi }
+          annotations:
+            summary: "JATA Qi error rate above 5%"
+            description: "More than 5% of requests are returning 5xx over the last 5m."
+
+        - alert: JataQiHighLatencyP95
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le, path) (rate(jataqi_request_duration_ms_bucket[5m]))) > 1000
+          for: 10m
+          labels: { severity: warning, service: jataqi }
+          annotations:
+            summary: "JATA Qi p95 latency above 1s"
+            description: "p95 request latency exceeds 1 second for some route."
+
+        - alert: JataQiDown
+          expr: up{job="jataqi"} == 0
+          for: 2m
+          labels: { severity: critical, service: jataqi }
+          annotations:
+            summary: "JATA Qi gateway is down"
+            description: "Prometheus cannot scrape the JATA Qi gateway."
+
+        - alert: JataQiPodNotReady
+          expr: kube_deployment_status_replicas_available{deployment="jataqi"} < 1
+          for: 5m
+          labels: { severity: critical, service: jataqi }
+          annotations:
+            summary: "JATA Qi has no ready replicas"
+            description: "No JATA Qi pods are passing the readiness check."
+
+        - alert: JataQiSessionStoreUnreachable
+          expr: jataqi_requests_total{path="/readyz",status="503"} > 0
+          for: 2m
+          labels: { severity: critical, service: jataqi }
+          annotations:
+            summary: "JATA Qi readiness probe failing"
+            description: "The gateway reports not-ready (storage/security checks failing)."

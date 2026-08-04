@@ -1,0 +1,9 @@
+# JATA Qi — Kubernetes namespace
+# Apply with: kubectl apply -k deploy/k8s  (or kubectl apply -f deploy/k8s/)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+    app.kubernetes.io/part-of: jataqi

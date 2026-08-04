@@ -1,0 +1,105 @@
+# JATA Qi — StatefulSet. The gateway is STATELESS (sessions/users/org data live
+# in the storage layer, so any replica can authenticate any request — see the
+# PR5 horizontal-scaling tests). With the bundled SQLite driver, scale-out beyond
+# a single writer requires EITHER:
+#   (a) a ReadWriteMany volume on a POSIX-locking-capable shared filesystem
+#       (e.g. CephFS / EFS with proper locking) and WAL mode, OR
+#   (b) the planned networked-DB storage driver (Postgres) — see docs.
+# Default: 1 replica (single-writer SQLite, vertically scalable). Bump `replicas`
+# only with a shared store in place.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  serviceName: jataqi
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jataqi
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jataqi
+      annotations:
+        # Roll on config/secret change (CI should hash the real data).
+        checksum/config: "REPLACE_VIA_CI"
+    spec:
+      serviceAccountName: jataqi
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: jataqi
+          image: ghcr.io/powerbot-1/jataqi:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 7400
+          envFrom:
+            - configMapRef:
+                name: jataqi-config
+            - secretRef:
+                name: jataqi-secrets
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          # Liveness = "is the process alive"; readiness = "can it serve traffic".
+          livenessProbe:
+            httpGet: { path: /livez, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          startupProbe:
+            httpGet: { path: /livez, port: http }
+            periodSeconds: 5
+            failureThreshold: 24   # up to 2 minutes to boot
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1000m", memory: "512Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: certs
+          secret:
+            secretName: jataqi-tls
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        # ReadWriteMany enables multi-replica shared storage on a capable FS;
+        # otherwise keep ReadWriteOnce with replicas: 1.
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

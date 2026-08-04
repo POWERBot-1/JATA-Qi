@@ -1,0 +1,27 @@
+# JATA Qi — non-secret runtime configuration.
+# Mirrors .env.example; secrets live in secret.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jataqi-config
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+data:
+  LOG_LEVEL: "info"
+  STORAGE_DRIVER: "sqlite"
+  STORAGE_FS_ROOT: "/data/jataqi.db"
+  SECURITY_PERSIST_SESSIONS: "true"
+  API_VERSION: "v1"
+  VECTOR_MODEL: "hash"
+  AGENT_LLM: "echo"
+  JATAQI_GATEWAY_PORT: "7400"
+  JATAQI_GATEWAY_HOST: "0.0.0.0"
+  # Scheduled backups of the audit + snapshot namespaces (every 6h, retain 10).
+  BACKUP_NAMESPACES: "security.audit,dr.snapshots"
+  BACKUP_INTERVAL_MS: "21600000"
+  BACKUP_RETENTION: "10"
+  # Switch these in production (override per-environment):
+  # VECTOR_MODEL: "openai"
+  # AGENT_LLM: "openai"
+  # OPENAI_CHAT_MODEL: "gpt-4o-mini"

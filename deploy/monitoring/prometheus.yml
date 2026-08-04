@@ -1,0 +1,19 @@
+# Standalone Prometheus scrape config (no operator). Use with a Prometheus
+# binary / container pointed at this file.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - prometheus-rules.yaml
+
+scrape_configs:
+  - job_name: jataqi
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      # Point at the cluster Service (port-forward: kubectl port-forward svc/jataqi-cluster 7400:80)
+      - targets: ["localhost:7400"]
+        labels: { service: jataqi }
+    # /metrics requires metrics:read; supply a bearer token if auth is enabled.
+    bearer_token: "REPLACE_WITH_METRICS_TOKEN_OR_DISABLE_AUTH_FOR_SCRAPE"

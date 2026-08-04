@@ -1,0 +1,37 @@
+# JATA Qi — headless ClusterIP Service (pairs with the StatefulSet) plus a
+# regular ClusterIP for clients that prefer stable cluster DNS.
+apiVersion: v1
+kind: Service
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  type: ClusterIP
+  clusterIP: None      # headless — lets the StatefulSet expose stable pod DNS
+  selector:
+    app.kubernetes.io/name: jataqi
+  ports:
+    - name: http
+      port: 7400
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jataqi-cluster
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+    app.kubernetes.io/service: cluster
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: jataqi
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

@@ -1,12 +1,18 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import { MemoryDriver } from './drivers/memory.js';
 import { FsDriver } from './drivers/filesystem.js';
+import { EncryptedDriver } from './drivers/encrypted.js';
+import { QuotaDriver } from './drivers/quota.js';
+import type { PostgresConnectOptions } from './drivers/pg/connection.js';
 import {
   IBlobStore,
   ICollection,
   INamespace,
   IStorageDriver,
   StorageEvents,
+  TenantScope,
+  isTenantPartition,
+  tenantPartitionName,
 } from './types.js';
 
 export interface StorageModuleConfig {
@@ -16,6 +22,45 @@ export interface StorageModuleConfig {
   fsRoot?: string;
   /** Pre-configured driver instance (overrides driver option). */
   driverInstance?: IStorageDriver;
+  /**
+   * Encryption-at-rest key (AES-256-GCM). When set, all values/docs/blobs are
+   * transparently encrypted before reaching the underlying driver (PR7).
+   * Accepts a 44-char base64 string, 64-char hex string, Buffer, or passphrase.
+   */
+  encryptionKey?: string | Buffer;
+  /** Per-name byte quotas (namespace/collection name -> max bytes). PR7. */
+  quotas?: Record<string, number>;
+  /** Default byte quota applied to any name without an explicit entry. PR7. */
+  defaultQuotaBytes?: number;
+  /** PostgreSQL connection options (multi-writer horizontal scaling). PR8. */
+  postgres?: PostgresConnectOptions;
+}
+
+/**
+ * A tenant-scoped storage facade. All collections / namespaces / blob stores it
+ * opens are physically partitioned under the tenant id, enforcing hard isolation
+ * between organizations at the storage layer (PR4 — multi-tenancy enforcement).
+ */
+export class TenantScopedStorage implements TenantScope {
+  readonly tenantId: string;
+  private readonly mod: StorageModule;
+
+  constructor(tenantId: string, mod: StorageModule) {
+    this.tenantId = tenantId;
+    this.mod = mod;
+  }
+
+  collection<T extends { id: string }>(name: string): Promise<ICollection<T>> {
+    return this.mod.collection<T>(tenantPartitionName(this.tenantId, name));
+  }
+
+  namespace(name: string): Promise<INamespace> {
+    return this.mod.namespace(tenantPartitionName(this.tenantId, name));
+  }
+
+  blobStore(name: string): Promise<IBlobStore> {
+    return this.mod.blobStore(tenantPartitionName(this.tenantId, name));
+  }
 }
 
 export class StorageModule implements IModule {
@@ -49,9 +94,43 @@ export class StorageModule implements IModule {
         case 'fs':
           this.driver = new FsDriver({ root: this.opts.fsRoot ?? kernel.config.get('storage.fsRoot', undefined) });
           break;
+        case 'sqlite': {
+          const { SqliteDriver } = await import('./drivers/sqlite.js');
+          const dbPath = this.opts.fsRoot ?? kernel.config.get('storage.sqlitePath', undefined) ?? './.jataqi/jataqi.db';
+          this.driver = new SqliteDriver({ path: dbPath });
+          break;
+        }
+        case 'postgres':
+        case 'postgresql': {
+          const { PostgresDriver } = await import('./drivers/postgres.js');
+          const connect = this.opts.postgres ?? {
+            host: kernel.config.get('storage.pgHost', undefined) ?? '127.0.0.1',
+            port: kernel.config.get('storage.pgPort', undefined) ?? 5432,
+            user: kernel.config.get('storage.pgUser', undefined) ?? 'postgres',
+            password: kernel.config.get('storage.pgPassword', undefined) ?? '',
+            database: kernel.config.get('storage.pgDatabase', undefined) ?? 'postgres',
+            ssl: kernel.config.get('storage.pgSsl', undefined),
+          };
+          this.driver = new PostgresDriver({ connect });
+          break;
+        }
         default:
           throw new Error(`Storage: unknown driver "${driverName}"`);
       }
+    }
+    // Compose hardening decorators over the base driver. Order is
+    // QuotaDriver(EncryptedDriver(base)) so quotas count logical (pre-encryption)
+    // size and encryption is applied just above the physical store (PR7).
+    if (this.opts.encryptionKey) {
+      this.driver = new EncryptedDriver(this.driver, { key: this.opts.encryptionKey });
+      kernel.logger.info('storage: encryption at rest ENABLED (AES-256-GCM)');
+    }
+    if (this.opts.quotas || this.opts.defaultQuotaBytes !== undefined) {
+      this.driver = new QuotaDriver(this.driver, {
+        ...(this.opts.quotas ? { quotas: this.opts.quotas } : {}),
+        ...(this.opts.defaultQuotaBytes !== undefined ? { defaultQuotaBytes: this.opts.defaultQuotaBytes } : {}),
+      });
+      kernel.logger.info(`storage: quota enforcement ENABLED (default=${this.opts.defaultQuotaBytes ?? 'unlimited'})`);
     }
     kernel.container.registerValue('storage.driver', this.driver);
     kernel.container.registerValue('storage.module', this);
@@ -107,5 +186,21 @@ export class StorageModule implements IModule {
   /** Access the underlying driver (escape hatch). */
   getDriver(): IStorageDriver {
     return this.driver;
+  }
+
+  /**
+   * Open a tenant-scoped view of storage for the given organization id. Data
+   * written through the returned scope is partitioned under `tenant:<orgId>:`
+   * and is invisible to every other tenant (PR4 — multi-tenancy enforcement).
+   */
+  tenant(tenantId: string): TenantScope {
+    // Validate the tenant id eagerly (the helper throws on invalid ids).
+    tenantPartitionName(tenantId, 'probe');
+    return new TenantScopedStorage(tenantId, this);
+  }
+
+  /** True when a logical name resolves to a tenant partition. */
+  isTenantPartition(name: string): boolean {
+    return isTenantPartition(name);
   }
 }

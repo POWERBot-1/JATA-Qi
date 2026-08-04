@@ -1,0 +1,22 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Values.monitoring.namespace }}
+  labels:
+    {{- include "jataqi.labels" . | nindent 4 }}
+    release: {{ .Values.monitoring.release | quote }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "jataqi.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s
+{{- end }}

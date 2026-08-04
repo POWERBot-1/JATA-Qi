@@ -1,0 +1,100 @@
+# Default values for the JATA Qi Helm chart.
+# Override per-environment with -f values-{env}.yaml or --set.
+
+replicaCount: 1            # raise only with a shared/networked storage backend
+
+image:
+  repository: ghcr.io/powerbot-1/jataqi
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 7400
+
+jataqi:
+  port: 7400
+  host: "0.0.0.0"
+  logLevel: info
+  # Storage: memory | filesystem | sqlite  (sqlite recommended for persistence)
+  storage:
+    driver: sqlite
+    fsRoot: /data/jataqi.db
+    size: 5Gi
+    accessMode: ReadWriteOnce   # ReadWriteMany only with a capable shared FS
+  security:
+    persistSessions: true
+    bootstrapAdmin:
+      username: admin
+      password: "CHANGE_ME"     # override via --set or sealed secret
+  apiVersion: v1
+  llm:
+    provider: echo              # echo | openai
+    openai:
+      apiKey: ""                # set in production
+      chatModel: gpt-4o-mini
+  vector:
+    model: hash
+  cors:
+    enabled: false
+    origins: []                 # e.g. ["https://app.example.com"]
+    credentials: false
+  tls:
+    enabled: false
+    certPath: /certs/tls.crt
+    keyPath: /certs/tls.key
+  backups:
+    namespaces: "security.audit,dr.snapshots"
+    intervalMs: 21600000
+    retention: 10
+
+# Kubernetes probes (readiness uses dependency checks).
+probes:
+  liveness:
+    path: /livez
+    initialDelaySeconds: 5
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 3
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: "1000m", memory: 512Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1               # raise with a shared store
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+
+ingress:
+  enabled: false
+  className: nginx
+  host: jataqi.example.com
+  tls:
+    enabled: false
+    secretName: jataqi-ingress-tls
+
+networkPolicy:
+  enabled: true
+
+monitoring:
+  enabled: false               # enable with kube-prometheus-stack
+  namespace: jataqi
+  release: prometheus

@@ -1,0 +1,63 @@
+{
+  "annotations": { "list": [] },
+  "title": "JATA Qi — Gateway RED",
+  "uid": "jataqi-red",
+  "version": 1,
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "tags": ["jataqi", "gateway"],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "15s",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Requests / sec",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(jataqi_requests_total[1m]))", "legendFormat": "rps", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "In-flight requests",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "sum(jataqi_requests_in_flight)", "legendFormat": "in-flight", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "5xx error rate",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "sum(rate(jataqi_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(jataqi_requests_total[5m])), 1)", "legendFormat": "5xx", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by route",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+      "targets": [
+        { "expr": "sum by (path) (rate(jataqi_requests_total[1m]))", "legendFormat": "{{path}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency (ms) — p50 / p95 / p99",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "histogram_quantile(0.50, sum by (le) (rate(jataqi_request_duration_ms_bucket[5m])))", "legendFormat": "p50", "refId": "A" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(jataqi_request_duration_ms_bucket[5m])))", "legendFormat": "p95", "refId": "B" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(jataqi_request_duration_ms_bucket[5m])))", "legendFormat": "p99", "refId": "C" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by status code",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "targets": [
+        { "expr": "sum by (status) (rate(jataqi_requests_total[1m]))", "legendFormat": "{{status}}", "refId": "A" }
+      ]
+    }
+  ]
+}

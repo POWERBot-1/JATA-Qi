@@ -1,0 +1,14 @@
+# JATA Qi — PodDisruptionBudget keeps at least one replica available during
+# voluntary disruptions (node drains, upgrades).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: jataqi
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jataqi
