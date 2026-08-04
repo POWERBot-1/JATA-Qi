@@ -1,7 +1,7 @@
 {
-  "name": "@jataqi/link-intelligence",
+  "name": "@jataqi/multimodal-intelligence",
   "version": "0.1.0",
-  "description": "JATA Qi Universal Link Intelligence — classifies external content, extracts structured intelligence, detects capability gaps, generates governed proposals, drives validated self-evolution. Composes the intelligence stack. Zero external deps.",
+  "description": "JATA Qi Multimodal Intelligence — universal acquisition framework for text, documents, images, audio, video, code, web, device, enterprise, and API sources. Normalizes into SemanticKnowledge, stores in graph+memory, detects gaps. Zero external deps.",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -21,9 +21,7 @@
   "files": ["dist", "src"],
   "license": "MIT",
   "dependencies": {
-    "@jataqi/core-kernel": "0.1.0",
-    "@jataqi/memory": "0.1.0",
-    "@jataqi/self-evolution": "0.1.0"
+    "@jataqi/core-kernel": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
