@@ -22,6 +22,8 @@ import type { BrandingModule } from '@jataqi/branding';
 import type { AutomationModule } from '@jataqi/automation';
 import type { FxModule } from '@jataqi/fx';
 import type { PkiModule } from '@jataqi/pki';
+import type { MobilityModule } from '@jataqi/mobility';
+import type { LogisticsModule } from '@jataqi/logistics';
 
 const HELP = `
 JATA Qi CLI
@@ -51,6 +53,8 @@ Commands:
   automation <sub>    SOMA AI: list|show|create|run|executions|stats|enable|disable|remove.
   fx <sub>            KARIS FX: rates|rate|set|convert|history|analytics|currencies|stats.
   pki <sub>           PKI: status|root|cas|issue|list|revoke|crl|ra|client|discovery.
+  mobility <sub>      MOTO X: vehicles|fleets|drivers|trip|telemetry|geofences|stats.
+  logistics <sub>     PORTLINK: ports|vessels|containers|shipments|track|warehouses|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -77,6 +81,8 @@ async function main() {
   const automation = kernel.getModule<AutomationModule>('automation');
   const fx = kernel.getModule<FxModule>('fx');
   const pki = kernel.getModule<PkiModule>('pki');
+  const mobility = kernel.getModule<MobilityModule>('mobility');
+  const logistics = kernel.getModule<LogisticsModule>('logistics');
   let longRunning = false;
 
   try {
@@ -709,6 +715,118 @@ async function main() {
         }
         break;
       }
+      case 'mobility': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'vehicles': {
+            const vehicles = mobility.listVehicles();
+            for (const v of vehicles) console.log(`- ${v.registration} ${v.make} ${v.model} [${v.status}]${v.location ? ` @${v.location.lat},${v.location.lng}` : ''}`);
+            console.log(`${vehicles.length} vehicle(s)`);
+            break;
+          }
+          case 'register': {
+            const reg = args[2], make = args[3], model = args[4];
+            if (!reg || !make || !model) { console.error('Usage: jataqi mobility register <registration> <make> <model> [--type car] [--lat n --lng n]'); process.exit(1); }
+            const v = mobility.registerVehicle({
+              registration: reg, make, model,
+              ...(flag('type') ? { type: flag('type') as never } : {}),
+              ...(flag('lat') && flag('lng') ? { location: { lat: Number(flag('lat')), lng: Number(flag('lng')) } } : {}),
+            });
+            console.log(`registered ${v.id}`);
+            break;
+          }
+          case 'trip': {
+            const lat1 = args[2], lng1 = args[3], lat2 = args[4], lng2 = args[5];
+            if (!lat1 || !lng1 || !lat2 || !lng2) { console.error('Usage: jataqi mobility trip <pickupLat> <pickupLng> <dropoffLat> <dropoffLng> [--rider u1]'); process.exit(1); }
+            try {
+              const trip = mobility.requestTrip({
+                pickup: { lat: Number(lat1), lng: Number(lng1) },
+                dropoff: { lat: Number(lat2), lng: Number(lng2) },
+                ...(flag('rider') ? { riderId: flag('rider') } : {}),
+              });
+              console.log(`trip ${trip.id} | ${trip.distanceKm.toFixed(1)}km | fare ${trip.fare} | vehicle ${trip.vehicleId}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'telemetry': {
+            const vehicleId = args[2], lat = args[3], lng = args[4];
+            if (!vehicleId || !lat || !lng) { console.error('Usage: jataqi mobility telemetry <vehicleId> <lat> <lng> [--speed n]'); process.exit(1); }
+            const p = mobility.recordTelemetry({ vehicleId, lat: Number(lat), lng: Number(lng), ...(flag('speed') ? { speedKmh: Number(flag('speed')) } : {}) });
+            console.log(`telemetry @${p.ts}`);
+            break;
+          }
+          case 'geofences':
+            for (const g of mobility.listGeofences()) console.log(`- ${g.name} ${g.center.lat},${g.center.lng} r=${g.radiusM}m`);
+            console.log(`${mobility.listGeofences().length} geofence(s)`);
+            break;
+          case 'stats':
+            console.log(JSON.stringify(mobility.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi mobility vehicles|register|trip|telemetry|geofences|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'logistics': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'ports':
+            for (const p of logistics.listPorts()) console.log(`- ${p.code} ${p.name} (${p.country}) ${p.capacityTeu}TEU`);
+            console.log(`${logistics.listPorts().length} port(s)`);
+            break;
+          case 'port': {
+            const name = args[2], code = args[3], country = args[4];
+            if (!name || !code || !country) { console.error('Usage: jataqi logistics port <name> <code> <country>'); process.exit(1); }
+            const p = logistics.registerPort({ name, code, country });
+            console.log(`registered ${p.id}`);
+            break;
+          }
+          case 'vessels':
+            for (const v of logistics.listVessels()) console.log(`- ${v.name} ${v.imo} [${v.status}]`);
+            console.log(`${logistics.listVessels().length} vessel(s)`);
+            break;
+          case 'shipments':
+            for (const s of logistics.listShipments()) console.log(`- ${s.trackingRef} ${s.origin} → ${s.destination} [${s.status}]`);
+            console.log(`${logistics.listShipments().length} shipment(s)`);
+            break;
+          case 'shipment': {
+            const origin = args[2], destination = args[3], shipper = args[4], consignee = args[5];
+            if (!origin || !destination || !shipper || !consignee) { console.error('Usage: jataqi logistics shipment <origin> <destination> <shipper> <consignee> [--mode sea]'); process.exit(1); }
+            const s = logistics.createShipment({ mode: (flag('mode') as never) ?? 'sea', origin, destination, shipper, consignee });
+            console.log(`created ${s.id} ref=${s.trackingRef}`);
+            break;
+          }
+          case 'track': {
+            const ref = args[2], code = args[3], location = args[4];
+            if (!ref || !code || !location) { console.error('Usage: jataqi logistics track <trackingRef> <code> <location>'); process.exit(1); }
+            const s = logistics.getShipmentByTrackingRef(ref);
+            if (!s) { console.error('shipment not found'); break; }
+            const e = await logistics.trackShipment({ shipmentId: s.id, code: code as never, location });
+            console.log(`tracked ${e.code} at ${e.location}`);
+            break;
+          }
+          case 'warehouses':
+            for (const w of logistics.listWarehouses()) console.log(`- ${w.name} (${w.location}) ${w.usedSlots}/${w.capacitySlots}`);
+            console.log(`${logistics.listWarehouses().length} warehouse(s)`);
+            break;
+          case 'stats':
+            console.log(JSON.stringify(logistics.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi logistics ports|port|vessels|shipments|shipment|track|warehouses|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -718,7 +836,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

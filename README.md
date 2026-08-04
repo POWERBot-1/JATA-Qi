@@ -54,6 +54,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/automation` | **SOMA AI (Phase 6)** — Intelligent Automation Engine: schedule/event/manual triggers, chained actions (memory, notifications, knowledge, agents, tools), concurrency caps, timeouts, execution history |
 | `@jataqi/pki` | **PRX Part C** — X.509 certificate authority (root/intermediate), Registration Authority with CA/B Forum domain validation, CRLs, OIDC-lite Identity Provider (JWT ID tokens, JWKS, introspection) |
 | `@jataqi/fx` | **KARIS FX (Phase 6)** — Foreign Exchange Intelligence: rate engine, cross rates, bid/ask spreads, conversions with margin, history, trend + volatility analytics |
+| `@jataqi/mobility` | **MOTO X (Phase 7)** — Mobility Intelligence: vehicles/fleets/drivers, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences |
+| `@jataqi/logistics` | **PORTLINK (Phase 7)** — Logistics & Port Intelligence: ports, vessels, containers, tracking-event shipment timelines, warehouses, freight analytics |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -175,6 +177,11 @@ node packages/cli/dist/src/index.js fx convert USD KES 10000
 node packages/cli/dist/src/index.js pki root "JATA Qi Root"
 node packages/cli/dist/src/index.js pki issue <caId> api.example.com --san api.example.com
 node packages/cli/dist/src/index.js pki client "my app" https://app.example.com/cb
+node packages/cli/dist/src/index.js mobility register KDD 123B Toyota Corolla --lat -1.2921 --lng 36.8219
+node packages/cli/dist/src/index.js mobility trip -1.2921 36.8219 -1.2864 36.8172
+node packages/cli/dist/src/index.js logistics port Mombasa MBA KE
+node packages/cli/dist/src/index.js logistics shipment Shanghai Mombasa "Exporter Ltd" "Importer Co" --mode sea
+node packages/cli/dist/src/index.js logistics track JQ-XXXXXX delivered "ICD Embakasi"
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -288,6 +295,11 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/pki/status` · `/pki/cas` · `/pki/certificates` · `/pki/crl` · `/pki/idp/discovery` | `pki:read` | PKI reads |
 | POST | `/pki/ca/root` · `/pki/ca/intermediate` · `/pki/certificates` · `/pki/certificates/revoke` · `/pki/ra/*` · `/pki/idp/clients` · `/pki/idp/authorize` | `pki:write` / `pki:read` | PKI operations |
 | POST | `/pki/idp/token` · `/pki/idp/introspect` | – | OIDC token + introspection endpoints |
+| POST | `/mobility/vehicles` · `/mobility/fleets` · `/mobility/drivers` · `/mobility/trips` · `/mobility/telemetry` · `/mobility/geofences` | `mobility:write` | MOTO X operations |
+| GET | `/mobility/vehicles` · `/mobility/fleets` · `/mobility/drivers` · `/mobility/trips` · `/mobility/telemetry` · `/mobility/geofences` · `/mobility/stats` | `mobility:read` | MOTO X reads |
+| POST | `/logistics/ports` · `/logistics/vessels` · `/logistics/containers` · `/logistics/shipments` · `/logistics/shipments/track` · `/logistics/warehouses` | `logistics:write` | PORTLINK operations |
+| GET | `/logistics/ports` · `/logistics/vessels` · `/logistics/containers` · `/logistics/shipments` · `/logistics/shipment` · `/logistics/shipments/timeline` · `/logistics/warehouses` · `/logistics/stats` | `logistics:read` | PORTLINK reads |
+| POST | `/pki/idp/login` | – | IdP access token → platform session bridge (JIT provisioning) |
 
 ### Security model
 
@@ -387,6 +399,9 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Self-Evolution × CLP 4/5** (Phase 7 extension — evolution proposals from concluded prompt experiments; distillation progress observations)
 - ✅ **PKI — PRX Part C** (X.509 CA root/intermediate hierarchy verified by OpenSSL, RFC 5280 DER certificates, revocation + CRLs, Registration Authority with dns-txt/http-01/email validation, OIDC-lite Identity Provider with JWT ID tokens + JWKS)
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
+- ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
+- ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)
+- ✅ **IdP ↔ Security session bridge** (directive — OIDC authorization-code login mints platform sessions with RBAC + audit; JIT account provisioning)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)

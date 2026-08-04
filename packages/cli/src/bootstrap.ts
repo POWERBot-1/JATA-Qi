@@ -83,6 +83,8 @@ import { SearchModule } from '@jataqi/search';
 import { AutomationModule } from '@jataqi/automation';
 import { FxModule } from '@jataqi/fx';
 import { PkiModule } from '@jataqi/pki';
+import { MobilityModule } from '@jataqi/mobility';
+import { LogisticsModule } from '@jataqi/logistics';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -266,6 +268,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   }));
   // Phase 6 — KARIS FX: foreign exchange intelligence.
   kernel.register(new FxModule({ anchor: process.env.JATAQI_FX_ANCHOR ?? 'USD' }));
+  // Phase 7 — MOTO X mobility + PORTLINK logistics intelligence.
+  kernel.register(new MobilityModule());
+  kernel.register(new LogisticsModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

@@ -61,6 +61,8 @@ import type { SearchModule } from '@jataqi/search';
 import type { AutomationModule } from '@jataqi/automation';
 import type { FxModule } from '@jataqi/fx';
 import type { PkiModule } from '@jataqi/pki';
+import type { MobilityModule } from '@jataqi/mobility';
+import type { LogisticsModule } from '@jataqi/logistics';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -130,6 +132,8 @@ export class ApiGatewayModule implements IModule {
   private automation?: AutomationModule;
   private fx?: FxModule;
   private pki?: PkiModule;
+  private mobility?: MobilityModule;
+  private logistics?: LogisticsModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -206,6 +210,8 @@ export class ApiGatewayModule implements IModule {
     this.automation = this.tryModule<AutomationModule>('automation');
     this.fx = this.tryModule<FxModule>('fx');
     this.pki = this.tryModule<PkiModule>('pki');
+    this.mobility = this.tryModule<MobilityModule>('mobility');
+    this.logistics = this.tryModule<LogisticsModule>('logistics');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -687,6 +693,41 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/pki/idp/introspect', (req) => this.pkiIdpIntrospect(req));
     route('GET', '/pki/idp/userinfo', auth('pki:read', (req) => this.pkiIdpUserinfo(req)));
     route('GET', '/pki/idp/discovery', () => this.pkiIdpDiscovery());
+    route('POST', '/pki/idp/login', (req) => this.pkiIdpLogin(req));
+    // Phase 7 — MOTO X mobility intelligence.
+    route('POST', '/mobility/vehicles', auth('mobility:write', (req) => this.mobilityVehiclesRegister(req)));
+    route('GET', '/mobility/vehicles', auth('mobility:read', (req) => this.mobilityVehiclesList(req)));
+    route('POST', '/mobility/vehicles/status', auth('mobility:write', (req) => this.mobilityVehiclesStatus(req)));
+    route('POST', '/mobility/fleets', auth('mobility:write', (req) => this.mobilityFleetsCreate(req)));
+    route('GET', '/mobility/fleets', auth('mobility:read', () => this.mobilityFleetsList()));
+    route('POST', '/mobility/fleets/vehicles', auth('mobility:write', (req) => this.mobilityFleetsAddVehicle(req)));
+    route('POST', '/mobility/drivers', auth('mobility:write', (req) => this.mobilityDriversRegister(req)));
+    route('GET', '/mobility/drivers', auth('mobility:read', () => this.mobilityDriversList()));
+    route('POST', '/mobility/trips', auth('mobility:write', (req) => this.mobilityTripsRequest(req)));
+    route('GET', '/mobility/trips', auth('mobility:read', (req) => this.mobilityTripsList(req)));
+    route('POST', '/mobility/trips/status', auth('mobility:write', (req) => this.mobilityTripsStatus(req)));
+    route('POST', '/mobility/telemetry', auth('mobility:write', (req) => this.mobilityTelemetry(req)));
+    route('GET', '/mobility/telemetry', auth('mobility:read', (req) => this.mobilityTelemetryList(req)));
+    route('POST', '/mobility/geofences', auth('mobility:write', (req) => this.mobilityGeofencesCreate(req)));
+    route('GET', '/mobility/geofences', auth('mobility:read', () => this.mobilityGeofencesList()));
+    route('GET', '/mobility/geofences/vehicles', auth('mobility:read', (req) => this.mobilityGeofencesVehicles(req)));
+    route('GET', '/mobility/stats', auth('mobility:read', () => this.mobilityStats()));
+    // Phase 7 — PORTLINK logistics intelligence.
+    route('POST', '/logistics/ports', auth('logistics:write', (req) => this.logisticsPortsRegister(req)));
+    route('GET', '/logistics/ports', auth('logistics:read', () => this.logisticsPortsList()));
+    route('POST', '/logistics/vessels', auth('logistics:write', (req) => this.logisticsVesselsRegister(req)));
+    route('GET', '/logistics/vessels', auth('logistics:read', (req) => this.logisticsVesselsList(req)));
+    route('POST', '/logistics/containers', auth('logistics:write', (req) => this.logisticsContainersRegister(req)));
+    route('GET', '/logistics/containers', auth('logistics:read', (req) => this.logisticsContainersList(req)));
+    route('POST', '/logistics/shipments', auth('logistics:write', (req) => this.logisticsShipmentsCreate(req)));
+    route('GET', '/logistics/shipments', auth('logistics:read', (req) => this.logisticsShipmentsList(req)));
+    route('GET', '/logistics/shipment', auth('logistics:read', (req) => this.logisticsShipmentGet(req)));
+    route('POST', '/logistics/shipments/containers', auth('logistics:write', (req) => this.logisticsShipmentsAssignContainer(req)));
+    route('POST', '/logistics/shipments/track', auth('logistics:write', (req) => this.logisticsShipmentsTrack(req)));
+    route('GET', '/logistics/shipments/timeline', auth('logistics:read', (req) => this.logisticsShipmentsTimeline(req)));
+    route('POST', '/logistics/warehouses', auth('logistics:write', (req) => this.logisticsWarehousesRegister(req)));
+    route('GET', '/logistics/warehouses', auth('logistics:read', () => this.logisticsWarehousesList()));
+    route('GET', '/logistics/stats', auth('logistics:read', () => this.logisticsStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -992,7 +1033,7 @@ export class ApiGatewayModule implements IModule {
       'policy-governance', 'api-gateway', 'memory', 'learning', 'ai-learning',
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
-      'fx', 'pki',
+      'fx', 'pki', 'mobility', 'logistics',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -2928,6 +2969,311 @@ export class ApiGatewayModule implements IModule {
   private pkiIdpDiscovery(): GatewayResponse {
     if (!this.pki) return json(501, { error: 'pki module not registered' });
     return json(200, this.pki.idp.discovery());
+  }
+
+  private async pkiIdpLogin(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accessToken !== 'string') return json(400, { error: 'field "accessToken" is required' });
+    const result = await this.pki.loginWithIdpToken(b.accessToken, {
+      ...(typeof b.remoteAddress === 'string' ? { remoteAddress: b.remoteAddress } : {}),
+    });
+    if (!result.ok) return json(401, { error: result.reason ?? 'login failed' });
+    return json(200, { ok: true, session: result.session, principal: result.principal });
+  }
+
+  // --- Phase 7 — MOTO X mobility -----------------------------------------
+
+  private mobilityVehiclesRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.registration !== 'string' || typeof b.make !== 'string' || typeof b.model !== 'string')
+      return json(400, { error: 'fields "registration", "make", and "model" are required' });
+    const vehicle = this.mobility.registerVehicle({
+      registration: b.registration, make: b.make, model: b.model,
+      ...(typeof b.type === 'string' ? { type: b.type as never } : {}),
+      ...(typeof b.capacity === 'number' ? { capacity: b.capacity } : {}),
+      ...(b.location && typeof b.location === 'object' ? { location: b.location as never } : {}),
+      ...(typeof b.fleetId === 'string' ? { fleetId: b.fleetId } : {}),
+    });
+    return json(201, { vehicle });
+  }
+
+  private mobilityVehiclesList(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const vehicles = this.mobility.listVehicles({
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.type ? { type: req.query.type as never } : {}),
+      ...(req.query.fleetId ? { fleetId: req.query.fleetId } : {}),
+    });
+    return json(200, { vehicles, count: vehicles.length });
+  }
+
+  private mobilityVehiclesStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const vehicle = this.mobility.setVehicleStatus(b.id, b.status as never);
+    return vehicle ? json(200, { vehicle }) : json(404, { error: 'vehicle not found' });
+  }
+
+  private mobilityFleetsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.ownerId !== 'string')
+      return json(400, { error: 'fields "name" and "ownerId" are required' });
+    return json(201, { fleet: this.mobility.createFleet(b.name, b.ownerId) });
+  }
+
+  private mobilityFleetsList(): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const fleets = this.mobility.listFleets();
+    return json(200, { fleets, count: fleets.length });
+  }
+
+  private mobilityFleetsAddVehicle(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.fleetId !== 'string' || typeof b.vehicleId !== 'string')
+      return json(400, { error: 'fields "fleetId" and "vehicleId" are required' });
+    const fleet = this.mobility.addVehicleToFleet(b.fleetId, b.vehicleId);
+    return fleet ? json(200, { fleet }) : json(404, { error: 'fleet or vehicle not found' });
+  }
+
+  private mobilityDriversRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.license !== 'string')
+      return json(400, { error: 'fields "name" and "license" are required' });
+    return json(201, { driver: this.mobility.registerDriver({ name: b.name, license: b.license, ...(typeof b.phone === 'string' ? { phone: b.phone } : {}) }) });
+  }
+
+  private mobilityDriversList(): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const drivers = this.mobility.listDrivers();
+    return json(200, { drivers, count: drivers.length });
+  }
+
+  private mobilityTripsRequest(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (!b.pickup || typeof b.pickup !== 'object' || !b.dropoff || typeof b.dropoff !== 'object')
+      return json(400, { error: 'fields "pickup" and "dropoff" ({lat,lng}) are required' });
+    const trip = this.mobility.requestTrip({
+      pickup: b.pickup as never,
+      dropoff: b.dropoff as never,
+      ...(typeof b.riderId === 'string' ? { riderId: b.riderId } : {}),
+      ...(typeof b.pricePerKm === 'number' ? { pricePerKm: b.pricePerKm } : {}),
+      ...(typeof b.baseFare === 'number' ? { baseFare: b.baseFare } : {}),
+    });
+    return json(201, { trip });
+  }
+
+  private mobilityTripsList(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const trips = this.mobility.listTrips({
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.riderId ? { riderId: req.query.riderId } : {}),
+    });
+    return json(200, { trips, count: trips.length });
+  }
+
+  private async mobilityTripsStatus(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const trip = await this.mobility.updateTripStatus(b.id, b.status as never);
+    return trip ? json(200, { trip }) : json(404, { error: 'trip not found' });
+  }
+
+  private mobilityTelemetry(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.vehicleId !== 'string' || typeof b.lat !== 'number' || typeof b.lng !== 'number')
+      return json(400, { error: 'fields "vehicleId", "lat", and "lng" are required' });
+    const point = this.mobility.recordTelemetry({
+      vehicleId: b.vehicleId, lat: b.lat, lng: b.lng,
+      ...(typeof b.speedKmh === 'number' ? { speedKmh: b.speedKmh } : {}),
+      ...(typeof b.batteryPct === 'number' ? { batteryPct: b.batteryPct } : {}),
+    });
+    return json(201, { point });
+  }
+
+  private mobilityTelemetryList(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    if (!req.query.vehicleId) return json(400, { error: 'query parameter "vehicleId" is required' });
+    const points = this.mobility.telemetryFor(req.query.vehicleId, req.query.limit ? Number(req.query.limit) : 100);
+    return json(200, { points, count: points.length });
+  }
+
+  private mobilityGeofencesCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || !b.center || typeof b.center !== 'object' || typeof b.radiusM !== 'number')
+      return json(400, { error: 'fields "name", "center" ({lat,lng}), and "radiusM" are required' });
+    return json(201, { geofence: this.mobility.createGeofence(b.name, b.center as never, b.radiusM) });
+  }
+
+  private mobilityGeofencesList(): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    const geofences = this.mobility.listGeofences();
+    return json(200, { geofences, count: geofences.length });
+  }
+
+  private mobilityGeofencesVehicles(req: GatewayRequest): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    if (!req.query.id) return json(400, { error: 'query parameter "id" (geofence) is required' });
+    const vehicles = this.mobility.vehiclesInGeofence(req.query.id);
+    return json(200, { vehicles, count: vehicles.length });
+  }
+
+  private mobilityStats(): GatewayResponse {
+    if (!this.mobility) return json(501, { error: 'mobility module not registered' });
+    return json(200, { stats: this.mobility.stats() });
+  }
+
+  // --- Phase 7 — PORTLINK logistics --------------------------------------
+
+  private logisticsPortsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.code !== 'string' || typeof b.country !== 'string')
+      return json(400, { error: 'fields "name", "code", and "country" are required' });
+    return json(201, { port: this.logistics.registerPort({
+      name: b.name, code: b.code, country: b.country,
+      ...(typeof b.city === 'string' ? { city: b.city } : {}),
+      ...(typeof b.capacityTeu === 'number' ? { capacityTeu: b.capacityTeu } : {}),
+      ...(typeof b.berths === 'number' ? { berths: b.berths } : {}),
+    }) });
+  }
+
+  private logisticsPortsList(): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const ports = this.logistics.listPorts();
+    return json(200, { ports, count: ports.length });
+  }
+
+  private logisticsVesselsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.imo !== 'string')
+      return json(400, { error: 'fields "name" and "imo" are required' });
+    return json(201, { vessel: this.logistics.registerVessel({
+      name: b.name, imo: b.imo,
+      ...(typeof b.portId === 'string' ? { portId: b.portId } : {}),
+      ...(typeof b.eta === 'number' ? { eta: b.eta } : {}),
+    }) });
+  }
+
+  private logisticsVesselsList(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const vessels = this.logistics.listVessels(req.query.status as never);
+    return json(200, { vessels, count: vessels.length });
+  }
+
+  private logisticsContainersRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.number !== 'string') return json(400, { error: 'field "number" is required' });
+    return json(201, { container: this.logistics.registerContainer({
+      number: b.number,
+      ...(typeof b.type === 'string' ? { type: b.type as never } : {}),
+      ...(typeof b.portId === 'string' ? { portId: b.portId } : {}),
+    }) });
+  }
+
+  private logisticsContainersList(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const containers = this.logistics.listContainers({
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.shipmentId ? { shipmentId: req.query.shipmentId } : {}),
+    });
+    return json(200, { containers, count: containers.length });
+  }
+
+  private logisticsShipmentsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.origin !== 'string' || typeof b.destination !== 'string' || typeof b.shipper !== 'string' || typeof b.consignee !== 'string')
+      return json(400, { error: 'fields "origin", "destination", "shipper", and "consignee" are required' });
+    return json(201, { shipment: this.logistics.createShipment({
+      mode: (b.mode as never) ?? 'sea',
+      origin: b.origin, destination: b.destination, shipper: b.shipper, consignee: b.consignee,
+      ...(typeof b.weightKg === 'number' ? { weightKg: b.weightKg } : {}),
+      ...(typeof b.volumeCbm === 'number' ? { volumeCbm: b.volumeCbm } : {}),
+    }) });
+  }
+
+  private logisticsShipmentsList(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const shipments = this.logistics.listShipments({
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.mode ? { mode: req.query.mode as never } : {}),
+      ...(req.query.consignee ? { consignee: req.query.consignee } : {}),
+    });
+    return json(200, { shipments, count: shipments.length });
+  }
+
+  private logisticsShipmentGet(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const ref = req.query.ref ?? req.query.id;
+    if (!ref) return json(400, { error: 'query parameter "ref" (tracking reference) or "id" is required' });
+    const shipment = req.query.id
+      ? this.logistics.getShipment(req.query.id)
+      : this.logistics.getShipmentByTrackingRef(ref);
+    return shipment ? json(200, { shipment }) : json(404, { error: 'shipment not found' });
+  }
+
+  private logisticsShipmentsAssignContainer(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.shipmentId !== 'string' || typeof b.containerId !== 'string')
+      return json(400, { error: 'fields "shipmentId" and "containerId" are required' });
+    const assigned = this.logistics.assignContainer(b.shipmentId, b.containerId);
+    return assigned ? json(200, assigned) : json(404, { error: 'shipment or container not found' });
+  }
+
+  private async logisticsShipmentsTrack(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.shipmentId !== 'string' || typeof b.code !== 'string' || typeof b.location !== 'string')
+      return json(400, { error: 'fields "shipmentId", "code", and "location" are required' });
+    const event = await this.logistics.trackShipment({
+      shipmentId: b.shipmentId, code: b.code as never, location: b.location,
+      ...(typeof b.note === 'string' ? { note: b.note } : {}),
+    });
+    return json(201, { event });
+  }
+
+  private logisticsShipmentsTimeline(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    if (!req.query.shipmentId) return json(400, { error: 'query parameter "shipmentId" is required' });
+    const timeline = this.logistics.shipmentTimeline(req.query.shipmentId);
+    return json(200, { timeline, count: timeline.length });
+  }
+
+  private logisticsWarehousesRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.location !== 'string')
+      return json(400, { error: 'fields "name" and "location" are required' });
+    return json(201, { warehouse: this.logistics.registerWarehouse({
+      name: b.name, location: b.location,
+      ...(typeof b.capacitySlots === 'number' ? { capacitySlots: b.capacitySlots } : {}),
+    }) });
+  }
+
+  private logisticsWarehousesList(): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    const warehouses = this.logistics.listWarehouses();
+    return json(200, { warehouses, count: warehouses.length });
+  }
+
+  private logisticsStats(): GatewayResponse {
+    if (!this.logistics) return json(501, { error: 'logistics module not registered' });
+    return json(200, { stats: this.logistics.stats() });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

@@ -211,6 +211,37 @@ export class SecurityModule implements IModule {
     return { ok: true, principal, session };
   }
 
+  /**
+   * Create a platform session for an existing user without a password check.
+   * Used by trusted identity providers (the PKI IdP bridge) after the IdP has
+   * already authenticated the subject — the session, RBAC snapshot, audit
+   * record, and bus event are identical to a password login.
+   */
+  async createSessionForUser(
+    username: string,
+    roles: string[],
+    opts: { remoteAddress?: string; userId?: string } = {},
+  ): Promise<AuthResult> {
+    const user = await this.getUser(username);
+    if (!user) return this.failLogin(username, 'unknown user');
+    if (!user.active) return this.failLogin(username, 'inactive user');
+    const token = generateToken(32);
+    const now = Date.now();
+    const session: Session = {
+      token,
+      userId: user.id,
+      username: user.username,
+      createdAt: now,
+      expiresAt: now + this.sessionTtlMs,
+    };
+    const principal: Principal = { userId: user.id, username: user.username, roles: [...roles] };
+    await this.storeSession(session, roles, opts.remoteAddress, now);
+    this.lastUsedFlushedAt.set(token, now);
+    await this.api.bus.emit(SecurityEvents.UserLogin, { userId: user.id, username, via: 'idp' });
+    await this.audit({ actor: user.id, action: 'auth.login', result: 'success', detail: { via: 'idp' } });
+    return { ok: true, principal, session };
+  }
+
   private async failLogin(username: string, reason: string): Promise<AuthResult> {
     await this.api.bus.emit(SecurityEvents.AuthDenied, { username, reason });
     await this.audit({ actor: username, action: 'auth.login', result: 'failure', detail: { reason } });

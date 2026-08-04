@@ -30,6 +30,8 @@ import { SearchModule } from '@jataqi/search';
 import { AutomationModule } from '@jataqi/automation';
 import { FxModule } from '@jataqi/fx';
 import { PkiModule } from '@jataqi/pki';
+import { MobilityModule } from '@jataqi/mobility';
+import { LogisticsModule } from '@jataqi/logistics';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -90,6 +92,8 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
     kernel.register(new FxModule({ anchor: 'USD' }));
     kernel.register(new PkiModule({ issuer: 'https://id.test.local' }));
+    kernel.register(new MobilityModule());
+    kernel.register(new LogisticsModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -716,6 +720,93 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const discovery = await jsonRequest('GET', `${base}/pki/idp/discovery`);
     assert.equal(discovery.status, 200);
     assert.equal((discovery.body as { issuer: string }).issuer, 'https://id.test.local');
+  });
+
+  // --- Phase 7 — MOTO X + PORTLINK via gateway ---------------------------
+
+  it('mobility: vehicle → fleet → trip → status → stats over HTTP', async () => {
+    const fleet = await jsonRequest('POST', `${base}/mobility/fleets`, { name: 'City Fleet', ownerId: 'u1' }, token);
+    assert.equal(fleet.status, 201);
+    const fleetId = (fleet.body as { fleet: { id: string } }).fleet.id;
+
+    const vehicle = await jsonRequest('POST', `${base}/mobility/vehicles`, {
+      registration: 'KDD 777X', make: 'Toyota', model: 'Corolla', type: 'car', fleetId,
+      location: { lat: -1.2921, lng: 36.8219 },
+    }, token);
+    assert.equal(vehicle.status, 201);
+    const vehicleId = (vehicle.body as { vehicle: { id: string } }).vehicle.id;
+
+    const trip = await jsonRequest('POST', `${base}/mobility/trips`, {
+      pickup: { lat: -1.2921, lng: 36.8219 }, dropoff: { lat: -1.2864, lng: 36.8172 }, riderId: 'r1',
+    }, token);
+    assert.equal(trip.status, 201);
+    const tripBody = trip.body as { trip: { id: string; vehicleId?: string; fare: string } };
+    assert.equal(tripBody.trip.vehicleId, vehicleId);
+
+    const status = await jsonRequest('POST', `${base}/mobility/trips/status`, { id: tripBody.trip.id, status: 'completed' }, token);
+    assert.equal(status.status, 200);
+    assert.equal((status.body as { trip: { status: string } }).trip.status, 'completed');
+
+    const telemetry = await jsonRequest('POST', `${base}/mobility/telemetry`, { vehicleId, lat: -1.29, lng: 36.82, speedKmh: 45 }, token);
+    assert.equal(telemetry.status, 201);
+
+    const stats = await jsonRequest('GET', `${base}/mobility/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { vehicles: number } }).stats.vehicles >= 1);
+  });
+
+  it('logistics: port → shipment → containers → track → stats over HTTP', async () => {
+    const port = await jsonRequest('POST', `${base}/logistics/ports`, { name: 'Mombasa', code: 'MBA', country: 'KE', capacityTeu: 1500000 }, token);
+    assert.equal(port.status, 201);
+
+    const shipment = await jsonRequest('POST', `${base}/logistics/shipments`, {
+      mode: 'sea', origin: 'Shanghai', destination: 'Mombasa', shipper: 'S', consignee: 'C',
+    }, token);
+    assert.equal(shipment.status, 201);
+    const ship = shipment.body as { shipment: { id: string; trackingRef: string } };
+
+    const container = await jsonRequest('POST', `${base}/logistics/containers`, { number: 'MSCU9988776', type: '40' }, token);
+    assert.equal(container.status, 201);
+    const containerId = (container.body as { container: { id: string } }).container.id;
+
+    const assigned = await jsonRequest('POST', `${base}/logistics/shipments/containers`, { shipmentId: ship.shipment.id, containerId }, token);
+    assert.equal(assigned.status, 200);
+
+    const tracked = await jsonRequest('POST', `${base}/logistics/shipments/track`, { shipmentId: ship.shipment.id, code: 'delivered', location: 'ICD Embakasi' }, token);
+    assert.equal(tracked.status, 201);
+    assert.equal((tracked.body as { event: { code: string } }).event.code, 'delivered');
+
+    const lookup = await jsonRequest('GET', `${base}/logistics/shipment?ref=${ship.shipment.trackingRef}`, undefined, token);
+    assert.equal(lookup.status, 200);
+    assert.equal((lookup.body as { shipment: { status: string } }).shipment.status, 'delivered');
+
+    const timeline = await jsonRequest('GET', `${base}/logistics/shipments/timeline?shipmentId=${ship.shipment.id}`, undefined, token);
+    assert.equal((timeline.body as { count: number }).count, 1);
+
+    const stats = await jsonRequest('GET', `${base}/logistics/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { stats: { shipments: number } }).stats.shipments, 1);
+  });
+
+  it('pki idp login bridge mints a usable platform session over HTTP', async () => {
+    const pki = kernel.getModule<PkiModule>('pki');
+    const client = await jsonRequest('POST', `${base}/pki/idp/clients`, { name: 'sso', redirectUris: ['https://sso.example.com/cb'] }, token);
+    const c = client.body as { clientId: string; clientSecret: string };
+    pki.idp.upsertUser('ext-1', { preferred_username: 'bridged', roles: ['analyst'] });
+    const authz = await jsonRequest('POST', `${base}/pki/idp/authorize`, { clientId: c.clientId, redirectUri: 'https://sso.example.com/cb', userId: 'ext-1' }, token);
+    const code = (authz.body as { code: string }).code;
+    const tok = await jsonRequest('POST', `${base}/pki/idp/token`, { code, clientId: c.clientId, clientSecret: c.clientSecret, redirectUri: 'https://sso.example.com/cb' }, token);
+    const accessToken = (tok.body as { access_token: string }).access_token;
+
+    // Bridge (public endpoint — the IdP token is the credential).
+    const login = await jsonRequest('POST', `${base}/pki/idp/login`, { accessToken });
+    assert.equal(login.status, 200);
+    const session = (login.body as { session: { token: string } }).session;
+
+    // The minted platform session works against an RBAC route.
+    const whoami = await jsonRequest('GET', `${base}/whoami`, undefined, session.token);
+    assert.equal(whoami.status, 200);
+    assert.equal((whoami.body as { principal: { username: string } }).principal.username, 'bridged');
   });
 
   // --- Authz guard --------------------------------------------------------

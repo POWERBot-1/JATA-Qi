@@ -154,6 +154,56 @@ export class PkiModule implements IModule {
     return this.idp.userinfo(accessToken);
   }
 
+  /**
+   * OIDC → platform session bridge (executive directive — IdP integration):
+   * introspects an IdP access token and mints a platform session for the
+   * mapped subject. When the subject has no platform account yet, one is
+   * provisioned JIT with the IdP-declared roles and an unusable random
+   * password (credentials never leave the IdP). Requires @jataqi/security.
+   */
+  async loginWithIdpToken(accessToken: string, opts: { remoteAddress?: string } = {}): Promise<{
+    ok: boolean;
+    reason?: string;
+    session?: { token: string; userId: string; username: string; expiresAt: number };
+    principal?: { userId: string; username: string; roles: string[] };
+  }> {
+    const info = this.idp.introspect(accessToken);
+    if (!info.active || !info.userId) return { ok: false, reason: 'invalid or expired IdP token' };
+    const claims = (this.idp.userinfo(accessToken) ?? {}) as Record<string, unknown>;
+    const preferredUsername = claims.preferred_username;
+    const username = typeof preferredUsername === 'string' && preferredUsername
+      ? preferredUsername
+      : info.userId;
+    const roles = Array.isArray(claims.roles)
+      ? (claims.roles as unknown[]).filter((r): r is string => typeof r === 'string')
+      : ['analyst'];
+    try {
+      const security = this.api.getModule('security') as unknown as {
+        getUser: (username: string) => Promise<{ id: string; username: string; active: boolean; roles: string[] } | undefined>;
+        registerUser: (username: string, password: string, roles: string[], metadata?: Record<string, unknown>) => Promise<unknown>;
+        createSessionForUser: (username: string, roles: string[], opts?: { remoteAddress?: string }) => Promise<{
+          ok: boolean;
+          reason?: string;
+          session?: { token: string; userId: string; username: string; expiresAt: number };
+          principal?: { userId: string; username: string; roles: string[] };
+        }>;
+      };
+      let user = await security.getUser(username);
+      if (!user) {
+        await security.registerUser(username, randomUnusablePassword(), roles, { provisionedBy: 'idp' });
+      }
+      const result = await security.createSessionForUser(username, roles, { remoteAddress: opts.remoteAddress });
+      if (!result.ok) return { ok: false, reason: result.reason ?? 'session creation failed' };
+      return {
+        ok: true,
+        session: result.session ? { token: result.session.token, userId: result.session.userId, username: result.session.username, expiresAt: result.session.expiresAt } : undefined,
+        principal: result.principal ? { userId: result.principal.userId, username: result.principal.username, roles: [...result.principal.roles] } : undefined,
+      };
+    } catch {
+      return { ok: false, reason: 'security module unavailable' };
+    }
+  }
+
   /** PKI aggregate stats for ops surfaces. */
   stats(): Record<string, unknown> {
     return {
@@ -164,4 +214,9 @@ export class PkiModule implements IModule {
       signingAlg: this.cfg.signingAlg,
     };
   }
+}
+
+/** Random password for JIT-provisioned accounts (credentials stay in the IdP). */
+function randomUnusablePassword(): string {
+  return `idp-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }

@@ -296,6 +296,53 @@ describe('IdentityProvider', () => {
   });
 });
 
+describe('IdP ↔ Security session bridge', () => {
+  it('mints a platform session from an IdP access token (JIT provisioning)', async () => {
+    const t = await import('@jataqi/core-kernel/testing');
+    const { StorageModule } = await import('@jataqi/storage');
+    const { SecurityModule } = await import('@jataqi/security');
+    const { PkiModule } = await import('../src/index.js');
+    const kernel = t.createTestKernel();
+    kernel.register(new StorageModule());
+    const sec = new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } });
+    kernel.register(sec);
+    const pki = new PkiModule({ issuer: 'https://id.bridge.test' });
+    kernel.register(pki);
+    await kernel.boot();
+    try {
+      const client = pki.registerIdpClient({ name: 'sso-app', redirectUris: ['https://sso.example.com/cb'] });
+      pki.idp.upsertUser('ext-user', { preferred_username: 'alice', name: 'Alice', roles: ['developer', 'analyst'] });
+      const { code } = pki.idpAuthorize({ clientId: client.clientId, redirectUri: 'https://sso.example.com/cb', userId: 'ext-user' });
+      const tokens = pki.idpToken({ code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: 'https://sso.example.com/cb' });
+
+      // Bridge: IdP token → platform session.
+      const result = await pki.loginWithIdpToken(tokens.access_token);
+      assert.equal(result.ok, true);
+      assert.ok(result.session?.token);
+      assert.equal(result.principal?.username, 'alice');
+      assert.deepEqual(result.principal?.roles, ['developer', 'analyst']);
+
+      // The platform session authenticates through @jataqi/security.
+      const principal = await sec.authenticate(result.session!.token);
+      assert.ok(principal, 'session token should authenticate');
+      assert.equal(principal!.username, 'alice');
+      assert.deepEqual(principal!.roles, ['developer', 'analyst']);
+
+      // Audit trail recorded (append-only ledger query).
+      const audit = sec.getAuditLog();
+      const records = await audit.query({ action: 'auth.login' });
+      assert.ok(records.some((r) => (r.detail as Record<string, unknown>)?.via === 'idp'));
+
+      // Invalid tokens are rejected.
+      const bad = await pki.loginWithIdpToken('not-a-token');
+      assert.equal(bad.ok, false);
+      assert.match(bad.reason ?? '', /invalid/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+});
+
 describe('PkiModule integration', () => {
   it('issueViaRa completes the full governed flow', async () => {
     const kernel = (await import('@jataqi/core-kernel/testing')).createTestKernel();

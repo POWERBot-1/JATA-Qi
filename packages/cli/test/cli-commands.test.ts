@@ -81,6 +81,25 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(status, /"idp"/);
   });
 
+  it('mobility register vehicle + trip dispatch + stats work', async () => {
+    const reg = await jataqi('mobility', 'register', 'KDD 123B', 'Toyota', 'Corolla', '--lat', '-1.2921', '--lng', '36.8219');
+    assert.match(reg, /registered [0-9a-f-]{36}/);
+    // Fresh OS per invocation: dispatch fails gracefully with no vehicles.
+    const trip = await jataqi('mobility', 'trip', '-1.2921', '36.8219', '-1.2864', '36.8172');
+    assert.match(trip, /no available vehicles/);
+    const stats = await jataqi('mobility', 'stats');
+    assert.match(stats, /"vehicles": 0/);
+  });
+
+  it('logistics ports + shipments + stats work', async () => {
+    const port = await jataqi('logistics', 'port', 'Mombasa', 'MBA', 'KE');
+    assert.match(port, /registered [0-9a-f-]{36}/);
+    const shipment = await jataqi('logistics', 'shipment', 'Shanghai', 'Mombasa', 'S', 'C');
+    assert.match(shipment, /ref=JQ-/);
+    const stats = await jataqi('logistics', 'stats');
+    assert.match(stats, /"shipments": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

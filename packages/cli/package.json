@@ -91,7 +91,9 @@
     "@jataqi/search": "0.1.0",
     "@jataqi/automation": "0.1.0",
     "@jataqi/fx": "0.1.0",
-    "@jataqi/pki": "0.1.0"
+    "@jataqi/pki": "0.1.0",
+    "@jataqi/mobility": "0.1.0",
+    "@jataqi/logistics": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
