@@ -1455,4 +1455,38 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const bad = await jsonRequest('GET', `${base}/approvals?status=bogus`, undefined, token);
     assert.equal(bad.status, 400);
   });
+
+  it('approval lifecycle writes immutable audit records (GET /audit)', async () => {
+    await jsonRequest('POST', `${base}/tools/sync`, {}, token);
+    const tools = (await jsonRequest('GET', `${base}/tools`, undefined, token)).body as { tools: { id: string; canonicalName: string }[] };
+    const pid = tools.tools.find((t) => t.canonicalName === 'cloud.provision')!.id;
+
+    // Denied high-risk invoke → tool.approval.required audit.
+    await jsonRequest('POST', `${base}/tool/invoke`, { id: pid, input: { name: 'w', regionId: 'n', flavorId: 'n', imageId: 'n' } }, token);
+    // Request + approve.
+    const req = await jsonRequest('POST', `${base}/tool/request-approval`, { id: pid, action: 'invoke', reason: 'audit test' }, token);
+    const rid = (req.body as { approvalRequest: { id: string } }).approvalRequest.id;
+    await jsonRequest('POST', `${base}/tool/approve`, { id: rid, decision: 'approved' }, token);
+
+    // Poll until the fire-and-forget audit writes land.
+    let required = 0, requested = 0, decided = 0;
+    for (let i = 0; i < 30; i++) {
+      const requiredRes = (await jsonRequest('GET', `${base}/audit?action=tool.approval.required`, undefined, token)).body as { count: number };
+      const requestedRes = (await jsonRequest('GET', `${base}/audit?action=tool.approval.requested`, undefined, token)).body as { count: number };
+      const decidedRes = (await jsonRequest('GET', `${base}/audit?action=tool.approval.decided`, undefined, token)).body as { count: number };
+      required = requiredRes.count; requested = requestedRes.count; decided = decidedRes.count;
+      if (required >= 1 && requested >= 1 && decided >= 1) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.ok(required >= 1, 'denied invocation audited (tool.approval.required)');
+    assert.ok(requested >= 1, 'request audited (tool.approval.requested)');
+    assert.ok(decided >= 1, 'decision audited (tool.approval.decided)');
+
+    // The decided record carries the decider + decision detail.
+    const decidedRes = (await jsonRequest('GET', `${base}/audit?action=tool.approval.decided`, undefined, token)).body as { records: { actor: string; result: string; detail: { decision: string } }[] };
+    const approved = decidedRes.records.find((r) => r.detail?.decision === 'approved');
+    assert.ok(approved, 'approved decision present');
+    assert.equal(approved.result, 'success');
+    assert.ok(approved.actor.length > 0, 'decider attributed');
+  });
 });

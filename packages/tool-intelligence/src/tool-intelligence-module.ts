@@ -281,6 +281,14 @@ export class ToolIntelligenceModule implements IModule {
     this.mApprovals?.inc(1, { decision: 'requested' });
     this.mPending?.set([...this.approvals.values()].filter((a) => a.status === 'pending').length);
     void this.api.bus.emit(ToolEvents.ApprovalRequested, { id: req.id, toolId });
+    // Immutable audit trail (best-effort; skipped when security is absent).
+    void this.auditApproval({
+      actor: principalId,
+      action: 'tool.approval.requested',
+      resource: toolId,
+      result: 'success',
+      detail: { requestId: req.id, action, ...(reason ? { reason } : {}) },
+    });
     return req;
   }
 
@@ -299,6 +307,14 @@ export class ToolIntelligenceModule implements IModule {
     this.mApprovals?.inc(1, { decision });
     this.mPending?.set([...this.approvals.values()].filter((a) => a.status === 'pending').length);
     void this.api.bus.emit(ToolEvents.ApprovalDecided, { id: requestId, decision });
+    // Immutable audit trail (best-effort; skipped when security is absent).
+    void this.auditApproval({
+      actor: decidedBy,
+      action: 'tool.approval.decided',
+      resource: req.toolId,
+      result: decision === 'approved' ? 'success' : 'denied',
+      detail: { requestId, decision, requester: req.principalId, ...(req.reason ? { reason: req.reason } : {}) },
+    });
     return req;
   }
 
@@ -492,6 +508,14 @@ export class ToolIntelligenceModule implements IModule {
           durationMs: Date.now() - t0,
         };
         this.recordInvocation(tool, result.status, result.durationMs);
+        // Audit the denied high-risk invocation attempt (best-effort).
+        void this.auditApproval({
+          actor: principal?.userId ?? 'anonymous',
+          action: 'tool.approval.required',
+          resource: tool.canonicalName,
+          result: 'denied',
+          detail: { toolId, riskClass: tool.riskClass, ...(req ? { approvalRequestId: req.id, approvalStatus: req.status } : {}) },
+        });
         return result;
       }
     }
@@ -577,5 +601,14 @@ export class ToolIntelligenceModule implements IModule {
     } catch {
       return undefined;
     }
+  }
+
+  /** Write an approval-lifecycle record to the immutable audit ledger. */
+  private async auditApproval(rec: { actor: string; action: string; resource: string; result: string; detail: Record<string, unknown> }): Promise<void> {
+    const sec = this.trySecurity();
+    if (!sec) return;
+    try {
+      await sec.audit({ actor: rec.actor, action: rec.action, resource: rec.resource, result: rec.result, detail: rec.detail });
+    } catch { /* audit is best-effort */ }
   }
 }

@@ -6,6 +6,7 @@ import { StorageModule } from '@jataqi/storage';
 import { ToolIntelligenceModule } from '../src/index.js';
 import { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import { MetricsModule } from '@jataqi/metrics';
+import { SecurityModule } from '@jataqi/security';
 import type { ToolAdapter, ToolEntity } from '../src/index.js';
 import { AGENT_TOOL_CATALOG, AGENT_TOOL_NAMES, APPROVAL_GATED_AGENT_TOOLS } from '../src/index.js';
 import type { AgentToolDescriptor } from '../src/index.js';
@@ -462,5 +463,87 @@ describe('Approval workflow — history + filters', () => {
     assert.equal(ti.listApprovals('denied').length, 1);
     assert.equal(ti.listApprovals('expired').length, 0);
     assert.equal(ti.listPendingApprovals().length, 1);
+  });
+});
+
+describe('Approval audit trail — immutable ledger records', () => {
+  let kernel: Kernel;
+  let ti: ToolIntelligenceModule;
+  let sec: SecurityModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    kernel.register(new ToolIntelligenceModule());
+    await kernel.boot();
+    ti = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+    sec = kernel.getModule<SecurityModule>('security');
+  });
+
+  afterEach(async () => { await kernel.shutdown(); });
+
+  async function waitForAudit(action: string, n = 1): Promise<unknown[]> {
+    // Approval audit writes are best-effort/fire-and-forget — poll briefly.
+    for (let i = 0; i < 20; i++) {
+      const recs = await sec.getAuditLog().query({ action });
+      if (recs.length >= n) return recs;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    return [];
+  }
+
+  it('records approval request + decision + denial into the immutable ledger', async () => {
+    const tool = await ti.register({ canonicalName: 'risky', provider: 'p', version: '1', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+    ti.registerAdapter({ id: tool.id, capabilities: () => ['x'], async invoke(input) { return input; } });
+
+    // 1. Invoke without approval → tool.approval.required (denied).
+    const blocked = await ti.invoke(tool.id, { a: 1 }, { userId: 'alice', username: 'alice', roles: ['developer'] });
+    assert.equal(blocked.status, 'pending_approval');
+    let required = await waitForAudit('tool.approval.required');
+    assert.ok(required.length >= 1, 'denied invocation audited');
+    assert.equal((required[0] as { result: string }).result, 'denied');
+
+    // 2. Request approval → tool.approval.requested.
+    const req = ti.requestApproval(tool.id, 'alice', 'invoke', 'need access');
+    let requested = await waitForAudit('tool.approval.requested');
+    assert.ok(requested.length >= 1, 'request audited');
+    assert.equal((requested[0] as { actor: string }).actor, 'alice');
+    assert.deepEqual((requested[0] as { detail: { requestId: string } }).detail.requestId, req.id);
+
+    // 3. Decide → tool.approval.decided.
+    ti.decideApproval(req.id, 'approved', 'admin');
+    let decided = await waitForAudit('tool.approval.decided');
+    assert.ok(decided.length >= 1, 'decision audited');
+    assert.equal((decided[0] as { actor: string }).actor, 'admin');
+    assert.equal((decided[0] as { result: string }).result, 'success');
+    assert.equal((decided[0] as { detail: { decision: string } }).detail.decision, 'approved');
+
+    // 4. Deny another → decided with result denied.
+    const req2 = ti.requestApproval(tool.id, 'bob', 'invoke', 'also needs access');
+    await waitForAudit('tool.approval.requested', 2);
+    ti.decideApproval(req2.id, 'denied', 'admin');
+    const denied = await waitForAudit('tool.approval.decided', 2);
+    const deniedRec = denied.find((r) => (r as { detail: { decision: string } }).detail.decision === 'denied');
+    assert.ok(deniedRec, 'denial decision audited');
+    assert.equal((deniedRec as { result: string }).result, 'denied');
+  });
+
+  it('skips audit gracefully when security is absent (no throw)', async () => {
+    const k2 = createTestKernel();
+    k2.register(new StorageModule());
+    k2.register(new ToolIntelligenceModule());
+    await k2.boot();
+    try {
+      const ti2 = k2.getModule<ToolIntelligenceModule>('tool-intelligence');
+      const tool = await ti2.register({ canonicalName: 'r', provider: 'p', version: '1', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+      ti2.registerAdapter({ id: tool.id, capabilities: () => ['x'], async invoke(input) { return input; } });
+      const req = ti2.requestApproval(tool.id, 'u', 'invoke');
+      ti2.decideApproval(req.id, 'approved', 'admin');
+      const ok = await ti2.invoke(tool.id, { a: 1 }, { userId: 'u', username: 'u', roles: ['developer'] }, req.id);
+      assert.equal(ok.status, 'success');
+    } finally {
+      await k2.shutdown();
+    }
   });
 });
