@@ -119,6 +119,9 @@ describe('WebUIModule', () => {
     // Tool governance actions.
     assert.match(js, /\/tools\/sync/, 'tools sync wired');
     assert.match(js, /decideApproval/, 'approval decision wired');
+    // Tool governance observability.
+    assert.match(js, /\/tools\/governance-stats/, 'governance stats endpoint wired');
+    assert.match(js, /Decisions ALLOW/, 'decision stat cards rendered');
     // TANYA WebSocket streaming (with HTTP fallback).
     assert.match(js, /new WebSocket\(tanyaWsUrl\(\)\)/, 'tanya chat streams over /ws');
     assert.match(js, /tanya\.chunk/, 'streams tanya.chunk events');

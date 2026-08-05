@@ -115,10 +115,13 @@ const VIEWS = {
   agents: async () => api('POST', '/ask', { question: 'Give a one-line platform status summary.' }),
   workflows: async () => api('GET', '/workflows'),
   tools: async () => {
-    const [tools, approvals] = await Promise.allSettled([api('GET', '/tools'), api('GET', '/approvals')]);
+    const [tools, approvals, gstats] = await Promise.allSettled([
+      api('GET', '/tools'), api('GET', '/approvals'), api('GET', '/tools/governance-stats'),
+    ]);
     return {
       tools: tools.status === 'fulfilled' ? tools.value : null,
       approvals: approvals.status === 'fulfilled' ? approvals.value : null,
+      gstats: gstats.status === 'fulfilled' ? gstats.value : null,
     };
   },
   models: async () => api('GET', '/models'),
@@ -410,11 +413,18 @@ function renderView(view, data) {
   } else if (view === 'tools') {
     const tools = data.tools?.tools || [];
     const approvals = data.approvals?.approvals || [];
+    const g = data.gstats || {};
+    const decisions = g.decisions?.byDecision || {};
+    const invs = g.invocations || {};
     html += `<div class="stat-grid">
-      ${statCard('Governed Tools', tools.length)}
-      ${statCard('R4 Gated', tools.filter((t) => t.riskClass === 'R4').length, 'yellow')}
-      ${statCard('Active', tools.filter((t) => t.status === 'ACTIVE').length, 'green')}
-      ${statCard('Pending Approvals', approvals.length, approvals.length ? 'yellow' : 'green')}
+      ${statCard('Governed Tools', g.tools?.total ?? tools.length)}
+      ${statCard('Agent Tools', g.tools?.agentTools ?? null)}
+      ${statCard('R4 Gated', g.tools?.approvalGated ?? tools.filter((t) => t.riskClass === 'R4').length, 'yellow')}
+      ${statCard('Invocations', invs.total ?? 0)}
+      ${statCard('Avg Duration', g.avgDurationMs != null ? g.avgDurationMs + ' ms' : null)}
+      ${statCard('Decisions ALLOW', decisions.ALLOW ?? 0, 'green')}
+      ${statCard('Decisions DENY', decisions.DENY ?? 0, 'red')}
+      ${statCard('Pending Approvals', g.approvals?.pending ?? approvals.length, (g.approvals?.pending ?? approvals.length) ? 'yellow' : 'green')}
     </div>
     <div class="card"><div class="card-title">Governance Sync</div>
       <p style="color:var(--text-dim);margin-bottom:10px">Register the agent runtime's live tool surface (37 tools) into the governed registry with risk classes.</p>

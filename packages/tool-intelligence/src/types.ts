@@ -125,6 +125,38 @@ export interface AgentToolDescriptor {
   ): Promise<unknown>;
 }
 
+/** Aggregate governance posture (registry + approvals + metrics). */
+export interface GovernanceStats {
+  tools: {
+    total: number;
+    active: number;
+    /** Count of registered tools per risk class (R0..R5). */
+    byRisk: Record<string, number>;
+    /** Tools whose risk class requires human approval (R4/R5). */
+    approvalGated: number;
+    /** Tools synced from the agent runtime (agentTool flag). */
+    agentTools: number;
+  };
+  approvals: {
+    pending: number;
+    requested: number;
+    approved: number;
+    denied: number;
+    expired: number;
+  };
+  invocations: {
+    total: number;
+    byRisk: Record<string, number>;
+    byStatus: Record<string, number>;
+  };
+  decisions: {
+    total: number;
+    byDecision: Record<string, number>;
+  };
+  /** Average invocation duration in ms (undefined before any invocation). */
+  avgDurationMs?: number;
+}
+
 export const ToolEvents = Object.freeze({
   ToolRegistered: 'tool.registered',
   ToolInvoked: 'tool.invoked',

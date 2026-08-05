@@ -232,4 +232,12 @@ describe('jataqi CLI — intelligence commands', () => {
     const approvals = await jataqi('tools', 'approvals');
     assert.match(approvals, /0 pending approval\(s\)/);
   });
+
+  it('tools stats reports governance posture', async () => {
+    const stats = await jataqi('tools', 'stats');
+    assert.match(stats, /"tools"/);
+    assert.match(stats, /"approvals"/);
+    assert.match(stats, /"invocations"/);
+    assert.match(stats, /"decisions"/);
+  });
 });

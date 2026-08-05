@@ -81,7 +81,7 @@ Commands:
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
   tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats.
-  tools <sub>         Tool governance: sync|list|invoke|approvals|approve.
+  tools <sub>         Tool governance: sync|list|stats|invoke|approvals|approve.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -1794,6 +1794,17 @@ async function main() {
             console.log(`${all.length} tool(s)`);
             break;
           }
+          case 'stats': {
+            const stats = await toolIntel.governanceStats();
+            console.log(JSON.stringify({
+              tools: stats.tools,
+              approvals: stats.approvals,
+              invocations: stats.invocations,
+              decisions: stats.decisions,
+              avgDurationMs: stats.avgDurationMs,
+            }, null, 2));
+            break;
+          }
           case 'invoke': {
             const id = args[2] ?? flag('id');
             if (!id) { console.error('Usage: jataqi tools invoke <id> [--json input]'); process.exit(1); }
@@ -1821,7 +1832,7 @@ async function main() {
             break;
           }
           default:
-            console.error('Usage: jataqi tools sync|list|invoke|approvals|approve'); process.exit(1);
+            console.error('Usage: jataqi tools sync|list|stats|invoke|approvals|approve'); process.exit(1);
         }
         break;
       }

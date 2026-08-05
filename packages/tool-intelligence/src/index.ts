@@ -23,4 +23,5 @@ export type {
   ApprovalRequest,
   ApprovalDecision,
   ToolEvaluation,
+  GovernanceStats,
 } from './types.js';

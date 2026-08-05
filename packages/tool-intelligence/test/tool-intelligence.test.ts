@@ -308,3 +308,120 @@ describe('syncAgentTools — governance registry sync from agent tool descriptor
     assert.equal(entity.status, 'ACTIVE');
   });
 });
+
+describe('Tool governance observability (metrics + governanceStats)', () => {
+  let kernel: Kernel;
+  let ti: ToolIntelligenceModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new MetricsModule());
+    kernel.register(new ToolIntelligenceModule());
+    await kernel.boot();
+    ti = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+  });
+
+  afterEach(async () => { await kernel.shutdown(); });
+
+  it('emits invocation + approval metrics and aggregates governanceStats', async () => {
+    // R0 tool — auto-invokes.
+    const r0 = await ti.register({ canonicalName: 'echo-safe', provider: 'jataqi', version: '1.0.0', category: 'util', capabilities: ['echo'], protocol: 'function', riskClass: 'R0', status: 'ACTIVE' });
+    ti.registerAdapter({ id: r0.id, capabilities: () => ['echo'], async invoke(input) { return { echo: input }; } });
+    // R4 tool — approval-gated.
+    const r4 = await ti.register({ canonicalName: 'provision', provider: 'jataqi', version: '1.0.0', category: 'cloud', capabilities: ['provision'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+    ti.registerAdapter({ id: r4.id, capabilities: () => ['provision'], async invoke(input) { return { ok: true }; } });
+
+    // R0 success.
+    const ok = await ti.invoke(r0.id, { a: 1 });
+    assert.equal(ok.status, 'success');
+    // R4 pending (no approval yet).
+    const gated = await ti.invoke(r4.id, { b: 2 });
+    assert.equal(gated.status, 'pending_approval');
+    // Approval flow.
+    const req = ti.requestApproval(r4.id, 'u1', 'invoke', 'provision');
+    ti.decideApproval(req.id, 'approved', 'admin');
+    const ok4 = await ti.invoke(r4.id, { b: 3 }, undefined, req.id);
+    assert.equal(ok4.status, 'success');
+
+    const metrics = kernel.getModule<MetricsModule>('metrics');
+    const samples = metrics.snapshot();
+
+    const invTotal = samples.find((s) => s.name === 'jataqi_tool_invocations_total' && !s.labels?.risk);
+    // aggregate by label
+    const invR0 = samples.filter((s) => s.name === 'jataqi_tool_invocations_total' && s.labels?.risk === 'R0');
+    const invR4 = samples.filter((s) => s.name === 'jataqi_tool_invocations_total' && s.labels?.risk === 'R4');
+    assert.equal(invR0.reduce((n, s) => n + s.value, 0), 1);
+    assert.equal(invR4.reduce((n, s) => n + s.value, 0), 2); // pending + success
+    const pendingSeries = samples.find((s) => s.name === 'jataqi_tool_invocations_total' && s.labels?.status === 'pending_approval');
+    assert.ok(pendingSeries && pendingSeries.value >= 1);
+    assert.ok(invTotal === undefined || invTotal.value >= 0);
+
+    const approvals = samples.filter((s) => s.name === 'jataqi_tool_approval_requests_total');
+    assert.equal(approvals.reduce((n, s) => n + s.value, 0), 2); // requested + approved
+    assert.equal(samples.find((s) => s.name === 'jataqi_tool_pending_approvals')?.value, 0);
+
+    const durSeries = samples.find((s) => s.name === 'jataqi_tool_invocation_duration_ms');
+    assert.ok(durSeries, 'duration histogram present');
+
+    // governanceStats aggregation.
+    const stats = await ti.governanceStats();
+    assert.equal(stats.tools.total, 2);
+    assert.equal(stats.tools.approvalGated, 1);
+    assert.equal(stats.tools.byRisk.R0, 1);
+    assert.equal(stats.tools.byRisk.R4, 1);
+    assert.equal(stats.approvals.requested, 1); // one request created
+    assert.equal(stats.approvals.approved, 1);
+    assert.equal(stats.approvals.pending, 0);
+    assert.equal(stats.invocations.total, 3);
+    assert.equal(stats.invocations.byStatus.success, 2);
+    assert.equal(stats.invocations.byStatus.pending_approval, 1);
+    assert.equal(stats.invocations.byRisk.R4, 2);
+    assert.ok(typeof stats.avgDurationMs === 'number');
+  });
+
+  it('governanceStats works without the metrics module (graceful degradation)', async () => {
+    const kernel2 = createTestKernel();
+    kernel2.register(new StorageModule());
+    kernel2.register(new ToolIntelligenceModule());
+    await kernel2.boot();
+    try {
+      const ti2 = kernel2.getModule<ToolIntelligenceModule>('tool-intelligence');
+      await ti2.register({ canonicalName: 'x', provider: 'jataqi', version: '1.0.0', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R2', status: 'ACTIVE' });
+      const stats = await ti2.governanceStats();
+      assert.equal(stats.tools.total, 1);
+      assert.equal(stats.tools.byRisk.R2, 1);
+      assert.equal(stats.invocations.total, 0);
+      assert.equal(stats.avgDurationMs, undefined);
+    } finally {
+      await kernel2.shutdown();
+    }
+  });
+
+  it('records governance gate decisions when policy-governance denies', async () => {
+    await govBoot();
+    async function govBoot() {
+      const k = createTestKernel();
+      k.register(new StorageModule());
+      k.register(new MetricsModule());
+      k.register(new PolicyGovernanceModule());
+      k.register(new ToolIntelligenceModule());
+      await k.boot();
+      const mod = k.getModule<ToolIntelligenceModule>('tool-intelligence');
+      const tool = await mod.register({ canonicalName: 'denied-tool', provider: 'jataqi', version: '1.0.0', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R0', status: 'ACTIVE' });
+      mod.registerAdapter({ id: tool.id, capabilities: () => ['x'], async invoke(input) { return input; } });
+      const gov = k.getModule<PolicyGovernanceModule>('policy-governance');
+      await gov.createPolicy({ name: 'deny-tools', category: 'TOOL', scope: 'GLOBAL', effect: 'DENY', action: 'tool.invoke' }, 'admin');
+      const res = await mod.invoke(tool.id, { a: 1 });
+      assert.equal(res.status, 'denied');
+      const metrics = k.getModule<MetricsModule>('metrics');
+      const decisions = metrics.snapshot().filter((s) => s.name === 'jataqi_tool_governance_decisions_total');
+      assert.equal(decisions.reduce((n, s) => n + s.value, 0), 1);
+      assert.equal(decisions.find((s) => s.labels?.decision === 'DENY')?.value, 1);
+      const stats = await mod.governanceStats();
+      assert.equal(stats.decisions.byDecision.DENY, 1);
+      assert.equal(stats.invocations.byStatus.denied, 1);
+      await k.shutdown();
+    }
+  });
+});

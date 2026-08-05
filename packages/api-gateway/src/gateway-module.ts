@@ -471,6 +471,7 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/tools/capability', auth('tool:read', (req) => this.toolsForCapability(req)));
     route('POST', '/tools', auth('tool:read', (req) => this.toolRegister(req)));
     route('POST', '/tools/sync', auth('tool:read', (req) => this.toolsSync(req)));
+    route('GET', '/tools/governance-stats', auth('tool:read', (req) => this.toolsGovernanceStats(req)));
     route('GET', '/tool', auth('tool:read', (req) => this.toolGet(req)));
     route('POST', '/tool/invoke', auth('tool:invoke', (req) => this.toolInvoke(req)));
     route('POST', '/tool/request-approval', auth('tool:invoke', (req) => this.toolRequestApproval(req)));
@@ -4947,6 +4948,12 @@ export class ApiGatewayModule implements IModule {
     const tools = this.agents.getAgent('main').getTools();
     const result = await this.tools.syncAgentTools(tools, { provider: 'agent-runtime', version: '1.0.0' });
     return json(200, { synced: result.synced.length, created: result.created, updated: result.updated });
+  }
+
+  private async toolsGovernanceStats(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
+    const stats = await this.tools.governanceStats();
+    return json(200, stats);
   }
 
   private async toolGet(req: GatewayRequest): Promise<GatewayResponse> {

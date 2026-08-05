@@ -43,6 +43,7 @@ import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
 import { IpamModule } from '@jataqi/ipam';
 import { TanyaModule } from '@jataqi/tanya';
+import { MetricsModule } from '@jataqi/metrics';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -98,6 +99,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new LinkIntelligenceModule());
     kernel.register(new MultimodalIntelligenceModule());
     kernel.register(new ConversationsModule());
+    kernel.register(new MetricsModule());
     kernel.register(new ToolIntelligenceModule());
     kernel.register(new SearchModule());
     kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
@@ -1328,5 +1330,48 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
 
     const approvals = await jsonRequest('GET', `${base}/approvals`, undefined, token);
     assert.equal((approvals.body as { approvals: unknown[] }).approvals.length, 0); // all decided
+  });
+
+  it('GET /tools/governance-stats exposes registry + approval + invocation posture', async () => {
+    const sync = await jsonRequest('POST', `${base}/tools/sync`, {}, token);
+    assert.equal(sync.status, 200);
+
+    const stats = await jsonRequest('GET', `${base}/tools/governance-stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    const s = stats.body as {
+      tools: { total: number; active: number; byRisk: Record<string, number>; approvalGated: number; agentTools: number };
+      approvals: { pending: number; requested: number; approved: number; denied: number; expired: number };
+      invocations: { total: number; byRisk: Record<string, number>; byStatus: Record<string, number> };
+      decisions: { total: number; byDecision: Record<string, number> };
+      avgDurationMs?: number;
+    };
+    assert.equal(s.tools.total, 37);
+    assert.equal(s.tools.active, 37);
+    assert.equal(s.tools.approvalGated, 3); // mobility.dispatch, cloud.provision, cloud.autoscale
+    assert.equal(s.tools.agentTools, 37);
+    assert.equal(s.tools.byRisk.R4, 3);
+    assert.equal(s.approvals.pending, 0);
+    assert.ok(s.invocations.total >= 0);
+    assert.ok(s.decisions.total >= 0);
+
+    // An R4 approval flow drives the counters (assert deltas — earlier tests
+    // in this suite already exercised approval + invocation flows).
+    const before = s;
+    const provision = (await jsonRequest('GET', `${base}/tools`, undefined, token)).body as { tools: { id: string; canonicalName: string }[] };
+    const pid = provision.tools.find((t) => t.canonicalName === 'cloud.provision')!.id;
+    await jsonRequest('POST', `${base}/tool/invoke`, { id: pid, input: { name: 'web-1', regionId: 'nope', flavorId: 'nope', imageId: 'nope' } }, token); // 202 pending
+    const req = await jsonRequest('POST', `${base}/tool/request-approval`, { id: pid, action: 'invoke' }, token);
+    const rid = (req.body as { approvalRequest: { id: string } }).approvalRequest.id;
+    await jsonRequest('POST', `${base}/tool/approve`, { id: rid, decision: 'approved' }, token);
+
+    const after = (await jsonRequest('GET', `${base}/tools/governance-stats`, undefined, token)).body as {
+      approvals: { pending: number; requested: number; approved: number };
+      invocations: { total: number; byStatus: Record<string, number> };
+    };
+    assert.equal(after.approvals.requested, before.approvals.requested + 1);
+    assert.equal(after.approvals.approved, before.approvals.approved + 1);
+    assert.equal(after.approvals.pending, 0);
+    assert.equal(after.invocations.total, before.invocations.total + 1);
+    assert.equal(after.invocations.byStatus.pending_approval, (before.invocations.byStatus.pending_approval ?? 0) + 1);
   });
 });

@@ -5,11 +5,14 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { ICollection } from '@jataqi/storage';
+import type { MetricsModule } from '@jataqi/metrics';
+import type { Counter, Gauge, Histogram } from '@jataqi/metrics';
 import { ToolEvents } from './types.js';
 import type {
   AgentToolDescriptor,
   ApprovalDecision,
   ApprovalRequest,
+  GovernanceStats,
   InvocationContext,
   InvocationResult,
   ToolAdapter,
@@ -51,6 +54,12 @@ export class ToolIntelligenceModule implements IModule {
   private evals!: ICollection<ToolEvaluation & { id: string }>;
   private readonly adapters = new Map<string, ToolAdapter>();
   private readonly approvals = new Map<string, ApprovalRequest>();
+  private metrics?: MetricsModule;
+  private mInvocations?: Counter;
+  private mDecisions?: Counter;
+  private mApprovals?: Counter;
+  private mDuration?: Histogram;
+  private mPending?: Gauge;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -268,6 +277,9 @@ export class ToolIntelligenceModule implements IModule {
       expiresAt: now + APPROVAL_TTL_MS,
     };
     this.approvals.set(req.id, req);
+    this.ensureMetrics();
+    this.mApprovals?.inc(1, { decision: 'requested' });
+    this.mPending?.set([...this.approvals.values()].filter((a) => a.status === 'pending').length);
     void this.api.bus.emit(ToolEvents.ApprovalRequested, { id: req.id, toolId });
     return req;
   }
@@ -283,6 +295,9 @@ export class ToolIntelligenceModule implements IModule {
     req.status = decision;
     req.decidedAt = Date.now();
     req.decidedBy = decidedBy;
+    this.ensureMetrics();
+    this.mApprovals?.inc(1, { decision });
+    this.mPending?.set([...this.approvals.values()].filter((a) => a.status === 'pending').length);
     void this.api.bus.emit(ToolEvents.ApprovalDecided, { id: requestId, decision });
     return req;
   }
@@ -293,6 +308,90 @@ export class ToolIntelligenceModule implements IModule {
 
   listPendingApprovals(): ApprovalRequest[] {
     return [...this.approvals.values()].filter((a) => a.status === 'pending');
+  }
+
+  // --- governance observability -------------------------------------------
+
+  /**
+   * Aggregate governance state: registry posture, approval flow, and
+   * invocation/governance metrics (when the metrics module is registered).
+   */
+  async governanceStats(): Promise<GovernanceStats> {
+    const all = await this.tools.all();
+    const byRisk: Record<string, number> = {};
+    for (const t of all) byRisk[t.riskClass] = (byRisk[t.riskClass] ?? 0) + 1;
+    const active = all.filter((t) => t.status === 'ACTIVE').length;
+    const approvalGated = all.filter((t) => needsApproval(t)).length;
+    const agentTools = all.filter((t) => t.metadata?.agentTool === true).length;
+
+    const approvals = [...this.approvals.values()];
+    const byApprovalDecision: Record<string, number> = {};
+    for (const a of approvals) byApprovalDecision[a.status] = (byApprovalDecision[a.status] ?? 0) + 1;
+
+    const invocationsByRisk: Record<string, number> = {};
+    const invocationsByStatus: Record<string, number> = {};
+    const decisions: Record<string, number> = {};
+    let invocationsTotal = 0;
+    let durationSum = 0;
+    let durationCount = 0;
+
+    this.ensureMetrics();
+    if (this.metrics) {
+      for (const s of this.mInvocations?.samples() ?? []) {
+        invocationsTotal += s.value;
+        if (s.labels?.risk) invocationsByRisk[s.labels.risk] = (invocationsByRisk[s.labels.risk] ?? 0) + s.value;
+        if (s.labels?.status) invocationsByStatus[s.labels.status] = (invocationsByStatus[s.labels.status] ?? 0) + s.value;
+      }
+      for (const s of this.mDecisions?.samples() ?? []) {
+        if (s.labels?.decision) decisions[s.labels.decision] = (decisions[s.labels.decision] ?? 0) + s.value;
+      }
+      // Aggregate duration across every label series (durations are labeled by risk class).
+      for (const s of this.mDuration?.samples() ?? []) {
+        if (s.histogram) { durationSum += s.histogram.sum; durationCount += s.histogram.count; }
+      }
+    }
+
+    return {
+      tools: { total: all.length, active, byRisk, approvalGated, agentTools },
+      approvals: {
+        pending: byApprovalDecision.pending ?? 0,
+        requested: approvals.length,
+        approved: byApprovalDecision.approved ?? 0,
+        denied: byApprovalDecision.denied ?? 0,
+        expired: byApprovalDecision.expired ?? 0,
+      },
+      invocations: {
+        total: invocationsTotal,
+        byRisk: invocationsByRisk,
+        byStatus: invocationsByStatus,
+      },
+      decisions: { total: Object.values(decisions).reduce((n, v) => n + v, 0), byDecision: decisions },
+      avgDurationMs: durationCount > 0 ? Math.round((durationSum / durationCount) * 10) / 10 : undefined,
+    };
+  }
+
+  /** Lazily resolve the metrics module and create the governance instruments. */
+  private ensureMetrics(): void {
+    if (this.metrics) return;
+    try {
+      this.metrics = this.api.getModule<MetricsModule>('metrics');
+    } catch {
+      return;
+    }
+    const r = this.metrics.registry;
+    this.mInvocations = r.counter('jataqi_tool_invocations_total', 'Tool invocations by risk class and outcome');
+    this.mDecisions = r.counter('jataqi_tool_governance_decisions_total', 'Governance gate decisions (ALLOW/DENY/REQUIRES_*)');
+    this.mApprovals = r.counter('jataqi_tool_approval_requests_total', 'Tool approval requests by decision');
+    this.mDuration = r.histogram('jataqi_tool_invocation_duration_ms', 'Tool invocation duration in ms');
+    this.mPending = r.gauge('jataqi_tool_pending_approvals', 'Currently pending tool approval requests');
+  }
+
+  private recordInvocation(tool: ToolEntity, status: InvocationResult['status'], durationMs: number, decision?: string): void {
+    this.ensureMetrics();
+    if (!this.metrics) return;
+    this.mInvocations?.inc(1, { risk: tool.riskClass, status });
+    this.mDuration?.observe(durationMs, { risk: tool.riskClass });
+    if (decision) this.mDecisions?.inc(1, { decision });
   }
 
   // --- routing / fallback --------------------------------------------------
@@ -367,6 +466,7 @@ export class ToolIntelligenceModule implements IModule {
         durationMs: Date.now() - t0,
         ...(gate.evaluationId ? { governance: { decision: gate.decision, evaluationId: gate.evaluationId } } : {}),
       };
+      this.recordInvocation(tool, result.status, result.durationMs, gate.decision);
       return result;
     }
 
@@ -381,6 +481,7 @@ export class ToolIntelligenceModule implements IModule {
           error: `tool "${tool.canonicalName}" is ${tool.riskClass} and requires human approval`,
           durationMs: Date.now() - t0,
         };
+        this.recordInvocation(tool, result.status, result.durationMs);
         return result;
       }
     }
@@ -391,6 +492,7 @@ export class ToolIntelligenceModule implements IModule {
       output = await adapter.invoke(input, ctx);
     } catch (err) {
       const result: InvocationResult = { requestId: ctx.requestId, toolId, status: 'failure', error: (err as Error).message, durationMs: Date.now() - t0 };
+      this.recordInvocation(tool, result.status, result.durationMs);
       void this.api.bus.emit(ToolEvents.ToolFailed, { toolId });
       return result;
     }
@@ -399,6 +501,7 @@ export class ToolIntelligenceModule implements IModule {
       const err = adapter.validateOutput(output);
       if (err) {
         const result: InvocationResult = { requestId: ctx.requestId, toolId, status: 'failure', error: `invalid output — ${err}`, durationMs: Date.now() - t0 };
+        this.recordInvocation(tool, result.status, result.durationMs);
         return result;
       }
     }
@@ -429,6 +532,7 @@ export class ToolIntelligenceModule implements IModule {
       ...(auditRecordId ? { auditRecordId } : {}),
       ...(gate ? { governance: { decision: gate.decision, ...(gate.evaluationId ? { evaluationId: gate.evaluationId } : {}) } } : {}),
     };
+    this.recordInvocation(tool, result.status, result.durationMs, gate?.decision);
     await this.api.bus.emit(ToolEvents.ToolInvoked, { toolId, status: 'success' });
     return result;
   }
@@ -449,6 +553,8 @@ export class ToolIntelligenceModule implements IModule {
     const subject = { userId: principal?.userId ?? 'anonymous', roles: principal?.roles };
     try {
       const res = await gov.evaluate(subject, 'tool.invoke', { toolId: tool.id, risk });
+      // The decision is recorded by recordInvocation on every invoke outcome
+      // (denied / pending_approval / success) so it is never double-counted.
       return { allowed: res.decision === 'ALLOW', decision: res.decision, reason: res.reason, evaluationId: res.evaluationId };
     } catch (err) {
       return { allowed: true, decision: 'ALLOW', reason: `governance eval error: ${(err as Error).message}` };
