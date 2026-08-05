@@ -36,6 +36,7 @@ import { AgricultureModule } from '@jataqi/agriculture';
 import { CircularModule } from '@jataqi/circular';
 import { EnergyModule } from '@jataqi/energy';
 import { BorderModule } from '@jataqi/border';
+import { RestaurantsModule } from '@jataqi/restaurants';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -102,6 +103,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new CircularModule());
     kernel.register(new EnergyModule());
     kernel.register(new BorderModule());
+    kernel.register(new RestaurantsModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -923,6 +925,39 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const stats = await jsonRequest('GET', `${base}/border/stats`, undefined, token);
     assert.equal(stats.status, 200);
     assert.equal((stats.body as { stats: { referred: number } }).stats.referred, 1);
+  });
+
+  // --- Phase 7 — NYUMBANI KITCHEN via gateway ---------------------------
+
+  it('restaurants: venue → menu → order → submit → paid → stats over HTTP', async () => {
+    const venue = await jsonRequest('POST', `${base}/restaurants/venues`, { name: 'Nyumbani Grill', ownerId: 'u1', cuisine: 'Swahili' }, token);
+    assert.equal(venue.status, 201);
+    const venueId = (venue.body as { venue: { id: string } }).venue.id;
+
+    const item = await jsonRequest('POST', `${base}/restaurants/menu`, { venueId, name: 'Grilled Fish', price: 1200, category: 'main' }, token);
+    assert.equal(item.status, 201);
+    const itemId = (item.body as { item: { id: string } }).item.id;
+
+    const table = await jsonRequest('POST', `${base}/restaurants/tables`, { venueId, number: 'T1', seats: 4 }, token);
+    const tableId = (table.body as { table: { id: string } }).table.id;
+
+    const order = await jsonRequest('POST', `${base}/restaurants/orders`, {
+      venueId, tableId, lines: [{ menuItemId: itemId, quantity: 2 }],
+    }, token);
+    assert.equal(order.status, 201);
+    const orderId = (order.body as { order: { id: string } }).order.id;
+
+    const submitted = await jsonRequest('POST', `${base}/restaurants/orders/submit`, { id: orderId }, token);
+    assert.equal((submitted.body as { order: { total: number } }).order.total, 2400);
+
+    const paid = await jsonRequest('POST', `${base}/restaurants/orders/status`, { id: orderId, status: 'paid' }, token);
+    assert.equal((paid.body as { order: { status: string } }).order.status, 'paid');
+
+    const stats = await jsonRequest('GET', `${base}/restaurants/stats?venueId=${venueId}`, undefined, token);
+    assert.equal(stats.status, 200);
+    const s = stats.body as { stats: { revenueMinorUnits: number; avgOrderValueMinorUnits?: number } };
+    assert.equal(s.stats.revenueMinorUnits, 2400);
+    assert.equal(s.stats.avgOrderValueMinorUnits, 2400);
   });
 
   // --- Authz guard --------------------------------------------------------

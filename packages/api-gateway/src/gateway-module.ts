@@ -67,6 +67,7 @@ import type { AgricultureModule } from '@jataqi/agriculture';
 import type { CircularModule } from '@jataqi/circular';
 import type { EnergyModule } from '@jataqi/energy';
 import type { BorderModule } from '@jataqi/border';
+import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -142,6 +143,7 @@ export class ApiGatewayModule implements IModule {
   private circular?: CircularModule;
   private energy?: EnergyModule;
   private border?: BorderModule;
+  private restaurants?: RestaurantsModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -224,6 +226,7 @@ export class ApiGatewayModule implements IModule {
     this.circular = this.tryModule<CircularModule>('circular');
     this.energy = this.tryModule<EnergyModule>('energy');
     this.border = this.tryModule<BorderModule>('border');
+    this.restaurants = this.tryModule<RestaurantsModule>('restaurants');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -790,6 +793,22 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/border/manifests', auth('border:read', (req) => this.borderManifestsList(req)));
     route('POST', '/border/manifests/status', auth('border:write', (req) => this.borderManifestsStatus(req)));
     route('GET', '/border/stats', auth('border:read', () => this.borderStats()));
+    // Phase 7 — NYUMBANI KITCHEN restaurant intelligence.
+    route('POST', '/restaurants/venues', auth('restaurants:write', (req) => this.restaurantsVenuesRegister(req)));
+    route('GET', '/restaurants/venues', auth('restaurants:read', (req) => this.restaurantsVenuesList(req)));
+    route('POST', '/restaurants/menu', auth('restaurants:write', (req) => this.restaurantsMenuAdd(req)));
+    route('GET', '/restaurants/menu', auth('restaurants:read', (req) => this.restaurantsMenuList(req)));
+    route('POST', '/restaurants/menu/available', auth('restaurants:write', (req) => this.restaurantsMenuAvailable(req)));
+    route('POST', '/restaurants/tables', auth('restaurants:write', (req) => this.restaurantsTablesAdd(req)));
+    route('GET', '/restaurants/tables', auth('restaurants:read', (req) => this.restaurantsTablesList(req)));
+    route('POST', '/restaurants/orders', auth('restaurants:write', (req) => this.restaurantsOrdersCreate(req)));
+    route('GET', '/restaurants/orders', auth('restaurants:read', (req) => this.restaurantsOrdersList(req)));
+    route('POST', '/restaurants/orders/submit', auth('restaurants:write', (req) => this.restaurantsOrdersSubmit(req)));
+    route('POST', '/restaurants/orders/status', auth('restaurants:write', (req) => this.restaurantsOrdersStatus(req)));
+    route('POST', '/restaurants/ingredients', auth('restaurants:write', (req) => this.restaurantsIngredientsAdd(req)));
+    route('GET', '/restaurants/ingredients', auth('restaurants:read', (req) => this.restaurantsIngredientsList(req)));
+    route('POST', '/restaurants/ingredients/stock', auth('restaurants:write', (req) => this.restaurantsIngredientsStock(req)));
+    route('GET', '/restaurants/stats', auth('restaurants:read', (req) => this.restaurantsStats(req)));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1096,7 +1115,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border',
+      'energy', 'border', 'restaurants',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -3742,6 +3761,145 @@ export class ApiGatewayModule implements IModule {
   private borderStats(): GatewayResponse {
     if (!this.border) return json(501, { error: 'border module not registered' });
     return json(200, { stats: this.border.stats() });
+  }
+
+  // --- Phase 7 — NYUMBANI KITCHEN ---------------------------------------
+
+  private restaurantsVenuesRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.ownerId !== 'string')
+      return json(400, { error: 'fields "name" and "ownerId" are required' });
+    return json(201, { venue: this.restaurants.registerVenue({
+      name: b.name, ownerId: b.ownerId,
+      ...(typeof b.location === 'string' ? { location: b.location } : {}),
+      ...(typeof b.cuisine === 'string' ? { cuisine: b.cuisine } : {}),
+    }) });
+  }
+
+  private restaurantsVenuesList(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const venues = this.restaurants.listVenues(req.query.ownerId);
+    return json(200, { venues, count: venues.length });
+  }
+
+  private restaurantsMenuAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.venueId !== 'string' || typeof b.name !== 'string' || typeof b.price !== 'number')
+      return json(400, { error: 'fields "venueId", "name", and "price" are required' });
+    return json(201, { item: this.restaurants.addMenuItem({
+      venueId: b.venueId, name: b.name, price: b.price,
+      ...(typeof b.category === 'string' ? { category: b.category as never } : {}),
+    }) });
+  }
+
+  private restaurantsMenuList(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    if (!req.query.venueId) return json(400, { error: 'query parameter "venueId" is required' });
+    const items = this.restaurants.listMenu(req.query.venueId, req.query.category as never);
+    return json(200, { items, count: items.length });
+  }
+
+  private restaurantsMenuAvailable(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.available !== 'boolean')
+      return json(400, { error: 'fields "id" and "available" are required' });
+    const item = this.restaurants.setMenuItemAvailable(b.id, b.available);
+    return item ? json(200, { item }) : json(404, { error: 'menu item not found' });
+  }
+
+  private restaurantsTablesAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.venueId !== 'string' || typeof b.number !== 'string')
+      return json(400, { error: 'fields "venueId" and "number" are required' });
+    return json(201, { table: this.restaurants.addTable({
+      venueId: b.venueId, number: b.number,
+      ...(typeof b.seats === 'number' ? { seats: b.seats } : {}),
+    }) });
+  }
+
+  private restaurantsTablesList(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    if (!req.query.venueId) return json(400, { error: 'query parameter "venueId" is required' });
+    const tables = this.restaurants.listTables(req.query.venueId, req.query.status as never);
+    return json(200, { tables, count: tables.length });
+  }
+
+  private async restaurantsOrdersCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.venueId !== 'string' || !Array.isArray(b.lines))
+      return json(400, { error: 'fields "venueId" and "lines" (array of {menuItemId, quantity}) are required' });
+    const order = await this.restaurants.createOrder({
+      venueId: b.venueId,
+      ...(typeof b.tableId === 'string' ? { tableId: b.tableId } : {}),
+      lines: (b.lines as Array<Record<string, unknown>>).map((l) => ({
+        menuItemId: String(l.menuItemId), quantity: Number(l.quantity),
+      })),
+    });
+    return json(201, { order });
+  }
+
+  private restaurantsOrdersList(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const orders = this.restaurants.listOrders({
+      ...(req.query.venueId ? { venueId: req.query.venueId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { orders, count: orders.length });
+  }
+
+  private async restaurantsOrdersSubmit(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const order = await this.restaurants.submitOrder(b.id);
+    return order ? json(200, { order }) : json(404, { error: 'order not found' });
+  }
+
+  private async restaurantsOrdersStatus(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const order = await this.restaurants.updateOrderStatus(b.id, b.status as never);
+    return order ? json(200, { order }) : json(404, { error: 'order not found' });
+  }
+
+  private restaurantsIngredientsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.venueId !== 'string' || typeof b.name !== 'string')
+      return json(400, { error: 'fields "venueId" and "name" are required' });
+    return json(201, { ingredient: this.restaurants.addIngredient({
+      venueId: b.venueId, name: b.name,
+      ...(typeof b.stock === 'number' ? { stock: b.stock } : {}),
+      ...(typeof b.reorderLevel === 'number' ? { reorderLevel: b.reorderLevel } : {}),
+    }) });
+  }
+
+  private restaurantsIngredientsList(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    if (!req.query.venueId) return json(400, { error: 'query parameter "venueId" is required' });
+    const ingredients = this.restaurants.listIngredients(req.query.venueId);
+    return json(200, { ingredients, count: ingredients.length });
+  }
+
+  private async restaurantsIngredientsStock(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.delta !== 'number')
+      return json(400, { error: 'fields "id" and "delta" are required' });
+    const ingredient = await this.restaurants.adjustStock(b.id, b.delta);
+    return ingredient ? json(200, { ingredient }) : json(404, { error: 'ingredient not found' });
+  }
+
+  private restaurantsStats(req: GatewayRequest): GatewayResponse {
+    if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
+    return json(200, { stats: this.restaurants.stats(req.query.venueId) });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

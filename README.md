@@ -60,6 +60,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/circular` | **KARIS LOOP (Phase 7)** — Circular Economy Platform: material streams, collection lifecycle, product take-back, circularity scoring, CO2e savings |
 | `@jataqi/energy` | **KARIS ENERGY (Phase 7)** — Energy Intelligence: generation assets, meters + monotonic readings, consumption analytics, tariff billing |
 | `@jataqi/border` | **KARIS BORDER X (Phase 7)** — Border Security Intelligence: posts, watchlist screening, crossing clearances, cargo manifests with risk flagging |
+| `@jataqi/restaurants` | **NYUMBANI KITCHEN (Phase 7)** — Restaurant Intelligence: venues, menus, tables, order flow, ingredient inventory + reorder alerts, revenue analytics |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -197,6 +198,9 @@ node packages/cli/dist/src/index.js energy meter Office --customer c1
 node packages/cli/dist/src/index.js energy reading <meterId> 800
 node packages/cli/dist/src/index.js border post Busia KE-UG
 node packages/cli/dist/src/index.js border crossing <postId> "Alice" P7654321 --mode road
+node packages/cli/dist/src/index.js kitchen venue "Nyumbani Grill" u1 --cuisine Swahili
+node packages/cli/dist/src/index.js kitchen item <venueId> "Grilled Fish" 1200 --category main
+node packages/cli/dist/src/index.js kitchen order <venueId> --items <itemId>x2 --table T1
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -355,6 +359,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/energy/assets` · `/energy/meters` · `/energy/readings` · `/energy/tariffs` · `/energy/bills` · `/energy/stats` | `energy:read` | KARIS ENERGY reads |
 | POST | `/border/posts` · `/border/watchlist` · `/border/crossings` · `/border/manifests` | `border:write` | KARIS BORDER X operations |
 | GET | `/border/posts` · `/border/watchlist` · `/border/crossings` · `/border/manifests` · `/border/stats` | `border:read` | KARIS BORDER X reads |
+| POST | `/restaurants/venues` · `/restaurants/menu` · `/restaurants/tables` · `/restaurants/orders` · `/restaurants/ingredients` | `restaurants:write` | NYUMBANI KITCHEN operations |
+| GET | `/restaurants/venues` · `/restaurants/menu` · `/restaurants/tables` · `/restaurants/orders` · `/restaurants/ingredients` · `/restaurants/stats` | `restaurants:read` | NYUMBANI KITCHEN reads |
 
 ### Security model
 
@@ -462,6 +468,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **KARIS LOOP — Circular Economy Platform** (Phase 7 — collection lifecycle, take-back, circularity scores, CO2e savings)
 - ✅ **KARIS ENERGY — Energy Intelligence** (Phase 7 — solar/wind/grid assets, meters, consumption analytics, tariff billing)
 - ✅ **KARIS BORDER X — Border Security Intelligence** (Phase 7 — watchlist screening, crossing clearances, cargo risk flagging)
+- ✅ **NYUMBANI KITCHEN — Restaurant Intelligence** (Phase 7 — menus, table management, order flow, ingredient reorder alerts, revenue analytics)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)

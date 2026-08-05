@@ -89,6 +89,7 @@ import { AgricultureModule } from '@jataqi/agriculture';
 import { CircularModule } from '@jataqi/circular';
 import { EnergyModule } from '@jataqi/energy';
 import { BorderModule } from '@jataqi/border';
+import { RestaurantsModule } from '@jataqi/restaurants';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -281,6 +282,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Phase 7 — KARIS ENERGY + KARIS BORDER X.
   kernel.register(new EnergyModule());
   kernel.register(new BorderModule());
+  // Phase 7 — NYUMBANI KITCHEN restaurant intelligence.
+  kernel.register(new RestaurantsModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

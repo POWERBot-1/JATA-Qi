@@ -28,6 +28,7 @@ import type { AgricultureModule } from '@jataqi/agriculture';
 import type { CircularModule } from '@jataqi/circular';
 import type { EnergyModule } from '@jataqi/energy';
 import type { BorderModule } from '@jataqi/border';
+import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -65,6 +66,7 @@ Commands:
   qil <sub>           QiL language: parse|compile|format|lint|run <file|->.
   energy <sub>        KARIS ENERGY: assets|asset|meters|reading|tariffs|bill|stats.
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
+  kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -97,6 +99,7 @@ async function main() {
   const circular = kernel.getModule<CircularModule>('circular');
   const energy = kernel.getModule<EnergyModule>('energy');
   const border = kernel.getModule<BorderModule>('border');
+  const restaurants = kernel.getModule<RestaurantsModule>('restaurants');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1149,6 +1152,84 @@ async function main() {
         }
         break;
       }
+      case 'kitchen': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'venues':
+            for (const v of restaurants.listVenues()) console.log(`- ${v.name}${v.cuisine ? ` (${v.cuisine})` : ''}`);
+            console.log(`${restaurants.listVenues().length} venue(s)`);
+            break;
+          case 'venue': {
+            const name = args[2], owner = args[3];
+            if (!name || !owner) { console.error('Usage: jataqi kitchen venue <name> <ownerId> [--cuisine x]'); process.exit(1); }
+            const v = restaurants.registerVenue({ name, ownerId: owner, ...(flag('cuisine') ? { cuisine: flag('cuisine') } : {}) });
+            console.log(`registered ${v.id}`);
+            break;
+          }
+          case 'menu': {
+            const venueId = args[2];
+            if (!venueId) { console.error('Usage: jataqi kitchen menu <venueId>'); process.exit(1); }
+            for (const m of restaurants.listMenu(venueId)) console.log(`- ${m.name} ${m.price} [${m.category}]${m.available ? '' : ' SOLD OUT'}`);
+            console.log(`${restaurants.listMenu(venueId).length} item(s)`);
+            break;
+          }
+          case 'item': {
+            const venueId = args[2], name = args[3], price = args[4];
+            if (!venueId || !name || !price) { console.error('Usage: jataqi kitchen item <venueId> <name> <price> [--category main]'); process.exit(1); }
+            const m = restaurants.addMenuItem({ venueId, name, price: Number(price), ...(flag('category') ? { category: flag('category') as never } : {}) });
+            console.log(`added ${m.id}`);
+            break;
+          }
+          case 'tables': {
+            const venueId = args[2];
+            if (!venueId) { console.error('Usage: jataqi kitchen tables <venueId>'); process.exit(1); }
+            for (const t of restaurants.listTables(venueId)) console.log(`- ${t.number} (${t.seats}) [${t.status}]`);
+            console.log(`${restaurants.listTables(venueId).length} table(s)`);
+            break;
+          }
+          case 'order': {
+            const venueId = args[2];
+            if (!venueId) { console.error('Usage: jataqi kitchen order <venueId> --items <menuItemId>x<qty>[,<id>x<qty>] [--table T1]'); process.exit(1); }
+            const items = flag('items');
+            if (!items) { console.error('--items is required (e.g. --items abc123x2,def456x1)'); process.exit(1); }
+            const lines = items.split(',').map((part) => {
+              const [menuItemId, qty] = part.split('x');
+              return { menuItemId: menuItemId!, quantity: Number(qty ?? 1) };
+            });
+            try {
+              const o = await restaurants.createOrder({ venueId, lines, ...(flag('table') ? { tableId: flag('table') } : {}) });
+              console.log(`order ${o.id} opened`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'orders': {
+            const venueId = args[2];
+            const orders = venueId ? restaurants.listOrders({ venueId }) : restaurants.listOrders();
+            for (const o of orders) console.log(`- ${o.id} [${o.status}] ${o.lines.length} lines ${o.total}`);
+            console.log(`${orders.length} order(s)`);
+            break;
+          }
+          case 'ingredients': {
+            const venueId = args[2];
+            if (!venueId) { console.error('Usage: jataqi kitchen ingredients <venueId>'); process.exit(1); }
+            for (const i of restaurants.listIngredients(venueId)) console.log(`- ${i.name} ${i.stock} (reorder at ${i.reorderLevel})${i.stock <= i.reorderLevel ? ' LOW' : ''}`);
+            console.log(`${restaurants.listIngredients(venueId).length} ingredient(s)`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(restaurants.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1158,7 +1239,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

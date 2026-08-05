@@ -153,6 +153,13 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"posts": 0/);
   });
 
+  it('kitchen venue + menu + stats work', async () => {
+    const venue = await jataqi('kitchen', 'venue', 'Nyumbani Grill', 'u1', '--cuisine', 'Swahili');
+    assert.match(venue, /registered [0-9a-f-]{36}/);
+    const stats = await jataqi('kitchen', 'stats');
+    assert.match(stats, /"venues": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);
