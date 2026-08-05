@@ -19,9 +19,13 @@ export interface RealtimeConfig {
   eventTypes?: string[];
   /** Custom message handler — receives parsed client messages + the client's WebSocket for replies. */
   onMessage?: (msg: Record<string, unknown>, ws: { send: (data: string) => void }, principal: PrincipalLike | undefined) => void;
+  /** Server keepalive interval in ms — pings clients and prunes silent ones (default 30_000). */
+  pingIntervalMs?: number;
+  /** Ping timeout in ms — a client silent for this long is pruned (default 3 × pingIntervalMs). */
+  pingTimeoutMs?: number;
 }
 
-interface Client { ws: WebSocket; principal?: PrincipalLike; topics: Set<string> }
+interface Client { ws: WebSocket; principal?: PrincipalLike; topics: Set<string>; lastSeen: number }
 
 const DEFAULT_EVENTS = [
   'security.user.login', 'security.user.logout', 'security.user.registered', 'security.auth.denied',
@@ -42,6 +46,9 @@ export class RealtimeModule implements IModule {
   private clients = new Set<Client>();
   private cfg: RealtimeConfig = {};
   private unsubs: Array<() => void> = [];
+  private keepalive?: ReturnType<typeof setInterval>;
+  private connectedAt = 0;
+  private totalConnections = 0;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -62,6 +69,23 @@ export class RealtimeModule implements IModule {
       this.api.bus.on(ev, h);
       this.unsubs.push(() => this.api.bus.off(ev, h));
     }
+    // Keepalive: ping every client; prune those silent past the timeout.
+    this.connectedAt = Date.now();
+    const pingInterval = cfg.pingIntervalMs ?? 30_000;
+    const pingTimeout = cfg.pingTimeoutMs ?? pingInterval * 3;
+    this.keepalive = setInterval(() => {
+      const now = Date.now();
+      for (const c of [...this.clients]) {
+        if (now - c.lastSeen > pingTimeout) {
+          this.clients.delete(c);
+          c.ws.close(1001, 'keepalive timeout');
+          void this.api.bus.emit('realtime.client.disconnected', { reason: 'keepalive timeout', clientCount: this.clients.size });
+          continue;
+        }
+        c.ws.ping();
+      }
+    }, pingInterval);
+    this.keepalive.unref?.();
     this.api.logger.info(`realtime attached at ${this.cfg.path}`);
   }
 
@@ -72,13 +96,18 @@ export class RealtimeModule implements IModule {
       principal = await this.cfg.authenticate(token ?? undefined);
       if (!principal) { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); socket.destroy(); return; }
     }
+    const client: Client = { ws: undefined as never, topics: new Set(), lastSeen: Date.now(), ...(principal ? { principal } : {}) };
     const ws = upgrade(socket, req.headers['sec-websocket-key'], req.headers['sec-websocket-protocol']?.split(',').map((s) => s.trim()),
-      (data) => this.onClientMessage(client, data),
-      () => this.clients.delete(client),
+      (data) => { client.lastSeen = Date.now(); this.onClientMessage(client, data); },
+      () => { this.clients.delete(client); void this.api.bus.emit('realtime.client.disconnected', { clientCount: this.clients.size }); },
+      () => { client.lastSeen = Date.now(); },
+      () => { client.lastSeen = Date.now(); },
     );
     if (!ws) return;
-    const client: Client = { ws, topics: new Set(), ...(principal ? { principal } : {}) };
+    client.ws = ws;
     this.clients.add(client);
+    this.totalConnections++;
+    void this.api.bus.emit('realtime.client.connected', { clientCount: this.clients.size });
     ws.send(JSON.stringify({ type: 'realtime.connected', data: { clientCount: this.clients.size }, ts: Date.now() }));
   }
 
@@ -103,6 +132,18 @@ export class RealtimeModule implements IModule {
 
   get clientCount(): number { return this.clients.size; }
 
+  /** Realtime observability: connection stats + configuration. */
+  stats(): { clients: number; totalConnections: number; connectedAt: number; uptimeMs: number; path: string; pingIntervalMs: number } {
+    return {
+      clients: this.clients.size,
+      totalConnections: this.totalConnections,
+      connectedAt: this.connectedAt,
+      uptimeMs: this.connectedAt ? Date.now() - this.connectedAt : 0,
+      path: this.cfg.path ?? '/ws',
+      pingIntervalMs: this.cfg.pingIntervalMs ?? 30_000,
+    };
+  }
+
   private extractProtocol(req: IncomingMessage): string | undefined {
     const p = req.headers['sec-websocket-protocol'];
     if (!p) return undefined;
@@ -111,6 +152,7 @@ export class RealtimeModule implements IModule {
 
   async start(_k: KernelApi): Promise<void> {}
   async stop(_k: KernelApi): Promise<void> {
+    if (this.keepalive) clearInterval(this.keepalive);
     this.unsubs.forEach((u) => u()); this.unsubs = [];
     this.clients.forEach((c) => c.ws.close(1001, 'shutdown'));
     this.clients.clear();

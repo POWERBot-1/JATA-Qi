@@ -914,8 +914,18 @@ function showFeedToast(entry) {
   clearTimeout(feedToastTimer);
   feedToastTimer = setTimeout(() => el.classList.remove('visible'), 2500);
 }
+function refreshRealtimeCount() {
+  if (!state.token) return;
+  api('GET', '/realtime/stats').then((s) => {
+    const el = $('#realtime-count');
+    if (el) el.textContent = `· ${s.clients} connected`;
+  }).catch(() => {});
+}
 function startLiveFeed() {
   if (state.feedUnsub || !state.token) return;
+  refreshRealtimeCount();
+  if (state._rtTimer) clearInterval(state._rtTimer);
+  state._rtTimer = setInterval(refreshRealtimeCount, 30_000);
   try {
     const ws = new WebSocket(tanyaWsUrl());
     ws.onopen = () => ws.send(JSON.stringify({ op: 'subscribe', topics: ['security', 'memory', 'tool', 'tanya', 'orchestrator', 'governance'] }));
@@ -930,6 +940,7 @@ function startLiveFeed() {
 }
 function stopLiveFeed() {
   if (state.feedUnsub) { try { state.feedUnsub.close(); } catch {} state.feedUnsub = null; }
+  if (state._rtTimer) { clearInterval(state._rtTimer); state._rtTimer = null; }
 }
 
 // Stream a TANYA turn over the /ws realtime channel (tanya.chunk events),
@@ -1221,7 +1232,7 @@ function render() {
       <div class="sidebar-brand">🧠 JATA<span>Qi</span></div>
       ${NAV.map((n) => `<div class="nav-item ${state.view === n.id ? 'active' : ''}" onclick="loadView('${n.id}')">${n.icon} <span>${n.label}</span></div>`).join('')}
       <div style="padding:12px 16px;border-top:1px solid var(--border)">
-        <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Live Activity</div>
+        <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Live Activity <span id="realtime-count" style="color:var(--green)"></span></div>
         <div id="activity-feed" style="max-height:180px;overflow-y:auto;font-size:12px">
           <p style="color:var(--text-dim)">Connecting…</p>
         </div>

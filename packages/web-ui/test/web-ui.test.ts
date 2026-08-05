@@ -215,6 +215,10 @@ describe('WebUIModule', () => {
     assert.match(js, /\/approvals\?status=all/, 'history fetch wired');
     assert.match(js, /Approval Queue/, 'queue rendered');
     assert.match(js, /decideApproval\(/i, 'approve/deny actions wired');
+    // Realtime observability badge.
+    assert.match(js, /\/realtime\/stats/, 'realtime stats endpoint wired');
+    assert.match(js, /refreshRealtimeCount/, 'client-count refresh helper present');
+    assert.match(js, /connected/, 'count badge text');
     // Live activity feed.
     assert.match(js, /startLiveFeed/, 'live feed wired');
     assert.match(js, /topics: \['security', 'memory', 'tool', 'tanya', 'orchestrator', 'governance'\]/, 'subscribes to platform topics');

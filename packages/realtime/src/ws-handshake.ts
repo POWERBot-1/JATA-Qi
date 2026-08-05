@@ -24,6 +24,7 @@ export function upgrade(
   onMessage?: MessageHandler,
   onClose?: CloseHandler,
   onPing?: () => void,
+  onPong?: () => void,
 ): WebSocket | undefined {
   if (!key) {
     socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
@@ -34,5 +35,5 @@ export function upgrade(
   const lines = ['HTTP/1.1 101 Switching Protocols', 'Upgrade: websocket', 'Connection: Upgrade', `Sec-WebSocket-Accept: ${accept}`];
   if (protocols && protocols.length) lines.push(`Sec-WebSocket-Protocol: ${protocols[0]}`);
   socket.write(lines.join('\r\n') + '\r\n\r\n');
-  return new WebSocket(socket, onMessage, onClose, onPing);
+  return new WebSocket(socket, onMessage, onClose, onPing, onPong);
 }

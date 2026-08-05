@@ -476,6 +476,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/tools/sync', auth('tool:read', (req) => this.toolsSync(req)));
     route('GET', '/tools/governance-stats', auth('tool:read', (req) => this.toolsGovernanceStats(req)));
     route('GET', '/governance/alerts', auth('tool:read', (req) => this.governanceAlerts(req)));
+    route('GET', '/realtime/stats', auth('metrics:read', (req) => this.realtimeStats(req)));
     route('GET', '/tool', auth('tool:read', (req) => this.toolGet(req)));
     route('POST', '/tool/invoke', auth('tool:invoke', (req) => this.toolInvoke(req)));
     route('POST', '/tool/request-approval', auth('tool:invoke', (req) => this.toolRequestApproval(req)));
@@ -5067,6 +5068,11 @@ export class ApiGatewayModule implements IModule {
     const tools = this.agents.getAgent('main').getTools();
     const result = await this.tools.syncAgentTools(tools, { provider: 'agent-runtime', version: '1.0.0' });
     return json(200, { synced: result.synced.length, created: result.created, updated: result.updated });
+  }
+
+  private realtimeStats(req: GatewayRequest): GatewayResponse {
+    if (!this.realtime) return json(501, { error: 'realtime module not registered' });
+    return json(200, this.realtime.stats());
   }
 
   private async governanceAlerts(req: GatewayRequest): Promise<GatewayResponse> {

@@ -15,7 +15,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history + per-step streaming (onStep) |
 | `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger + CSV/JSON export, session introspection (sessionInfo) |
 | `@jataqi/api-gateway` | `api-gateway` | security, orchestrator | HTTP gateway, rate limiting, OpenAPI |
-| `@jataqi/realtime` | `realtime` | – | WebSocket server — auth, topic subscriptions, bus-event broadcast (security/orchestrator/memory/tools/tanya) |
+| `@jataqi/realtime` | `realtime` | – | WebSocket server — auth, topic subscriptions, bus-event broadcast (security/orchestrator/memory/tools/tanya), keepalive + pruning, connection stats |
 | `@jataqi/metrics` | `metrics` | – | counters / gauges / histograms |
 | `@jataqi/simulation` | `simulation` | – | Monte-Carlo scenarios |
 | `@jataqi/teams` | `teams` | agent-runtime | multi-agent coordination |

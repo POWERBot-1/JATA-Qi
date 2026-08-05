@@ -20,6 +20,7 @@ export class WebSocket {
     private readonly onMessage?: MessageHandler,
     private readonly onClose?: CloseHandler,
     private readonly onPing?: () => void,
+    private readonly onPong?: () => void,
   ) {
     this.remoteAddress = socket.remoteAddress;
     socket.on('data', (chunk: Buffer) => this.onData(chunk));
@@ -38,7 +39,7 @@ export class WebSocket {
   private onFrame(frame: WsFrame): void {
     // Control frames (never fragmented).
     if (frame.opcode === Opcode.PING) { this.raw(Opcode.PONG, frame.payload); this.onPing?.(); return; }
-    if (frame.opcode === Opcode.PONG) return;
+    if (frame.opcode === Opcode.PONG) { this.onPong?.(); return; }
     if (frame.opcode === Opcode.CLOSE) {
       const code = frame.payload.length >= 2 ? frame.payload.readUInt16BE(0) : 1000;
       const reason = frame.payload.length > 2 ? frame.payload.subarray(2).toString('utf8') : '';

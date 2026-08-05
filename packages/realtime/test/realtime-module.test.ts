@@ -28,7 +28,11 @@ function wsClient(port: number, path: string, token?: string): Promise<{ send: (
       buf = Buffer.concat([buf, chunk]);
       if (!upgraded) { const idx = buf.indexOf('\r\n\r\n'); if (idx >= 0) { upgraded = true; buf = buf.subarray(idx + 4); } else return; }
       const { frames, rest } = decodeFrames(buf); buf = rest;
-      for (const f of frames) { if (f.opcode === Opcode.TEXT) pending.push(f.payload.toString()); }
+      for (const f of frames) {
+        if (f.opcode === Opcode.TEXT) pending.push(f.payload.toString());
+        // Keepalive: auto-respond to server pings (RFC 6455 §5.5.2).
+        if (f.opcode === Opcode.PING) sock.write(encodeMaskedFrame(Opcode.PONG, f.payload));
+      }
       drain();
     });
     resolve({
@@ -154,5 +158,56 @@ describe('RealtimeModule', () => {
     await k2.shutdown();
     server2.closeAllConnections?.();
     await new Promise<void>((r) => server2.close(() => r()));
+  });
+});
+
+describe('Realtime keepalive + observability', () => {
+  it('pings clients and prunes silent ones; emits connect/disconnect events', async () => {
+    const kernel = createTestKernel();
+    const mod = new RealtimeModule();
+    kernel.register(mod);
+    await kernel.boot();
+    const server = http.createServer();
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const port = (server.address() as AddressInfo).port;
+    const events: string[] = [];
+    const unsub = kernel.bus.on('realtime.client.connected', () => { events.push('connected'); });
+    const unsub2 = kernel.bus.on('realtime.client.disconnected', () => { events.push('disconnected'); });
+
+    // Aggressive keepalive: ping every 40ms, prune after 120ms.
+    mod.attach(server, {
+      authenticate: async (t) => (t === 'valid' ? { userId: 'u1', username: 'alice', roles: ['developer'] } as PrincipalLike : undefined),
+      pingIntervalMs: 40,
+      pingTimeoutMs: 120,
+    });
+
+    // A live client (auto-pongs inbound pings via the ws-codec) stays connected.
+    const alive = await wsClient(port, '/ws', 'valid');
+    await alive.recv(); // connected
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(mod.clientCount, 1, 'live client survives keepalive (auto-pong)');
+
+    // A dead client (destroyed socket) is pruned.
+    const dying = await wsClient(port, '/ws', 'valid');
+    await dying.recv();
+    dying.close();
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(mod.clientCount, 1, 'dead client pruned');
+
+    // Stats reflect the session.
+    const stats = mod.stats();
+    assert.ok(stats.clients >= 1);
+    assert.equal(stats.path, '/ws');
+    assert.equal(stats.pingIntervalMs, 40);
+    assert.ok(stats.uptimeMs > 0);
+    assert.ok(stats.totalConnections >= 2);
+
+    assert.ok(events.includes('connected'), 'connected event emitted');
+    assert.ok(events.includes('disconnected'), 'disconnected event emitted');
+    unsub(); unsub2();
+    alive.close();
+    await kernel.shutdown();
+    server.closeAllConnections?.();
+    await new Promise<void>((r) => server.close(() => r()));
   });
 });

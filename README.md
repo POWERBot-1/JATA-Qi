@@ -445,6 +445,7 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | POST | `/tools` · `/tools/sync` | `tool:read` | Register tools / sync the agent surface into governance |
 | GET | `/tools/governance-stats` | `tool:read` | Aggregate governance posture (registry, approvals, invocations, decisions) |
 | GET | `/governance/alerts` | `tool:read` | Live governance SLA rule evaluation (approval queue / DENY spike / R4 rate) |
+| GET | `/realtime/stats` | `metrics:read` | WebSocket connection metrics (clients, total, uptime, keepalive) |
 | POST | `/tool/invoke` · `/tool/request-approval` · `/tool/approve` | `tool:invoke`/`approval:decide` | Governed invocation + approval flow |
 
 ### Security model
@@ -574,6 +575,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
 - ✅ **Adaptive Dashboard** (Phase 5 step 3 — widget framework, responsive layout engine, AI personalization; 19 built-in widgets incl. tool-governance widgets — governed tools / invocations / decisions KPIs + pending-approvals list, live governance panel in the web UI)
 - ✅ **Admin Console Web UI** (Phase 5 step 4 — `/ui` SPA served by the gateway: TANYA chat with personas + conversation history streaming over `/ws` (word-by-word chunks, HTTP fallback), QiL console streaming plan steps live, adaptive dashboard layouts (create/AI-adapt/auto-arrange), federated search console, memory/learning/FX views, PRX engine views (cloud/CDN/email/IPAM), tool-governance console (sync + approvals), **live activity feed** (subscribes to platform bus topics — security/memory/tool/tanya/orchestrator/governance — with sidebar feed + toast notifications), Governance Alerts + Approvals views auto-refresh live (15s/10s), system health/readiness/identity views)
+- ✅ **Realtime keepalive + observability** (server pings every 30s with silent-client pruning, `realtime.client.connected/disconnected` bus events, `GET /realtime/stats` connection metrics; the console's Live Activity header shows the live client count)
 - ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, `subscribe(topics)` for platform bus events, bearer-token auth, reconnect with backoff, handshake watchdog; `pki` namespace with `idpRefresh`/`rotate`/`upsertProfile`/`consoleLogin`/`revoke`; `audit` namespace with `list`/`exportCsv`/`exportJson`; `tanya` namespace (chat/org-scoped lists/share/unshare/shared inbox/personas/stats/export JSON·Markdown·text); `alerts` namespace (governance SLA rules); `org` namespace (create/invite/accept/members); `examples/sdk-streaming.mjs`)
 - ✅ **Auth polish** (`GET /auth/session` expiry introspection; web UI register-first flow (Sign In / Create Account), session validation on restore, live countdown + auto-logout on expiry, global 401 handling; SDK `auth.session()`)
 - ✅ **Universal Wallet** (Phase 2 — double-entry ledger consolidating finance/commerce/game-economy wallets; escrow, treasury, multi-currency)

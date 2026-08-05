@@ -45,6 +45,7 @@ import { IpamModule } from '@jataqi/ipam';
 import { TanyaModule } from '@jataqi/tanya';
 import { MetricsModule } from '@jataqi/metrics';
 import { OrganizationsModule } from '@jataqi/organizations';
+import { RealtimeModule } from '@jataqi/realtime';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -103,6 +104,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new MetricsModule());
     kernel.register(new ToolIntelligenceModule());
     kernel.register(new OrganizationsModule());
+    kernel.register(new RealtimeModule());
     kernel.register(new SearchModule());
     kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
     kernel.register(new FxModule({ anchor: 'USD' }));
@@ -1778,5 +1780,16 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal((revoked.body as { revoked: boolean }).revoked, true);
     const intro = await jsonRequest('POST', `${base}/pki/idp/introspect`, { token: rotBody.idpTokens.access_token });
     assert.equal((intro.body as { active: boolean }).active, false);
+  });
+
+  it('GET /realtime/stats exposes connection observability', async () => {
+    const res = await jsonRequest('GET', `${base}/realtime/stats`, undefined, token);
+    assert.equal(res.status, 200);
+    const s = res.body as { clients: number; totalConnections: number; uptimeMs: number; path: string; pingIntervalMs: number };
+    assert.ok(s.clients >= 0);
+    assert.ok(s.totalConnections >= 0);
+    assert.ok(s.uptimeMs >= 0);
+    assert.equal(s.path, '/ws');
+    assert.equal(s.pingIntervalMs, 30_000);
   });
 });
