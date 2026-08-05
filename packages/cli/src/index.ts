@@ -33,6 +33,7 @@ import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
 import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
+import type { IpamModule } from '@jataqi/ipam';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -76,6 +77,7 @@ Commands:
   cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
+  ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -113,6 +115,7 @@ async function main() {
   const cloud = kernel.getModule<CloudModule>('cloud');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
+  const ipam = kernel.getModule<IpamModule>('ipam');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1673,6 +1676,99 @@ async function main() {
         }
         break;
       }
+      case 'ipam': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'blocks': {
+            const blocks = ipam.listBlocks({ ...(flag('rir') ? { rir: flag('rir') as never } : {}), ...(flag('family') ? { family: flag('family') as never } : {}) });
+            for (const b of blocks) console.log(`- ${b.cidr} (${b.family}) ${b.rir} [${b.status}]${b.purpose ? ` ${b.purpose}` : ''}`);
+            console.log(`${blocks.length} block(s)`);
+            break;
+          }
+          case 'block': {
+            const cidr = args[2], rir = args[3];
+            if (!cidr || !rir) { console.error('Usage: jataqi ipam block <cidr> <rir> [--purpose anycast]'); process.exit(1); }
+            try {
+              const b = await ipam.allocateBlock({ cidr, rir: rir as never, ...(flag('purpose') ? { purpose: flag('purpose') } : {}) });
+              console.log(`allocated ${b.id} (${b.cidr})`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'split': {
+            const blockId = args[2], prefix = args[3];
+            if (!blockId || !prefix) { console.error('Usage: jataqi ipam split <blockId> <newPrefix>'); process.exit(1); }
+            try {
+              const children = ipam.splitBlock(blockId, Number(prefix));
+              console.log(`split into ${children.length} block(s): ${children[0]!.cidr} .. ${children[children.length - 1]!.cidr}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'addresses': {
+            const blockId = args[2];
+            if (!blockId) { console.error('Usage: jataqi ipam addresses <blockId> [--limit n]'); process.exit(1); }
+            const addrs = ipam.addressesInBlock(blockId, flag('limit') ? Number(flag('limit')) : 1000);
+            console.log(addrs.slice(0, 20).join(', ') + (addrs.length > 20 ? ` … (${addrs.length})` : ''));
+            break;
+          }
+          case 'address': {
+            const blockId = args[2], address = args[3];
+            if (!blockId || !address) { console.error('Usage: jataqi ipam address <blockId> <address> [--assign web-1]'); process.exit(1); }
+            try {
+              const e = await ipam.registerAddress({ blockId, address, ...(flag('assign') ? { assignedTo: flag('assign') } : {}) });
+              console.log(`registered ${e.address}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'asns':
+            for (const a of ipam.listAsns()) console.log(`- AS${a.asn} (${a.rir}) ${a.announcementType} [${a.status}]`);
+            console.log(`${ipam.listAsns().length} ASN(s)`);
+            break;
+          case 'asn': {
+            const asn = args[2], rir = args[3];
+            if (!asn || !rir) { console.error('Usage: jataqi ipam asn <asn> <rir> [--anycast]'); process.exit(1); }
+            try {
+              const a = ipam.holdAsn({ asn: Number(asn), rir: rir as never, ...(args.includes('--anycast') ? { announcementType: 'anycast' as const } : {}) });
+              console.log(`held AS${a.asn} (${a.id})`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'announce': {
+            const blockId = args[2], asnId = args[3];
+            if (!blockId || !asnId) { console.error('Usage: jataqi ipam announce <blockId> <asnId>'); process.exit(1); }
+            try {
+              const r = ipam.announce({ blockId, asnId });
+              console.log(`announced block ${r.blockId} via ${r.asnId}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'announcements':
+            for (const a of ipam.listAnnouncements()) console.log(`- block ${a.blockId} via ${a.asnId}`);
+            console.log(`${ipam.listAnnouncements().length} announcement(s)`);
+            break;
+          case 'stats': {
+            const stats = ipam.stats();
+            console.log(JSON.stringify({ ...stats, totalAddresses: stats.totalAddresses.toString(), allocatedAddresses: stats.allocatedAddresses.toString() }, null, 2));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi ipam blocks|block|split|addresses|address|asns|asn|announce|announcements|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1682,7 +1778,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

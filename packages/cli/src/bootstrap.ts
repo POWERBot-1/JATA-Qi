@@ -94,6 +94,7 @@ import { MarketplaceModule } from '@jataqi/marketplace';
 import { CloudModule } from '@jataqi/cloud';
 import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
+import { IpamModule } from '@jataqi/ipam';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -295,6 +296,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // PRX — CDN + Email providers.
   kernel.register(new CdnModule());
   kernel.register(new EmailModule());
+  // PRX — RIR Member: IP address management + ASN holdings.
+  kernel.register(new IpamModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

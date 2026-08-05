@@ -82,7 +82,8 @@
     "@jataqi/marketplace": "0.1.0",
     "@jataqi/cloud": "0.1.0",
     "@jataqi/cdn": "0.1.0",
-    "@jataqi/email": "0.1.0"
+    "@jataqi/email": "0.1.0",
+    "@jataqi/ipam": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",

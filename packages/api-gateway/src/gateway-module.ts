@@ -72,6 +72,7 @@ import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
 import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
+import type { IpamModule } from '@jataqi/ipam';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -152,6 +153,7 @@ export class ApiGatewayModule implements IModule {
   private cloud?: CloudModule;
   private cdn?: CdnModule;
   private email?: EmailModule;
+  private ipam?: IpamModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -239,6 +241,7 @@ export class ApiGatewayModule implements IModule {
     this.cloud = this.tryModule<CloudModule>('cloud');
     this.cdn = this.tryModule<CdnModule>('cdn');
     this.email = this.tryModule<EmailModule>('email');
+    this.ipam = this.tryModule<IpamModule>('ipam');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -904,6 +907,18 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/email/receive', auth('email:write', (req) => this.emailReceive(req)));
     route('GET', '/email/inbox', auth('email:read', (req) => this.emailInboxList(req)));
     route('GET', '/email/stats', auth('email:read', () => this.emailStats()));
+    // PRX — RIR Member: IPAM + ASN holdings.
+    route('POST', '/ipam/blocks', auth('ipam:write', (req) => this.ipamBlocksAllocate(req)));
+    route('GET', '/ipam/blocks', auth('ipam:read', (req) => this.ipamBlocksList(req)));
+    route('POST', '/ipam/blocks/split', auth('ipam:write', (req) => this.ipamBlocksSplit(req)));
+    route('GET', '/ipam/blocks/addresses', auth('ipam:read', (req) => this.ipamBlocksAddresses(req)));
+    route('POST', '/ipam/addresses', auth('ipam:write', (req) => this.ipamAddressesRegister(req)));
+    route('GET', '/ipam/addresses', auth('ipam:read', (req) => this.ipamAddressesList(req)));
+    route('POST', '/ipam/asns', auth('ipam:write', (req) => this.ipamAsnsHold(req)));
+    route('GET', '/ipam/asns', auth('ipam:read', (req) => this.ipamAsnsList(req)));
+    route('POST', '/ipam/announce', auth('ipam:write', (req) => this.ipamAnnounce(req)));
+    route('GET', '/ipam/announcements', auth('ipam:read', () => this.ipamAnnouncements()));
+    route('GET', '/ipam/stats', auth('ipam:read', () => this.ipamStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1210,7 +1225,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -4598,6 +4613,129 @@ export class ApiGatewayModule implements IModule {
   private emailStats(): GatewayResponse {
     if (!this.email) return json(501, { error: 'email module not registered' });
     return json(200, { stats: this.email.stats() });
+  }
+
+  // --- PRX — RIR Member (IPAM + ASN) -------------------------------------
+
+  private async ipamBlocksAllocate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.cidr !== 'string' || typeof b.rir !== 'string')
+      return json(400, { error: 'fields "cidr" and "rir" (AFRINIC/APNIC/ARIN/RIPE/LACNIC) are required' });
+    try {
+      const block = await this.ipam.allocateBlock({
+        cidr: b.cidr, rir: b.rir as never,
+        ...(typeof b.purpose === 'string' ? { purpose: b.purpose } : {}),
+        ...(typeof b.parentId === 'string' ? { parentId: b.parentId } : {}),
+      });
+      return json(201, { block });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private ipamBlocksList(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const blocks = this.ipam.listBlocks({
+      ...(req.query.family ? { family: req.query.family as never } : {}),
+      ...(req.query.rir ? { rir: req.query.rir as never } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { blocks, count: blocks.length });
+  }
+
+  private ipamBlocksSplit(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.blockId !== 'string' || typeof b.newPrefix !== 'number')
+      return json(400, { error: 'fields "blockId" and "newPrefix" are required' });
+    try {
+      const children = this.ipam.splitBlock(b.blockId, b.newPrefix);
+      return json(201, { children, count: children.length });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private ipamBlocksAddresses(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    if (!req.query.blockId) return json(400, { error: 'query parameter "blockId" is required' });
+    const addresses = this.ipam.addressesInBlock(req.query.blockId, req.query.limit ? Number(req.query.limit) : 1000);
+    return json(200, { addresses, count: addresses.length });
+  }
+
+  private async ipamAddressesRegister(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.blockId !== 'string' || typeof b.address !== 'string')
+      return json(400, { error: 'fields "blockId" and "address" are required' });
+    try {
+      const entry = await this.ipam.registerAddress({
+        blockId: b.blockId, address: b.address,
+        ...(typeof b.assignedTo === 'string' ? { assignedTo: b.assignedTo } : {}),
+      });
+      return json(201, { entry });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private ipamAddressesList(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const entries = this.ipam.listAddresses(req.query.blockId);
+    return json(200, { entries, count: entries.length });
+  }
+
+  private ipamAsnsHold(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.asn !== 'number' || typeof b.rir !== 'string')
+      return json(400, { error: 'fields "asn" (number) and "rir" are required' });
+    try {
+      const holding = this.ipam.holdAsn({
+        asn: b.asn, rir: b.rir as never,
+        ...(typeof b.announcementType === 'string' ? { announcementType: b.announcementType as never } : {}),
+      });
+      return json(201, { asn: holding });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private ipamAsnsList(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const asns = this.ipam.listAsns(req.query.status as never);
+    return json(200, { asns, count: asns.length });
+  }
+
+  private ipamAnnounce(req: GatewayRequest): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.blockId !== 'string' || typeof b.asnId !== 'string')
+      return json(400, { error: 'fields "blockId" and "asnId" are required' });
+    try {
+      const record = this.ipam.announce({ blockId: b.blockId, asnId: b.asnId });
+      return json(201, record);
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private ipamAnnouncements(): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    return json(200, { announcements: this.ipam.listAnnouncements() });
+  }
+
+  private ipamStats(): GatewayResponse {
+    if (!this.ipam) return json(501, { error: 'ipam module not registered' });
+    const stats = this.ipam.stats();
+    return json(200, {
+      stats: {
+        ...stats,
+        totalAddresses: stats.totalAddresses.toString(),
+        allocatedAddresses: stats.allocatedAddresses.toString(),
+      },
+    });
   }
 
   // --- Phase 7 — MAZA marketplace ----------------------------------------

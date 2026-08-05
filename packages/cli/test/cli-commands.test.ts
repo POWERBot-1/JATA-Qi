@@ -192,6 +192,13 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"domains": 0/);
   });
 
+  it('ipam block + asn + stats work', async () => {
+    const block = await jataqi('ipam', 'block', '196.201.0.0/16', 'AFRINIC', '--purpose', 'anycast');
+    assert.match(block, /allocated [0-9a-f-]{36}/);
+    const stats = await jataqi('ipam', 'stats');
+    assert.match(stats, /"blocks": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

@@ -41,6 +41,7 @@ import { MarketplaceModule } from '@jataqi/marketplace';
 import { CloudModule } from '@jataqi/cloud';
 import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
+import { IpamModule } from '@jataqi/ipam';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -112,6 +113,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new CloudModule());
     kernel.register(new CdnModule());
     kernel.register(new EmailModule());
+    kernel.register(new IpamModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -1183,6 +1185,38 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const stats = await jsonRequest('GET', `${base}/email/stats`, undefined, token);
     assert.equal(stats.status, 200);
     assert.ok((stats.body as { stats: { domains: number } }).stats.domains >= 1);
+  });
+
+  // --- PRX RIR Member (IPAM) via gateway --------------------------------
+
+  it('ipam: block → split → address → asn → announce → stats over HTTP', async () => {
+    const block = await jsonRequest('POST', `${base}/ipam/blocks`, { cidr: '196.201.0.0/16', rir: 'AFRINIC', purpose: 'anycast' }, token);
+    assert.equal(block.status, 201);
+    const blockId = (block.body as { block: { id: string } }).block.id;
+
+    const split = await jsonRequest('POST', `${base}/ipam/blocks/split`, { blockId, newPrefix: 24 }, token);
+    assert.equal(split.status, 201);
+    assert.equal((split.body as { count: number }).count, 256);
+    const childId = (split.body as { children: Array<{ id: string }> }).children[0]!.id;
+
+    const address = await jsonRequest('POST', `${base}/ipam/addresses`, { blockId: childId, address: '196.201.0.10', assignedTo: 'web-1' }, token);
+    assert.equal(address.status, 201);
+    assert.equal((address.body as { entry: { assignedTo: string } }).entry.assignedTo, 'web-1');
+
+    const asn = await jsonRequest('POST', `${base}/ipam/asns`, { asn: 327780, rir: 'AFRINIC', announcementType: 'anycast' }, token);
+    assert.equal(asn.status, 201);
+    const asnId = (asn.body as { asn: { id: string } }).asn.id;
+
+    const announced = await jsonRequest('POST', `${base}/ipam/announce`, { blockId, asnId }, token);
+    assert.equal(announced.status, 201);
+    assert.equal((announced.body as { asnId: string }).asnId, asnId);
+
+    const stats = await jsonRequest('GET', `${base}/ipam/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    const s = stats.body as { stats: { blocks: number; asns: number; totalAddresses: string } };
+    assert.ok(s.stats.blocks >= 257); // parent /16 + 256 /24 children (leaf counting)
+    assert.equal(s.stats.asns, 1);
+    assert.equal(s.stats.totalAddresses, '65536'); // 256 leaf /24s × 256
   });
 
   // --- Authz guard --------------------------------------------------------

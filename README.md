@@ -65,6 +65,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/cloud` | **PRX Part E** — Cloud Infrastructure Provider (cloud/vps/hosting): regions, compute instances, volumes + snapshots, VPCs + firewalls, load balancers, hosting plans, autoscaling |
 | `@jataqi/cdn` | **PRX CDN** — Content delivery: edge nodes, cached zones with origins + TTLs, origin shield, purge, edge analytics |
 | `@jataqi/email` | **PRX Email Provider** — domains with MX/SPF/DKIM/DMARC, verified sending, mailboxes, inbound with DMARC disposition |
+| `@jataqi/ipam` | **PRX RIR Member** — IP Address Management: IPv4/IPv6 allocations from AFRINIC/APNIC/ARIN/RIPE/LACNIC, ASN holdings, CIDR subnetting, anycast announcements |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -221,6 +222,9 @@ node packages/cli/dist/src/index.js cdn zone cdn.example.com https://origin.exam
 node packages/cli/dist/src/index.js cdn cache <zoneId> /img/logo.png 5000 image/png
 node packages/cli/dist/src/index.js mail domain acme.co.ke --dmarc quarantine
 node packages/cli/dist/src/index.js mail send alice@acme.co.ke bob@partner.io "Hello"
+node packages/cli/dist/src/index.js ipam block 196.201.0.0/16 AFRINIC --purpose anycast
+node packages/cli/dist/src/index.js ipam asn 327780 AFRINIC --anycast
+node packages/cli/dist/src/index.js ipam announce <blockId> <asnId>
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -391,6 +395,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/cdn/nodes` · `/cdn/zones` · `/cdn/zone` · `/cdn/assets` · `/cdn/lookup` · `/cdn/stats` | `cdn:read` | CDN reads |
 | POST | `/email/domains` · `/email/domains/verify` · `/email/mailboxes` · `/email/send` · `/email/receive` | `email:write` | Email operations |
 | GET | `/email/domains` · `/email/domains/dns` · `/email/mailboxes` · `/email/messages` · `/email/inbox` · `/email/stats` | `email:read` | Email reads |
+| POST | `/ipam/blocks` · `/ipam/blocks/split` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announce` | `ipam:write` | IPAM operations |
+| GET | `/ipam/blocks` · `/ipam/blocks/addresses` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announcements` · `/ipam/stats` | `ipam:read` | IPAM reads |
 
 ### Security model
 
@@ -495,6 +501,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Cloud Infrastructure Provider** (PRX Part E — multi-region capacity, compute lifecycle, volumes + snapshots, VPCs + firewalls, load balancers, hosting plans, autoscaling)
 - ✅ **CDN Provider** (PRX — edge nodes, zones with origins + TTLs, origin shield, purge, hit-rate analytics)
 - ✅ **Email Provider** (PRX — MX/SPF/DKIM/DMARC domains, verified sending, mailboxes, inbound DMARC disposition)
+- ✅ **RIR Member — IPAM** (PRX — IPv4/IPv6 allocations from all five RIRs, ASN holdings, CIDR subnetting, anycast announcements, utilization analytics)
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
 - ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)
