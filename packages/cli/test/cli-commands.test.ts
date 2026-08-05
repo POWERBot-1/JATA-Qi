@@ -178,6 +178,20 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"regions": 0/);
   });
 
+  it('cdn zone + cache + stats work', async () => {
+    const zone = await jataqi('cdn', 'zone', 'cdn.example.com', 'https://origin.example.com');
+    assert.match(zone, /created [0-9a-f-]{36}/);
+    const stats = await jataqi('cdn', 'stats');
+    assert.match(stats, /"zones": 0/);
+  });
+
+  it('mail domain + verify + stats work', async () => {
+    const domain = await jataqi('mail', 'domain', 'acme.co.ke', '--dmarc', 'quarantine');
+    assert.match(domain, /registered [0-9a-f-]{36}/);
+    const stats = await jataqi('mail', 'stats');
+    assert.match(stats, /"domains": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

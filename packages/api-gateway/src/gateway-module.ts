@@ -70,6 +70,8 @@ import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
+import type { CdnModule } from '@jataqi/cdn';
+import type { EmailModule } from '@jataqi/email';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -148,6 +150,8 @@ export class ApiGatewayModule implements IModule {
   private restaurants?: RestaurantsModule;
   private marketplace?: MarketplaceModule;
   private cloud?: CloudModule;
+  private cdn?: CdnModule;
+  private email?: EmailModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -233,6 +237,8 @@ export class ApiGatewayModule implements IModule {
     this.restaurants = this.tryModule<RestaurantsModule>('restaurants');
     this.marketplace = this.tryModule<MarketplaceModule>('marketplace');
     this.cloud = this.tryModule<CloudModule>('cloud');
+    this.cdn = this.tryModule<CdnModule>('cdn');
+    this.email = this.tryModule<EmailModule>('email');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -875,6 +881,29 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/cloud/autoscaling', auth('cloud:read', () => this.cloudAutoscalingList()));
     route('POST', '/cloud/autoscaling/evaluate', auth('cloud:write', (req) => this.cloudAutoscalingEvaluate(req)));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
+    // PRX — CDN Provider.
+    route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
+    route('GET', '/cdn/nodes', auth('cdn:read', (req) => this.cdnNodesList(req)));
+    route('POST', '/cdn/zones', auth('cdn:write', (req) => this.cdnZonesCreate(req)));
+    route('GET', '/cdn/zones', auth('cdn:read', (req) => this.cdnZonesList(req)));
+    route('GET', '/cdn/zone', auth('cdn:read', (req) => this.cdnZoneGet(req)));
+    route('POST', '/cdn/assets', auth('cdn:write', (req) => this.cdnAssetsStore(req)));
+    route('GET', '/cdn/assets', auth('cdn:read', (req) => this.cdnAssetsList(req)));
+    route('GET', '/cdn/lookup', auth('cdn:read', (req) => this.cdnLookup(req)));
+    route('POST', '/cdn/purge', auth('cdn:write', (req) => this.cdnPurge(req)));
+    route('GET', '/cdn/stats', auth('cdn:read', () => this.cdnStats()));
+    // PRX — Email Provider.
+    route('POST', '/email/domains', auth('email:write', (req) => this.emailDomainsRegister(req)));
+    route('GET', '/email/domains', auth('email:read', (req) => this.emailDomainsList(req)));
+    route('POST', '/email/domains/verify', auth('email:write', (req) => this.emailDomainsVerify(req)));
+    route('GET', '/email/domains/dns', auth('email:read', (req) => this.emailDomainsDns(req)));
+    route('POST', '/email/mailboxes', auth('email:write', (req) => this.emailMailboxesCreate(req)));
+    route('GET', '/email/mailboxes', auth('email:read', (req) => this.emailMailboxesList(req)));
+    route('POST', '/email/send', auth('email:write', (req) => this.emailSend(req)));
+    route('GET', '/email/messages', auth('email:read', (req) => this.emailMessagesList(req)));
+    route('POST', '/email/receive', auth('email:write', (req) => this.emailReceive(req)));
+    route('GET', '/email/inbox', auth('email:read', (req) => this.emailInboxList(req)));
+    route('GET', '/email/stats', auth('email:read', () => this.emailStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1181,7 +1210,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -4386,6 +4415,189 @@ export class ApiGatewayModule implements IModule {
   private cloudStats(): GatewayResponse {
     if (!this.cloud) return json(501, { error: 'cloud module not registered' });
     return json(200, { stats: this.cloud.stats() });
+  }
+
+  // --- PRX — CDN Provider ------------------------------------------------
+
+  private cdnNodesRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.region !== 'string' || typeof b.country !== 'string')
+      return json(400, { error: 'fields "name", "region", and "country" are required' });
+    return json(201, { node: this.cdn.registerEdgeNode({ name: b.name, region: b.region, country: b.country, ...(typeof b.capacityRps === 'number' ? { capacityRps: b.capacityRps } : {}) }) });
+  }
+
+  private cdnNodesList(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const nodes = this.cdn.listEdgeNodes(req.query.status as never);
+    return json(200, { nodes, count: nodes.length });
+  }
+
+  private cdnZonesCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.domain !== 'string' || typeof b.origin !== 'string')
+      return json(400, { error: 'fields "domain" and "origin" are required' });
+    return json(201, { zone: this.cdn.createZone({
+      domain: b.domain, origin: b.origin,
+      ...(typeof b.originShield === 'boolean' ? { originShield: b.originShield } : {}),
+      ...(typeof b.tlsEnabled === 'boolean' ? { tlsEnabled: b.tlsEnabled } : {}),
+      ...(typeof b.defaultTtlSec === 'number' ? { defaultTtlSec: b.defaultTtlSec } : {}),
+    }) });
+  }
+
+  private cdnZonesList(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const zones = this.cdn.listZones(req.query.status as never);
+    return json(200, { zones, count: zones.length });
+  }
+
+  private cdnZoneGet(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const zone = req.query.domain ? this.cdn.getZoneByDomain(req.query.domain) : req.query.id ? this.cdn.getZone(req.query.id) : undefined;
+    return zone ? json(200, { zone }) : json(404, { error: 'zone not found' });
+  }
+
+  private async cdnAssetsStore(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.zoneId !== 'string' || typeof b.path !== 'string' || typeof b.contentType !== 'string' || typeof b.sizeBytes !== 'number')
+      return json(400, { error: 'fields "zoneId", "path", "contentType", and "sizeBytes" are required' });
+    const asset = await this.cdn.storeAsset({
+      zoneId: b.zoneId, path: b.path, contentType: b.contentType, sizeBytes: b.sizeBytes,
+      ...(typeof b.ttlSec === 'number' ? { ttlSec: b.ttlSec } : {}),
+    });
+    return json(201, { asset });
+  }
+
+  private cdnAssetsList(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const assets = this.cdn.listAssets(req.query.zoneId);
+    return json(200, { assets, count: assets.length });
+  }
+
+  private cdnLookup(req: GatewayRequest): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    if (!req.query.zoneId || !req.query.path) return json(400, { error: 'query parameters "zoneId" and "path" are required' });
+    const result = this.cdn.lookup(req.query.zoneId, req.query.path);
+    return json(200, { outcome: result.outcome, asset: result.asset ?? undefined });
+  }
+
+  private async cdnPurge(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.zoneId !== 'string') return json(400, { error: 'field "zoneId" is required' });
+    const result = await this.cdn.purge(b.zoneId, {
+      ...(typeof b.path === 'string' ? { path: b.path } : {}),
+      ...(typeof b.prefix === 'string' ? { prefix: b.prefix } : {}),
+      ...(b.all === true ? { all: true } : {}),
+    });
+    return json(200, result);
+  }
+
+  private cdnStats(): GatewayResponse {
+    if (!this.cdn) return json(501, { error: 'cdn module not registered' });
+    return json(200, { stats: this.cdn.stats() });
+  }
+
+  // --- PRX — Email Provider ----------------------------------------------
+
+  private emailDomainsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.domain !== 'string') return json(400, { error: 'field "domain" is required' });
+    return json(201, { domain: this.email.registerDomain({
+      domain: b.domain,
+      ...(Array.isArray(b.mxHosts) ? { mxHosts: b.mxHosts.map(String) } : {}),
+      ...(typeof b.spfRecord === 'string' ? { spfRecord: b.spfRecord } : {}),
+      ...(typeof b.dkimSelector === 'string' ? { dkimSelector: b.dkimSelector } : {}),
+      ...(typeof b.dmarcPolicy === 'string' ? { dmarcPolicy: b.dmarcPolicy as never } : {}),
+    }) });
+  }
+
+  private emailDomainsList(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const domains = this.email.listDomains(req.query.verified === 'true');
+    return json(200, { domains, count: domains.length });
+  }
+
+  private emailDomainsVerify(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const domain = this.email.verifyDomain(b.id);
+    return domain ? json(200, { domain }) : json(404, { error: 'domain not found' });
+  }
+
+  private emailDomainsDns(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    if (!req.query.id) return json(400, { error: 'query parameter "id" is required' });
+    try {
+      return json(200, { records: this.email.dnsRecords(req.query.id) });
+    } catch (err) {
+      return json(404, { error: (err as Error).message });
+    }
+  }
+
+  private emailMailboxesCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.domainId !== 'string' || typeof b.address !== 'string')
+      return json(400, { error: 'fields "domainId" and "address" are required' });
+    return json(201, { mailbox: this.email.createMailbox({
+      domainId: b.domainId, address: b.address,
+      ...(typeof b.displayName === 'string' ? { displayName: b.displayName } : {}),
+      ...(typeof b.quotaMb === 'number' ? { quotaMb: b.quotaMb } : {}),
+    }) });
+  }
+
+  private emailMailboxesList(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const mailboxes = this.email.listMailboxes(req.query.domainId);
+    return json(200, { mailboxes, count: mailboxes.length });
+  }
+
+  private async emailSend(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.from !== 'string' || !Array.isArray(b.to) || typeof b.subject !== 'string' || typeof b.body !== 'string')
+      return json(400, { error: 'fields "from", "to" (array), "subject", and "body" are required' });
+    try {
+      const message = await this.email.send({ from: b.from, to: b.to.map(String), subject: b.subject, body: b.body });
+      return json(201, { message });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private emailMessagesList(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const messages = this.email.listMessages(req.query.status as never);
+    return json(200, { messages, count: messages.length });
+  }
+
+  private async emailReceive(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.to !== 'string' || typeof b.from !== 'string' || typeof b.subject !== 'string' || typeof b.body !== 'string')
+      return json(400, { error: 'fields "to", "from", "subject", and "body" are required' });
+    try {
+      const message = await this.email.receive({ to: b.to, from: b.from, subject: b.subject, body: b.body });
+      return json(201, { message });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private emailInboxList(req: GatewayRequest): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    const messages = this.email.listInbound(req.query.mailboxId, req.query.status as never);
+    return json(200, { messages, count: messages.length });
+  }
+
+  private emailStats(): GatewayResponse {
+    if (!this.email) return json(501, { error: 'email module not registered' });
+    return json(200, { stats: this.email.stats() });
   }
 
   // --- Phase 7 — MAZA marketplace ----------------------------------------

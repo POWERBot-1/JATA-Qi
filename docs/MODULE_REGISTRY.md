@@ -42,6 +42,8 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/restaurants` | `restaurants` | memory | NYUMBANI KITCHEN (Phase 7) — venues, menus, orders, inventory |
 | `@jataqi/marketplace` | `marketplace` | memory, commerce | MAZA (Phase 7) — storefronts, listings, reviews, purchases |
 | `@jataqi/cloud` | `cloud` | memory | PRX Part E — regions, compute, volumes, networks, hosting plans, autoscaling |
+| `@jataqi/cdn` | `cdn` | memory | PRX CDN — edge nodes, zones, caching + origin shield, purge |
+| `@jataqi/email` | `email` | memory | PRX Email Provider — MX/SPF/DKIM/DMARC, mailboxes, delivery |
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
 | `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |

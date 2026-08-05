@@ -39,6 +39,8 @@ import { BorderModule } from '@jataqi/border';
 import { RestaurantsModule } from '@jataqi/restaurants';
 import { MarketplaceModule } from '@jataqi/marketplace';
 import { CloudModule } from '@jataqi/cloud';
+import { CdnModule } from '@jataqi/cdn';
+import { EmailModule } from '@jataqi/email';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -108,6 +110,8 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new RestaurantsModule());
     kernel.register(new MarketplaceModule());
     kernel.register(new CloudModule());
+    kernel.register(new CdnModule());
+    kernel.register(new EmailModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -1125,6 +1129,60 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal(s.stats.regions, 1);
     assert.equal(s.stats.instances, 2); // web-1 + hosting
     assert.equal(s.stats.runningInstances, 1);
+  });
+
+  // --- PRX CDN + Email via gateway ---------------------------------------
+
+  it('cdn: zone → cache → lookup hit → purge → stats over HTTP', async () => {
+    const zone = await jsonRequest('POST', `${base}/cdn/zones`, { domain: 'cdn.example.com', origin: 'https://origin.example.com', defaultTtlSec: 60 }, token);
+    assert.equal(zone.status, 201);
+    const zoneId = (zone.body as { zone: { id: string } }).zone.id;
+
+    const cached = await jsonRequest('POST', `${base}/cdn/assets`, { zoneId, path: '/img/logo.png', contentType: 'image/png', sizeBytes: 5000 }, token);
+    assert.equal(cached.status, 201);
+
+    const miss = await jsonRequest('GET', `${base}/cdn/lookup?zoneId=${zoneId}&path=/img/missing.png`, undefined, token);
+    assert.equal((miss.body as { outcome: string }).outcome, 'miss');
+
+    const hit = await jsonRequest('GET', `${base}/cdn/lookup?zoneId=${zoneId}&path=/img/logo.png`, undefined, token);
+    assert.equal((hit.body as { outcome: string }).outcome, 'hit');
+
+    const purged = await jsonRequest('POST', `${base}/cdn/purge`, { zoneId, path: '/img/logo.png' }, token);
+    assert.equal((purged.body as { purged: number }).purged, 1);
+
+    const stats = await jsonRequest('GET', `${base}/cdn/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { hits: number } }).stats.hits >= 1);
+  });
+
+  it('email: domain → verify → mailbox → send → receive → stats over HTTP', async () => {
+    const domain = await jsonRequest('POST', `${base}/email/domains`, { domain: 'acme.co.ke', dmarcPolicy: 'quarantine' }, token);
+    assert.equal(domain.status, 201);
+    const domainId = (domain.body as { domain: { id: string } }).domain.id;
+
+    const dns = await jsonRequest('GET', `${base}/email/domains/dns?id=${domainId}`, undefined, token);
+    assert.ok((dns.body as { records: unknown[] }).records.length >= 4);
+
+    const verified = await jsonRequest('POST', `${base}/email/domains/verify`, { id: domainId }, token);
+    assert.equal((verified.body as { domain: { verified: boolean } }).domain.verified, true);
+
+    const mailbox = await jsonRequest('POST', `${base}/email/mailboxes`, { domainId, address: 'alice' }, token);
+    assert.equal(mailbox.status, 201);
+    const mailboxId = (mailbox.body as { mailbox: { id: string } }).mailbox.id;
+
+    const sent = await jsonRequest('POST', `${base}/email/send`, { from: 'alice@acme.co.ke', to: ['bob@other.io'], subject: 'Hello', body: 'World' }, token);
+    assert.equal(sent.status, 201);
+    assert.equal((sent.body as { message: { dkimSigned: boolean } }).message.dkimSigned, true);
+
+    const received = await jsonRequest('POST', `${base}/email/receive`, { to: 'alice@acme.co.ke', from: 'x@y.io', subject: 'Incoming', body: 'Hi' }, token);
+    assert.equal(received.status, 201);
+
+    const inbox = await jsonRequest('GET', `${base}/email/inbox?mailboxId=${mailboxId}`, undefined, token);
+    assert.equal((inbox.body as { count: number }).count, 1);
+
+    const stats = await jsonRequest('GET', `${base}/email/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.ok((stats.body as { stats: { domains: number } }).stats.domains >= 1);
   });
 
   // --- Authz guard --------------------------------------------------------

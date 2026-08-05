@@ -63,6 +63,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/restaurants` | **NYUMBANI KITCHEN (Phase 7)** — Restaurant Intelligence: venues, menus, tables, order flow, ingredient inventory + reorder alerts, revenue analytics |
 | `@jataqi/marketplace` | **MAZA (Phase 7)** — Marketplace Intelligence: vendor storefronts, listings + inventory, reviews & ratings, search, analytics; composes `@jataqi/commerce` for purchases |
 | `@jataqi/cloud` | **PRX Part E** — Cloud Infrastructure Provider (cloud/vps/hosting): regions, compute instances, volumes + snapshots, VPCs + firewalls, load balancers, hosting plans, autoscaling |
+| `@jataqi/cdn` | **PRX CDN** — Content delivery: edge nodes, cached zones with origins + TTLs, origin shield, purge, edge analytics |
+| `@jataqi/email` | **PRX Email Provider** — domains with MX/SPF/DKIM/DMARC, verified sending, mailboxes, inbound with DMARC disposition |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -215,6 +217,10 @@ node packages/cli/dist/src/index.js cloud region Nairobi NBO KE nbo-1,nbo-2 --ca
 node packages/cli/dist/src/index.js cloud instance web-1 <regionId> <flavorId> <imageId>
 node packages/cli/dist/src/index.js cloud hosting <planId> <regionId> acme.com <imageId>
 node packages/cli/dist/src/index.js cloud autoscale <groupId> 0.9
+node packages/cli/dist/src/index.js cdn zone cdn.example.com https://origin.example.com
+node packages/cli/dist/src/index.js cdn cache <zoneId> /img/logo.png 5000 image/png
+node packages/cli/dist/src/index.js mail domain acme.co.ke --dmarc quarantine
+node packages/cli/dist/src/index.js mail send alice@acme.co.ke bob@partner.io "Hello"
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -381,6 +387,10 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/marketplace/storefronts` · `/marketplace/listings` · `/marketplace/reviews` · `/marketplace/categories` · `/marketplace/stats` | `marketplace:read` | MAZA reads |
 | POST | `/cloud/regions` · `/cloud/flavors` · `/cloud/images` · `/cloud/instances` · `/cloud/volumes` · `/cloud/vpcs` · `/cloud/firewall` · `/cloud/load-balancers` · `/cloud/hosting-plans` · `/cloud/hosting` · `/cloud/autoscaling` | `cloud:write` | Cloud operations |
 | GET | `/cloud/regions` · `/cloud/flavors` · `/cloud/images` · `/cloud/instances` · `/cloud/volumes` · `/cloud/snapshots` · `/cloud/vpcs` · `/cloud/firewall` · `/cloud/load-balancers` · `/cloud/hosting-plans` · `/cloud/autoscaling` · `/cloud/stats` | `cloud:read` | Cloud reads |
+| POST | `/cdn/nodes` · `/cdn/zones` · `/cdn/assets` · `/cdn/purge` | `cdn:write` | CDN operations |
+| GET | `/cdn/nodes` · `/cdn/zones` · `/cdn/zone` · `/cdn/assets` · `/cdn/lookup` · `/cdn/stats` | `cdn:read` | CDN reads |
+| POST | `/email/domains` · `/email/domains/verify` · `/email/mailboxes` · `/email/send` · `/email/receive` | `email:write` | Email operations |
+| GET | `/email/domains` · `/email/domains/dns` · `/email/mailboxes` · `/email/messages` · `/email/inbox` · `/email/stats` | `email:read` | Email reads |
 
 ### Security model
 
@@ -483,6 +493,8 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **PKI — PRX Part C** (X.509 CA root/intermediate hierarchy verified by OpenSSL, RFC 5280 DER certificates, revocation + CRLs, Registration Authority with dns-txt/http-01/email validation, OIDC-lite Identity Provider with JWT ID tokens + JWKS)
 - ✅ **ACME — RFC 8555 automated issuance** (PRX Part C — replay nonces, JWS-signed accounts via RFC 7638 thumbprints, orders/authorizations/challenges with http-01/dns-01/tls-alpn-01, keyAuthorization proofs, PKCS#10 CSR finalization cross-validated with OpenSSL, certificate fetch + revocation)
 - ✅ **Cloud Infrastructure Provider** (PRX Part E — multi-region capacity, compute lifecycle, volumes + snapshots, VPCs + firewalls, load balancers, hosting plans, autoscaling)
+- ✅ **CDN Provider** (PRX — edge nodes, zones with origins + TTLs, origin shield, purge, hit-rate analytics)
+- ✅ **Email Provider** (PRX — MX/SPF/DKIM/DMARC domains, verified sending, mailboxes, inbound DMARC disposition)
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
 - ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)

@@ -31,6 +31,8 @@ import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
+import type { CdnModule } from '@jataqi/cdn';
+import type { EmailModule } from '@jataqi/email';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -72,6 +74,8 @@ Commands:
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|categories|stats.
   cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
+  cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
+  mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -107,6 +111,8 @@ async function main() {
   const restaurants = kernel.getModule<RestaurantsModule>('restaurants');
   const marketplace = kernel.getModule<MarketplaceModule>('marketplace');
   const cloud = kernel.getModule<CloudModule>('cloud');
+  const cdn = kernel.getModule<CdnModule>('cdn');
+  const email = kernel.getModule<EmailModule>('email');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1539,6 +1545,134 @@ async function main() {
         }
         break;
       }
+      case 'cdn': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'nodes':
+            for (const n of cdn.listEdgeNodes()) console.log(`- ${n.name} (${n.region}/${n.country}) ${n.capacityRps}rps [${n.status}]`);
+            console.log(`${cdn.listEdgeNodes().length} node(s)`);
+            break;
+          case 'node': {
+            const name = args[2], region = args[3], country = args[4];
+            if (!name || !region || !country) { console.error('Usage: jataqi cdn node <name> <region> <country> [--rps n]'); process.exit(1); }
+            const n = cdn.registerEdgeNode({ name, region, country, ...(flag('rps') ? { capacityRps: Number(flag('rps')) } : {}) });
+            console.log(`registered ${n.id}`);
+            break;
+          }
+          case 'zones':
+            for (const z of cdn.listZones()) console.log(`- ${z.domain} -> ${z.origin} ttl=${z.defaultTtlSec}s shield=${z.originShield} tls=${z.tlsEnabled} [${z.status}]`);
+            console.log(`${cdn.listZones().length} zone(s)`);
+            break;
+          case 'zone': {
+            const domain = args[2], origin = args[3];
+            if (!domain || !origin) { console.error('Usage: jataqi cdn zone <domain> <origin> [--ttl n] [--no-shield]'); process.exit(1); }
+            const z = cdn.createZone({ domain, origin, ...(flag('ttl') ? { defaultTtlSec: Number(flag('ttl')) } : {}), ...(args.includes('--no-shield') ? { originShield: false } : {}) });
+            console.log(`created ${z.id}`);
+            break;
+          }
+          case 'cache': {
+            const zoneId = args[2], path = args[3], size = args[4], contentType = args[5] ?? 'application/octet-stream';
+            if (!zoneId || !path || !size) { console.error('Usage: jataqi cdn cache <zoneId> <path> <sizeBytes> [contentType]'); process.exit(1); }
+            const a = await cdn.storeAsset({ zoneId, path, contentType, sizeBytes: Number(size) });
+            console.log(`cached ${a.id}`);
+            break;
+          }
+          case 'lookup': {
+            const zoneId = args[2], path = args[3];
+            if (!zoneId || !path) { console.error('Usage: jataqi cdn lookup <zoneId> <path>'); process.exit(1); }
+            console.log(JSON.stringify(cdn.lookup(zoneId, path)));
+            break;
+          }
+          case 'purge': {
+            const zoneId = args[2], target = args[3];
+            if (!zoneId || !target) { console.error('Usage: jataqi cdn purge <zoneId> <path|prefix|all>'); process.exit(1); }
+            const result = await cdn.purge(zoneId, target === 'all' ? { all: true } : target.startsWith('/') ? { path: target } : { prefix: target });
+            console.log(`purged ${result.purged}`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(cdn.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi cdn nodes|node|zones|zone|cache|lookup|purge|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'mail': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'domains':
+            for (const d of email.listDomains()) console.log(`- ${d.domain} [${d.verified ? 'verified' : 'unverified'}] dmarc=${d.dmarcPolicy}`);
+            console.log(`${email.listDomains().length} domain(s)`);
+            break;
+          case 'domain': {
+            const domain = args[2];
+            if (!domain) { console.error('Usage: jataqi mail domain <domain> [--dmarc none|quarantine|reject]'); process.exit(1); }
+            const d = email.registerDomain({ domain, ...(flag('dmarc') ? { dmarcPolicy: flag('dmarc') as never } : {}) });
+            console.log(`registered ${d.id}`);
+            break;
+          }
+          case 'verify': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi mail verify <domainId>'); process.exit(1); }
+            const d = email.verifyDomain(id);
+            console.log(d ? `${d.domain} verified` : 'domain not found');
+            break;
+          }
+          case 'dns': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi mail dns <domainId>'); process.exit(1); }
+            for (const r of email.dnsRecords(id)) console.log(`${r.type} ${r.name} = ${r.value}`);
+            break;
+          }
+          case 'mailboxes': {
+            const domainId = args[2];
+            const mailboxes = domainId ? email.listMailboxes(domainId) : email.listMailboxes();
+            for (const m of mailboxes) console.log(`- ${m.address} ${m.usedMb}/${m.quotaMb}MB`);
+            console.log(`${mailboxes.length} mailbox(es)`);
+            break;
+          }
+          case 'mailbox': {
+            const domainId = args[2], address = args[3];
+            if (!domainId || !address) { console.error('Usage: jataqi mail mailbox <domainId> <address>'); process.exit(1); }
+            const m = email.createMailbox({ domainId, address });
+            console.log(`created ${m.address}`);
+            break;
+          }
+          case 'send': {
+            const from = args[2], to = args[3], subject = args[4];
+            if (!from || !to || !subject) { console.error('Usage: jataqi mail send <from> <to> <subject> [body]'); process.exit(1); }
+            try {
+              const m = await email.send({ from, to: [to], subject, body: args[5] ?? '' });
+              console.log(`sent ${m.id} dkim=${m.dkimSigned}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'inbox': {
+            const mailboxId = args[2];
+            const messages = mailboxId ? email.listInbound(mailboxId) : email.listInbound();
+            for (const m of messages) console.log(`- [${m.status}] ${m.from}: ${m.subject}${m.dmarcDisposition ? ` (dmarc:${m.dmarcDisposition})` : ''}`);
+            console.log(`${messages.length} message(s)`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(email.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi mail domains|domain|verify|dns|mailboxes|mailbox|send|inbox|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1548,7 +1682,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

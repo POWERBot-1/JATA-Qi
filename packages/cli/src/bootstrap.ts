@@ -92,6 +92,8 @@ import { BorderModule } from '@jataqi/border';
 import { RestaurantsModule } from '@jataqi/restaurants';
 import { MarketplaceModule } from '@jataqi/marketplace';
 import { CloudModule } from '@jataqi/cloud';
+import { CdnModule } from '@jataqi/cdn';
+import { EmailModule } from '@jataqi/email';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -290,6 +292,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new MarketplaceModule());
   // PRX Part E — Cloud Infrastructure Provider (cloud/vps/hosting).
   kernel.register(new CloudModule());
+  // PRX — CDN + Email providers.
+  kernel.register(new CdnModule());
+  kernel.register(new EmailModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {
