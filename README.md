@@ -107,6 +107,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/icons` | **JATA Qi Icon Library** — geometric SVG icon engine with 7 variants (outline/filled/duotone/glass/rounded/sharp/animated), 29 categories (AI, security, cloud, payments, crypto, etc.), tree-shakeable, custom icon registration |
 | `@jataqi/branding` | **JATA Qi Branding** — brand identity system for 15 products: programmatically generated logos (6 shapes × glyph), app icons, splash screens, marketing templates, business cards, email signatures, brand CSS |
 | `@jataqi/dashboard` | **Adaptive Dashboard** — widget framework (15 built-in widgets), layout engine (drag-drop grid, auto-arrange, responsive breakpoints), AI personalization (role + behavior-driven widget suggestions), analytics |
+| `@jataqi/web-ui` | **Admin Console SPA** (Phase 5 step 4) — vanilla-JS dashboard served at `/ui`: TANYA chat console, adaptive dashboard layouts, federated search, memory/learning/FX, PRX engine views (cloud/CDN/email/IPAM), tool-governance console, system views |
 | `@jataqi/universal-wallet` | **Universal Wallet** — consolidates finance + commerce credits + game-economy into one double-entry ledger. Multi-currency (KES/USD/EUR/GBP/KRT/USDT/USDC/POINTS/GEMS/COINS), escrow, treasury, backward-compat adapters |
 | `@jataqi/link-intelligence` | **Universal Link Intelligence** — classifies external content (repos, docs, APIs, papers, RFCs), extracts structured intelligence (architectures, patterns, APIs, security models), detects capability gaps vs the platform, generates governed proposals, drives validated self-evolution |
 | `@jataqi/multimodal-intelligence` | **Universal Multimodal Intelligence** — pluggable acquisition framework for text, documents, images, audio, video, code, web, device telemetry, enterprise knowledge, and API sources. Normalizes into SemanticKnowledge with authorization gates, privacy classification, gap detection |
@@ -531,6 +532,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
 - ✅ **Adaptive Dashboard** (Phase 5 step 3 — widget framework, responsive layout engine, AI personalization)
+- ✅ **Admin Console Web UI** (Phase 5 step 4 — `/ui` SPA served by the gateway: TANYA chat with personas + conversation history, adaptive dashboard layouts (create/AI-adapt/auto-arrange), federated search console, memory/learning/FX views, PRX engine views (cloud/CDN/email/IPAM), tool-governance console (sync + approvals), system health/readiness/identity views)
 - ✅ **Universal Wallet** (Phase 2 — double-entry ledger consolidating finance/commerce/game-economy wallets; escrow, treasury, multi-currency)
 - ✅ **Payments** (Phase 3 — M-Pesa, Flutterwave, Pesapal, Airtel Money, PayPal, Stripe adapters)
 - ✅ **Crypto / KRT** (Phase 4 — tokens + NFTs, HD wallets, custody, staking, exchange, smart-contract registry)

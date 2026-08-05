@@ -1,19 +1,54 @@
 {
   "name": "@jataqi/web-ui",
   "version": "0.1.0",
-  "description": "JATA Qi Web UI — responsive admin dashboard served by the API gateway",
+  "description": "JATA Qi Web UI \u2014 responsive admin dashboard served by the API gateway",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
-  "exports": { ".": { "types": "./dist/src/index.d.ts", "import": "./dist/src/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
     "clean": "rm -rf dist",
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "public"],
+  "files": [
+    "dist",
+    "public"
+  ],
   "license": "MIT",
-  "dependencies": { "@jataqi/core-kernel": "0.1.0" },
-  "devDependencies": { "typescript": "^5.4.0", "@types/node": "^20.11.0" }
+  "dependencies": {
+    "@jataqi/agent-runtime": "0.1.0",
+    "@jataqi/api-gateway": "0.1.0",
+    "@jataqi/automation": "0.1.0",
+    "@jataqi/cdn": "0.1.0",
+    "@jataqi/cloud": "0.1.0",
+    "@jataqi/conversations": "0.1.0",
+    "@jataqi/core-kernel": "0.1.0",
+    "@jataqi/dashboard": "0.1.0",
+    "@jataqi/email": "0.1.0",
+    "@jataqi/fx": "0.1.0",
+    "@jataqi/ipam": "0.1.0",
+    "@jataqi/knowledge-graph": "0.1.0",
+    "@jataqi/knowledge-service": "0.1.0",
+    "@jataqi/memory": "0.1.0",
+    "@jataqi/orchestrator": "0.1.0",
+    "@jataqi/pki": "0.1.0",
+    "@jataqi/qil": "0.1.0",
+    "@jataqi/search": "0.1.0",
+    "@jataqi/security": "0.1.0",
+    "@jataqi/storage": "0.1.0",
+    "@jataqi/tanya": "0.1.0",
+    "@jataqi/tool-intelligence": "0.1.0",
+    "@jataqi/vector-search": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
 }

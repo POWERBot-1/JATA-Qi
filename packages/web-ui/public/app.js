@@ -1,7 +1,10 @@
 // JATA Qi Admin Console — SPA (vanilla JS, no build step).
-// Uses fetch() to the same-origin API gateway.
+// Uses fetch() to the same-origin API gateway. Covers the platform surface:
+// system health, readiness, agent tools governance, adaptive dashboards,
+// TANYA conversational AI, digital memory, learning, search, FX, and the PRX
+// engine views (cloud / CDN / email / IPAM).
 
-const state = { token: null, principal: null, view: 'dashboard', data: {} };
+const state = { token: null, principal: null, view: 'dashboard', data: {}, conv: null, personas: [] };
 const $ = (s) => document.querySelector(s);
 const app = $('#app');
 
@@ -14,6 +17,17 @@ async function api(method, path, body) {
   const json = text ? JSON.parse(text) : null;
   if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
   return json;
+}
+// Like api() but returns { status, body } instead of throwing (for flows that
+// expect 202 / 403 etc.).
+async function apiRaw(method, path, body) {
+  const headers = { 'content-type': 'application/json' };
+  if (state.token) headers['authorization'] = `Bearer ${state.token}`;
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const text = await res.text();
+  let json = null;
+  if (text) { try { json = JSON.parse(text); } catch { json = text; } }
+  return { status: res.status, body: json };
 }
 
 // --- Auth ---
@@ -41,12 +55,23 @@ function checkStoredAuth() {
 // --- Navigation ---
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+  { id: 'tanya', label: 'TANYA Chat', icon: '💬' },
+  { id: 'dashboards', label: 'Adaptive Dashboards', icon: '📐' },
+  { id: 'search', label: 'Search', icon: '🔎' },
+  { id: 'memory', label: 'Memory', icon: '🧠' },
+  { id: 'learning', label: 'Learning', icon: '📈' },
+  { id: 'fx', label: 'FX', icon: '💱' },
+  { id: 'cloud', label: 'Cloud', icon: '☁️' },
+  { id: 'cdn', label: 'CDN', icon: '🌐' },
+  { id: 'email', label: 'Email', icon: '✉️' },
+  { id: 'ipam', label: 'IPAM', icon: '🗂️' },
+  { id: 'automations', label: 'Automations', icon: '⏰' },
+  { id: 'tools', label: 'Tools', icon: '🔧' },
   { id: 'health', label: 'System Health', icon: '💚' },
   { id: 'identity', label: 'Creator Identity', icon: '🔐' },
   { id: 'readiness', label: 'Readiness', icon: '✅' },
-  { id: 'agents', label: 'Agents', icon: '🤖' },
+  { id: 'agents', label: 'Ask Agent', icon: '🤖' },
   { id: 'workflows', label: 'Workflows', icon: '⚡' },
-  { id: 'tools', label: 'Tools', icon: '🔧' },
   { id: 'models', label: 'Models', icon: '🧠' },
   { id: 'knowledge', label: 'Knowledge', icon: '📚' },
   { id: 'commerce', label: 'Commerce', icon: '💳' },
@@ -74,15 +99,28 @@ async function loadView(view) {
 
 const VIEWS = {
   dashboard: async () => {
-    const [health, readiness] = await Promise.all([api('GET', '/health'), api('GET', '/readiness/summary')]);
-    return { health, readiness };
+    const [health, readiness, tools, tanya] = await Promise.allSettled([
+      api('GET', '/health'), api('GET', '/readiness/summary'), api('GET', '/tools'), api('GET', '/tanya/stats'),
+    ]);
+    return {
+      health: health.status === 'fulfilled' ? health.value : null,
+      readiness: readiness.status === 'fulfilled' ? readiness.value : null,
+      tools: tools.status === 'fulfilled' ? tools.value : null,
+      tanya: tanya.status === 'fulfilled' ? tanya.value : null,
+    };
   },
   health: async () => api('GET', '/health'),
   identity: async () => { const [info, verify] = await Promise.all([api('GET', '/identity'), api('GET', '/identity/verify')]); return { info, verify }; },
   readiness: async () => api('GET', '/readiness'),
-  agents: async () => api('GET', '/commerce/analytics'),
+  agents: async () => api('POST', '/ask', { question: 'Give a one-line platform status summary.' }),
   workflows: async () => api('GET', '/workflows'),
-  tools: async () => api('GET', '/tools'),
+  tools: async () => {
+    const [tools, approvals] = await Promise.allSettled([api('GET', '/tools'), api('GET', '/approvals')]);
+    return {
+      tools: tools.status === 'fulfilled' ? tools.value : null,
+      approvals: approvals.status === 'fulfilled' ? approvals.value : null,
+    };
+  },
   models: async () => api('GET', '/models'),
   knowledge: async () => api('GET', '/stats'),
   commerce: async () => { const [plans, analytics] = await Promise.all([api('GET', '/commerce/plans'), api('GET', '/commerce/analytics')]); return { plans, analytics }; },
@@ -92,48 +130,323 @@ const VIEWS = {
   devices: async () => api('GET', '/devices'),
   twins: async () => api('GET', '/twins'),
   flags: async () => api('GET', '/flags'),
+
+  // --- TANYA AI ---
+  tanya: async () => {
+    const [convs, personas] = await Promise.allSettled([
+      api('GET', '/tanya/conversations'), api('GET', '/tanya/personas'),
+    ]);
+    state.conv = null;
+    state.personas = personas.status === 'fulfilled' ? personas.value.personas : [];
+    return {
+      conversations: convs.status === 'fulfilled' ? convs.value.conversations : [],
+      personas: state.personas,
+    };
+  },
+  dashboards: async () => {
+    const [layouts, widgets, analytics] = await Promise.allSettled([
+      api('GET', '/dashboard/layouts'), api('GET', '/dashboard/widgets'), api('GET', '/dashboard/analytics'),
+    ]);
+    return {
+      layouts: layouts.status === 'fulfilled' ? layouts.value.layouts : [],
+      widgets: widgets.status === 'fulfilled' ? widgets.value.widgets : [],
+      analytics: analytics.status === 'fulfilled' ? analytics.value.analytics : null,
+    };
+  },
+  search: async (q) => {
+    if (q) return api('GET', `/search?q=${encodeURIComponent(q)}`);
+    return null;
+  },
+  memory: async () => {
+    const [stats, recent] = await Promise.allSettled([
+      api('GET', '/memory/stats'), api('GET', '/memory?limit=15'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      events: recent.status === 'fulfilled' ? recent.value.events : [],
+    };
+  },
+  learning: async () => {
+    const [insights, recommendations] = await Promise.allSettled([
+      api('GET', '/learning/insights'), api('GET', '/learning/recommendations'),
+    ]);
+    return {
+      insights: insights.status === 'fulfilled' ? insights.value.insights : [],
+      recommendations: recommendations.status === 'fulfilled' ? recommendations.value.recommendations : [],
+    };
+  },
+  fx: async () => {
+    const [rates, stats, currencies] = await Promise.allSettled([
+      api('GET', '/fx/rates'), api('GET', '/fx/stats'), api('GET', '/fx/currencies'),
+    ]);
+    return {
+      rates: rates.status === 'fulfilled' ? rates.value.rates : [],
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      currencies: currencies.status === 'fulfilled' ? currencies.value.currencies : [],
+    };
+  },
+  cloud: async () => {
+    const [stats, instances, regions] = await Promise.allSettled([
+      api('GET', '/cloud/stats'), api('GET', '/cloud/instances'), api('GET', '/cloud/regions'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      instances: instances.status === 'fulfilled' ? instances.value.instances : [],
+      regions: regions.status === 'fulfilled' ? regions.value.regions : [],
+    };
+  },
+  cdn: async () => {
+    const [stats, zones] = await Promise.allSettled([
+      api('GET', '/cdn/stats'), api('GET', '/cdn/zones'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      zones: zones.status === 'fulfilled' ? zones.value.zones : [],
+    };
+  },
+  email: async () => {
+    const [stats, domains] = await Promise.allSettled([
+      api('GET', '/email/stats'), api('GET', '/email/domains'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      domains: domains.status === 'fulfilled' ? domains.value.domains : [],
+    };
+  },
+  ipam: async () => {
+    const [stats, blocks, announcements] = await Promise.allSettled([
+      api('GET', '/ipam/stats'), api('GET', '/ipam/blocks'), api('GET', '/ipam/announcements'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      blocks: blocks.status === 'fulfilled' ? blocks.value.blocks : [],
+      announcements: announcements.status === 'fulfilled' ? announcements.value.announcements : [],
+    };
+  },
+  automations: async () => {
+    const [list, stats] = await Promise.allSettled([
+      api('GET', '/automations'), api('GET', '/automations/stats'),
+    ]);
+    return {
+      automations: list.status === 'fulfilled' ? list.value.automations : [],
+      stats: stats.status === 'fulfilled' ? stats.value : null,
+    };
+  },
 };
+
+// --- View rendering ---
+function statCard(label, value, color) {
+  return `<div class="stat"><div class="stat-label">${label}</div><div class="stat-value" ${color ? `style="color:var(--${color})"` : ''}>${value ?? '—'}</div></div>`;
+}
+function esc(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'object') return esc(JSON.stringify(v, null, 0).slice(0, 80));
+  return String(v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function tableFrom(rows, cols) {
+  if (!rows || rows.length === 0) return '<p style="color:var(--text-dim)">No data.</p>';
+  const keys = cols || Object.keys(rows[0]).slice(0, 6);
+  let html = `<table><thead><tr>${keys.map((k) => `<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach((r) => {
+    html += `<tr>${keys.map((k) => `<td>${esc(r[k])}</td>`).join('')}</tr>`;
+  });
+  return html + '</tbody></table>';
+}
 
 function renderView(view, data) {
   const el = $('.main-content');
   if (!el) return;
-  const title = NAV.find(n => n.id === view)?.label || view;
+  const title = NAV.find((n) => n.id === view)?.label || view;
   let html = `<div class="header"><h1>${title}</h1></div>`;
 
-  if (!data) { el.innerHTML = html + '<div class="card"><p>No data.</p></div>'; return; }
+  if (!data) {
+    if (view === 'search') {
+      el.innerHTML = html + `<div class="card">
+        <div class="form-group"><label>Search the platform (knowledge, memory, graph, conversations, tools)</label>
+        <div style="display:flex;gap:8px"><input id="search-q" placeholder="e.g. certificate, mobility, cloud..." autofocus>
+        <button class="btn-primary" onclick="doSearch()">Search</button></div></div>
+        <div id="search-results"></div></div>`;
+      return;
+    }
+    el.innerHTML = html + '<div class="card"><p>No data.</p></div>';
+    return;
+  }
 
   if (view === 'dashboard') {
     const h = data.health, r = data.readiness;
     html += `<div class="stat-grid">
-      <div class="stat"><div class="stat-label">Status</div><div class="stat-value" style="color:var(--green)">${h.status}</div></div>
-      <div class="stat"><div class="stat-label">Modules</div><div class="stat-value">${h.modules?.length || 0}</div></div>
-      <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value">${Math.round((h.uptimeMs||0)/1000)}s</div></div>
-      <div class="stat"><div class="stat-label">Capabilities</div><div class="stat-value">${r.total}</div></div>
-      <div class="stat"><div class="stat-label">Production Ready</div><div class="stat-value" style="color:var(--red)">${r.productionReady}</div></div>
-      <div class="stat"><div class="stat-label">Not Implemented</div><div class="stat-value" style="color:var(--yellow)">${r.notImplemented}</div></div>
+      ${statCard('Status', h?.status, 'green')}
+      ${statCard('Modules', h?.modules?.length ?? 0)}
+      ${statCard('Uptime', h ? Math.round(h.uptimeMs / 1000) + 's' : null)}
+      ${statCard('Capabilities', r?.total ?? null)}
+      ${statCard('Production Ready', r?.productionReady ?? null, 'red')}
+      ${statCard('Not Implemented', r?.notImplemented ?? null, 'yellow')}
+      ${statCard('Governed Tools', data.tools?.count ?? null)}
+      ${statCard('TANYA Conversations', data.tanya?.conversations ?? null)}
     </div>`;
-    html += `<div class="card"><div class="card-title">Overall</div><p>${r.overall}</p></div>`;
+    if (r?.overall) html += `<div class="card"><div class="card-title">Overall</div><p>${esc(r.overall)}</p></div>`;
+  } else if (view === 'tanya') {
+    html += `<div class="card">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
+        <select id="tanya-persona" style="max-width:200px"><option value="main">main</option></select>
+        <select id="tanya-conv" style="flex:1;min-width:220px"><option value="">— new conversation —</option></select>
+        <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
+      </div>
+      <div id="tanya-messages" class="chat-log">
+        <p style="color:var(--text-dim)">Send a message to start chatting with TANYA.</p>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <input id="tanya-input" placeholder="Ask TANYA anything..." autofocus>
+        <button class="btn-primary" onclick="sendTanya()">Send</button>
+      </div>
+    </div>`;
+    // populate personas + conversations after render
+    setTimeout(() => {
+      const pSel = $('#tanya-persona');
+      (state.personas || []).forEach((p) => {
+        if (p.id !== 'main') pSel.insertAdjacentHTML('beforeend', `<option value="${esc(p.id)}">${esc(p.name)}</option>`);
+      });
+      const cSel = $('#tanya-conv');
+      (data.conversations || []).forEach((c) => {
+        cSel.insertAdjacentHTML('beforeend', `<option value="${esc(c.id)}">${esc(c.title)} (${c.messageCount})</option>`);
+      });
+    }, 0);
+  } else if (view === 'dashboards') {
+    html += `<div class="stat-grid">
+      ${statCard('Layouts', data.layouts?.length ?? 0)}
+      ${statCard('Widget Types', data.widgets?.length ?? 0)}
+      ${statCard('Adaptations', data.analytics?.adaptations ?? null)}
+      ${statCard('Users', data.analytics?.users ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Create Layout</div>
+      <div style="display:flex;gap:8px"><input id="layout-name" placeholder="Layout name">
+      <button class="btn-primary" onclick="createLayout()">Create</button></div></div>
+    <div class="card"><div class="card-title">Layouts</div><div id="layouts-body">${tableFrom(data.layouts, ['id', 'name', 'ownerId', 'columns', 'widgets'])}</div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <input id="layout-id" placeholder="layout id"><button class="btn-ghost" onclick="adaptLayout()">AI-Adapt</button>
+        <button class="btn-ghost" onclick="autoArrange()">Auto-arrange</button>
+      </div></div>
+    <div class="card"><div class="card-title">Available Widgets</div>${tableFrom(data.widgets, ['id', 'name', 'category', 'roles'])}</div>`;
+  } else if (view === 'search') {
+    html += `<div class="card">
+      <div class="form-group"><label>Search the platform (knowledge, memory, graph, conversations, tools)</label>
+      <div style="display:flex;gap:8px"><input id="search-q" placeholder="e.g. certificate, mobility, cloud..." autofocus>
+      <button class="btn-primary" onclick="doSearch()">Search</button></div></div>
+      <div id="search-results"></div></div>`;
+  } else if (view === 'memory') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Events', s.total ?? null)}
+      ${statCard('Categories', s.categories ?? null)}
+      ${statCard('Users', s.users ?? null)}
+      ${statCard('Orgs', s.orgs ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Recent Events</div>${tableFrom(data.events, ['ts', 'category', 'summary', 'userId'])}</div>`;
+  } else if (view === 'learning') {
+    html += `<div class="card"><div class="card-title">Insights (${data.insights?.length ?? 0})</div>${tableFrom(data.insights, ['type', 'title', 'confidence', 'status'])}</div>`;
+    html += `<div class="card"><div class="card-title">Recommendations (${data.recommendations?.length ?? 0})</div>${tableFrom(data.recommendations, ['action', 'title', 'priority', 'status'])}</div>`;
+  } else if (view === 'fx') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Pairs', s.pairs ?? data.rates?.length ?? 0)}
+      ${statCard('Quotes', s.quotes ?? null)}
+      ${statCard('Currencies', data.currencies?.length ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Live Rates</div>${tableFrom(data.rates, ['pair', 'bid', 'ask', 'mid', 'source'])}</div>`;
+  } else if (view === 'cloud') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Regions', s.regions ?? data.regions?.length ?? 0)}
+      ${statCard('Instances', s.instances ?? null)}
+      ${statCard('Volumes', s.volumes ?? null)}
+      ${statCard('VPCs', s.vpcs ?? null)}
+      ${statCard('Load Balancers', s.loadBalancers ?? null)}
+      ${statCard('Hosting Plans', s.hostingPlans ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Regions</div>${tableFrom(data.regions, ['id', 'name', 'code', 'country', 'status', 'capacitySlots', 'usedSlots'])}</div>
+    <div class="card"><div class="card-title">Instances</div>${tableFrom(data.instances, ['id', 'name', 'status', 'regionId', 'flavorId', 'publicIp'])}</div>`;
+  } else if (view === 'cdn') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Zones', s.zones ?? data.zones?.length ?? 0)}
+      ${statCard('Nodes Online', s.nodesOnline ?? null)}
+      ${statCard('Hit Rate', s.hitRate != null ? (s.hitRate * 100).toFixed(1) + '%' : null, 'green')}
+      ${statCard('Cached Assets', s.cachedAssets ?? null)}
+      ${statCard('Purges', s.purges ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Zones</div>${tableFrom(data.zones, ['id', 'domain', 'origin', 'status', 'originShield', 'tlsEnabled', 'defaultTtlSec'])}</div>`;
+  } else if (view === 'email') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Domains', s.domains ?? data.domains?.length ?? 0)}
+      ${statCard('Verified', s.verifiedDomains ?? null, 'green')}
+      ${statCard('Mailboxes', s.mailboxes ?? null)}
+      ${statCard('Sent', s.sent ?? null)}
+      ${statCard('Delivered Rate', s.deliveredRate != null ? (s.deliveredRate * 100).toFixed(1) + '%' : null, 'green')}
+      ${statCard('Spam/Quarantine', (s.spam ?? 0) + (s.quarantined ?? 0))}
+    </div>
+    <div class="card"><div class="card-title">Domains</div>${tableFrom(data.domains, ['id', 'domain', 'verified', 'dmarcPolicy', 'dkimSelector'])}</div>`;
+  } else if (view === 'ipam') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Blocks', s.blocks ?? data.blocks?.length ?? 0)}
+      ${statCard('Total Addresses', s.totalAddresses ?? null)}
+      ${statCard('Utilization', s.utilizationPct != null ? s.utilizationPct + '%' : null)}
+      ${statCard('ASNs', s.asns ?? null)}
+      ${statCard('Active ASNs', s.activeAsns ?? null)}
+      ${statCard('Announcements', data.announcements?.length ?? 0)}
+    </div>
+    <div class="card"><div class="card-title">Blocks</div>${tableFrom(data.blocks, ['id', 'cidr', 'family', 'rir', 'status', 'purpose'])}</div>
+    <div class="card"><div class="card-title">Announcements</div>${tableFrom(data.announcements, ['blockId', 'asnId', 'since'])}</div>`;
+  } else if (view === 'automations') {
+    const s = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Automations', data.automations?.length ?? 0)}
+      ${statCard('Executions', s.total ?? null)}
+      ${statCard('Running', s.running ?? null)}
+      ${statCard('Failed', s.failed ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Automations</div>${tableFrom(data.automations, ['id', 'name', 'trigger', 'enabled', 'status'])}</div>`;
+  } else if (view === 'tools') {
+    const tools = data.tools?.tools || [];
+    const approvals = data.approvals?.approvals || [];
+    html += `<div class="stat-grid">
+      ${statCard('Governed Tools', tools.length)}
+      ${statCard('R4 Gated', tools.filter((t) => t.riskClass === 'R4').length, 'yellow')}
+      ${statCard('Active', tools.filter((t) => t.status === 'ACTIVE').length, 'green')}
+      ${statCard('Pending Approvals', approvals.length, approvals.length ? 'yellow' : 'green')}
+    </div>
+    <div class="card"><div class="card-title">Governance Sync</div>
+      <p style="color:var(--text-dim);margin-bottom:10px">Register the agent runtime's live tool surface (37 tools) into the governed registry with risk classes.</p>
+      <button class="btn-primary" onclick="syncTools()">Sync Agent Tools</button>
+      <span id="tools-sync-msg" style="margin-left:10px"></span></div>
+    <div class="card"><div class="card-title">Pending Approvals</div>
+      ${approvals.length === 0 ? '<p style="color:var(--text-dim)">None.</p>' : approvals.map((a) => `<div class="notif-item"><div class="notif-dot"></div><div><div style="font-weight:600">${esc(a.toolId)}</div><div style="color:var(--text-dim);font-size:13px">${esc(a.reason || a.action)} — requested by ${esc(a.principalId)}</div><div style="margin-top:6px;display:flex;gap:8px"><button class="btn-primary" onclick="decideApproval('${esc(a.id)}','approved')">Approve</button><button class="btn-danger" onclick="decideApproval('${esc(a.id)}','denied')">Deny</button></div></div></div>`).join('')}
+    </div>
+    <div class="card"><div class="card-title">Registry (${tools.length})</div>${tableFrom(tools, ['canonicalName', 'riskClass', 'privacyClass', 'status', 'category'])}</div>`;
   } else if (view === 'health') {
-    html += `<div class="card"><div class="card-title">Status</div><span class="badge badge-green">${data.status}</span></div>`;
+    html += `<div class="card"><div class="card-title">Status</div><span class="badge badge-green">${esc(data.status)}</span></div>`;
     html += `<div class="card"><div class="card-title">Modules (${data.modules?.length})</div><table><tbody>`;
-    (data.modules || []).forEach(m => { html += `<tr><td>${m}</td></tr>`; });
+    (data.modules || []).forEach((m) => { html += `<tr><td>${esc(m)}</td></tr>`; });
     html += `</tbody></table></div>`;
   } else if (view === 'identity') {
     const i = data.info;
-    html += `<div class="card"><div class="card-title">Creator</div><p style="font-size:18px">${i.creator?.display_name}</p><p style="color:var(--text-dim)">${i.creator?.role}</p></div>`;
+    html += `<div class="card"><div class="card-title">Creator</div><p style="font-size:18px">${esc(i.creator?.display_name)}</p><p style="color:var(--text-dim)">${esc(i.creator?.role)}</p></div>`;
     html += `<div class="card"><div class="card-title">Integrity</div><span class="badge badge-green">Signature: ${data.verify.valid ? 'VALID' : 'INVALID'}</span></div>`;
-    html += `<div class="card"><div class="card-title">Canonical Identity</div><code>${i.canonical_identity}</code></div>`;
+    html += `<div class="card"><div class="card-title">Canonical Identity</div><code>${esc(i.canonical_identity)}</code></div>`;
   } else if (view === 'readiness') {
     html += `<div class="card"><table><thead><tr><th>Capability</th><th>Status</th><th>Module</th></tr></thead><tbody>`;
-    (data.capabilities || []).forEach(c => {
+    (data.capabilities || []).forEach((c) => {
       const cls = c.status === 'TESTED' || c.status === 'PRODUCTION_READY' ? 'badge-green' : c.status === 'NOT_IMPLEMENTED' ? 'badge-red' : 'badge-yellow';
-      html += `<tr><td>${c.name}</td><td><span class="badge ${cls}">${c.status}</span></td><td>${c.module || '—'}</td></tr>`;
+      html += `<tr><td>${esc(c.name)}</td><td><span class="badge ${cls}">${esc(c.status)}</span></td><td>${esc(c.module || '—')}</td></tr>`;
     });
     html += `</tbody></table></div>`;
+  } else if (view === 'agents') {
+    html += `<div class="card"><div class="card-title">Agent Reply</div><p style="white-space:pre-wrap">${esc(data.answer || data.reply || '—')}</p></div>`;
   } else if (view === 'notifications') {
     html += `<div class="card"><div class="card-title">Inbox (${data.unread} unread)</div>`;
-    (data.notifications || []).forEach(n => {
-      html += `<div class="notif-item ${!n.read ? 'unread' : ''}"><div class="notif-dot"></div><div><div style="font-weight:600">${n.title}</div><div style="color:var(--text-dim);font-size:13px">${n.body || ''}</div><div style="color:var(--text-dim);font-size:12px">${new Date(n.createdAt).toLocaleString()}</div></div></div>`;
+    (data.notifications || []).forEach((n) => {
+      html += `<div class="notif-item ${!n.read ? 'unread' : ''}"><div class="notif-dot"></div><div><div style="font-weight:600">${esc(n.title)}</div><div style="color:var(--text-dim);font-size:13px">${esc(n.body || '')}</div><div style="color:var(--text-dim);font-size:12px">${new Date(n.createdAt).toLocaleString()}</div></div></div>`;
     });
     html += `</div>`;
   } else {
@@ -141,14 +454,133 @@ function renderView(view, data) {
     const items = data.tools || data.models || data.organizations || data.devices || data.twins || data.flags || data.policies || data.plans || data.runs || [];
     if (Array.isArray(items) && items.length > 0) {
       const keys = Object.keys(items[0]).slice(0, 5);
-      html += `<div class="card"><table><thead><tr>${keys.map(k => `<th>${k}</th>`).join('')}</tr></thead><tbody>`;
-      items.forEach(item => { html += `<tr>${keys.map(k => `<td>${typeof item[k] === 'object' ? JSON.stringify(item[k]).slice(0,50) : item[k] ?? '—'}</td>`).join('')}</tr>`; });
+      html += `<div class="card"><table><thead><tr>${keys.map((k) => `<th>${esc(k)}</th>`).join('')}</tr></thead><tbody>`;
+      items.forEach((item) => { html += `<tr>${keys.map((k) => `<td>${esc(item[k])}</td>`).join('')}</tr>`; });
       html += `</tbody></table></div>`;
     } else {
-      html += `<div class="card"><pre>${JSON.stringify(data, null, 2).slice(0, 2000)}</pre></div>`;
+      html += `<div class="card"><pre>${esc(JSON.stringify(data, null, 2).slice(0, 2000))}</pre></div>`;
     }
   }
   el.innerHTML = html;
+}
+
+// --- TANYA chat actions ---
+function appendChatMessage(role, content, toolCalls) {
+  const log = $('#tanya-messages');
+  if (!log) return;
+  const bubble = document.createElement('div');
+  bubble.className = `chat-msg chat-${role}`;
+  let inner = `<div class="chat-bubble">${esc(content) || '<em>…</em>'}</div>`;
+  if (toolCalls && toolCalls.length) {
+    inner += `<div class="chat-tools">${toolCalls.map((t) => `🔧 ${esc(t.name)}`).join(' · ')}</div>`;
+  }
+  bubble.innerHTML = inner;
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+}
+async function sendTanya() {
+  const input = $('#tanya-input');
+  const message = input.value.trim();
+  if (!message) return;
+  appendChatMessage('user', message);
+  input.value = '';
+  const persona = $('#tanya-persona')?.value || 'main';
+  const convId = $('#tanya-conv')?.value || undefined;
+  try {
+    const body = { message, persona };
+    if (convId) body.conversationId = convId;
+    const result = await api('POST', '/tanya/chat', body);
+    appendChatMessage('assistant', result.reply, result.toolCalls);
+    state.conv = result.conversationId;
+    const cSel = $('#tanya-conv');
+    if (cSel && !convId) {
+      cSel.insertAdjacentHTML('afterbegin', `<option value="${esc(result.conversationId)}">${esc(result.reply.slice(0, 40))}…</option>`);
+      cSel.value = result.conversationId;
+    }
+  } catch (e) {
+    appendChatMessage('system', `Error: ${e.message}`);
+  }
+}
+async function loadTanyaConversation(id) {
+  if (!id) {
+    const log = $('#tanya-messages');
+    if (log) log.innerHTML = '<p style="color:var(--text-dim)">Send a message to start chatting with TANYA.</p>';
+    return;
+  }
+  try {
+    const conv = await api('GET', `/tanya/conversation?id=${encodeURIComponent(id)}`);
+    const log = $('#tanya-messages');
+    log.innerHTML = '';
+    (conv.messages || []).forEach((m) => appendChatMessage(m.role, m.content, m.toolCalls));
+    state.conv = conv.id;
+  } catch (e) {
+    appendChatMessage('system', `Error: ${e.message}`);
+  }
+}
+
+// --- Dashboard layout actions ---
+async function createLayout() {
+  const name = $('#layout-name')?.value.trim();
+  if (!name) return;
+  try {
+    await api('POST', '/dashboard/layouts', { name, ownerId: state.principal?.userId || 'ui' });
+    await loadView('dashboards');
+  } catch (e) { alert(e.message); }
+}
+async function adaptLayout() {
+  const id = $('#layout-id')?.value.trim();
+  if (!id) return;
+  try {
+    await api('POST', '/dashboard/adapt', { layoutId: id, userId: state.principal?.userId || 'ui' });
+    await loadView('dashboards');
+  } catch (e) { alert(e.message); }
+}
+async function autoArrange() {
+  const id = $('#layout-id')?.value.trim();
+  if (!id) return;
+  try {
+    await api('POST', '/dashboard/auto-arrange', { layoutId: id });
+    await loadView('dashboards');
+  } catch (e) { alert(e.message); }
+}
+
+// --- Search action ---
+async function doSearch() {
+  const q = $('#search-q')?.value.trim();
+  const box = $('#search-results');
+  if (!q || !box) return;
+  box.innerHTML = '<div class="spinner"></div>';
+  try {
+    const result = await api('GET', `/search?q=${encodeURIComponent(q)}`);
+    if (!result.hits || result.hits.length === 0) {
+      box.innerHTML = '<p style="color:var(--text-dim)">No results.</p>';
+      return;
+    }
+    box.innerHTML = `<p style="color:var(--text-dim);margin-bottom:8px">${result.total} hit(s)</p>` + result.hits
+      .map((h) => `<div class="notif-item"><div><div style="font-weight:600">[${esc(h.source)}] ${esc(h.title)}</div><div style="color:var(--text-dim);font-size:13px">${esc(h.snippet)}</div><div style="color:var(--text-dim);font-size:12px">score ${esc(h.score?.toFixed ? h.score.toFixed(2) : h.score)}</div></div></div>`)
+      .join('');
+  } catch (e) {
+    box.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+
+// --- Tool governance actions ---
+async function syncTools() {
+  const msg = $('#tools-sync-msg');
+  if (msg) msg.textContent = 'syncing…';
+  try {
+    const r = await api('POST', '/tools/sync', {});
+    if (msg) msg.textContent = `✓ ${r.synced} tools governed (created ${r.created}, updated ${r.updated})`;
+    setTimeout(() => loadView('tools'), 400);
+  } catch (e) {
+    if (msg) msg.textContent = `✗ ${e.message}`;
+  }
+}
+async function decideApproval(id, decision) {
+  try {
+    await api('POST', '/tool/approve', { id, decision });
+    await loadView('tools');
+  } catch (e) { alert(e.message); }
 }
 
 // --- Render ---
@@ -161,21 +593,21 @@ function render() {
       <div class="auth-error" id="login-err">Invalid credentials</div>
       <button class="btn-primary" style="width:100%" onclick="doLogin()">Sign In</button>
     </div></div>`;
-    $('#login-pass')?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    $('#login-pass')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
     return;
   }
   app.innerHTML = `<div class="app">
     <div class="sidebar">
       <div class="sidebar-brand">🧠 JATA<span>Qi</span></div>
-      ${NAV.map(n => `<div class="nav-item ${state.view === n.id ? 'active' : ''}" onclick="loadView('${n.id}')">${n.icon} <span>${n.label}</span></div>`).join('')}
+      ${NAV.map((n) => `<div class="nav-item ${state.view === n.id ? 'active' : ''}" onclick="loadView('${n.id}')">${n.icon} <span>${n.label}</span></div>`).join('')}
       <div style="padding:16px 20px;border-top:1px solid var(--border);margin-top:auto">
-        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">${state.principal?.username}</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">${esc(state.principal?.username)}</div>
         <button class="btn-ghost" style="width:100%" onclick="logout()">Sign Out</button>
       </div>
     </div>
     <div class="main main-content"></div>
   </div>`;
-  loadView('dashboard');
+  loadView(state.view);
 }
 
 window.doLogin = () => {
@@ -184,6 +616,16 @@ window.doLogin = () => {
 };
 window.loadView = loadView;
 window.logout = logout;
+window.sendTanya = sendTanya;
+window.loadTanyaConversation = loadTanyaConversation;
+window.createLayout = createLayout;
+window.adaptLayout = adaptLayout;
+window.autoArrange = autoArrange;
+window.doSearch = doSearch;
+window.syncTools = syncTools;
+window.decideApproval = decideApproval;
+$('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
+$('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
 // Init.
-if (checkStoredAuth()) render(); else render();
+render();

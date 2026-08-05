@@ -10,6 +10,19 @@ import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
 import { QiLModule } from '@jataqi/qil';
 import { OrchestratorModule } from '@jataqi/orchestrator';
+import { DigitalMemoryModule } from '@jataqi/memory';
+import { DashboardModule } from '@jataqi/dashboard';
+import { ConversationsModule } from '@jataqi/conversations';
+import { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
+import { SearchModule } from '@jataqi/search';
+import { AutomationModule } from '@jataqi/automation';
+import { FxModule } from '@jataqi/fx';
+import { PkiModule } from '@jataqi/pki';
+import { CloudModule } from '@jataqi/cloud';
+import { CdnModule } from '@jataqi/cdn';
+import { EmailModule } from '@jataqi/email';
+import { IpamModule } from '@jataqi/ipam';
+import { TanyaModule } from '@jataqi/tanya';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 import { WebUIModule } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -26,8 +39,21 @@ describe('WebUIModule', () => {
     kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
     kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
     kernel.register(new QiLModule());
-    kernel.register(new SecurityModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
     kernel.register(new OrchestratorModule());
+    kernel.register(new DigitalMemoryModule());
+    kernel.register(new DashboardModule());
+    kernel.register(new ConversationsModule());
+    kernel.register(new ToolIntelligenceModule());
+    kernel.register(new SearchModule());
+    kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
+    kernel.register(new FxModule({ anchor: 'USD' }));
+    kernel.register(new PkiModule({ issuer: 'https://id.ui.test.local' }));
+    kernel.register(new CloudModule());
+    kernel.register(new CdnModule());
+    kernel.register(new EmailModule());
+    kernel.register(new IpamModule());
+    kernel.register(new TanyaModule());
     kernel.register(new ApiGatewayModule());
     kernel.register(new WebUIModule());
     await kernel.boot();
@@ -70,6 +96,31 @@ describe('WebUIModule', () => {
     assert.equal(ui.serve('/ui/../../../etc/passwd'), undefined);
   });
 
+  it('app.js wires the engine + TANYA + dashboard views to gateway endpoints', () => {
+    const js = ui.serve('/ui/app.js')!.content.toString('utf8');
+    // TANYA conversational console.
+    assert.match(js, /tanya: async/, 'tanya view present');
+    assert.match(js, /\/tanya\/chat/, 'chat endpoint wired');
+    assert.match(js, /\/tanya\/conversations/, 'conversations endpoint wired');
+    assert.match(js, /sendTanya/, 'send action present');
+    // Adaptive dashboard.
+    assert.match(js, /dashboards: async/, 'dashboards view present');
+    assert.match(js, /\/dashboard\/layouts/, 'layouts endpoint wired');
+    assert.match(js, /\/dashboard\/adapt/, 'adapt endpoint wired');
+    // Engines.
+    for (const [view, path] of [
+      ['search', '/search?q='], ['memory', '/memory/stats'], ['fx', '/fx/rates'],
+      ['cloud', '/cloud/stats'], ['cdn', '/cdn/stats'], ['email', '/email/stats'],
+      ['ipam', '/ipam/stats'], ['automations', '/automations'],
+    ]) {
+      assert.match(js, new RegExp(`${view}: async`), `${view} view present`);
+      assert.match(js, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${view} endpoint wired`);
+    }
+    // Tool governance actions.
+    assert.match(js, /\/tools\/sync/, 'tools sync wired');
+    assert.match(js, /decideApproval/, 'approval decision wired');
+  });
+
   it('serves the UI through the API gateway', async () => {
     const gateway = kernel.getModule('api-gateway') as unknown as { listen(opts?: { port?: number }): Promise<{ port: number; close(): Promise<void> }> };
     const handle = await gateway.listen({ port: 0 });
@@ -107,6 +158,47 @@ describe('WebUIModule', () => {
       assert.equal(health.status, 200);
       const healthBody = await health.json() as { status: string };
       assert.equal(healthBody.status, 'healthy');
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('engine views resolve through the gateway with a developer session (UI data path)', async () => {
+    const gateway = kernel.getModule('api-gateway') as unknown as { listen(opts?: { port?: number }): Promise<{ port: number; close(): Promise<void> }> };
+    const handle = await gateway.listen({ port: 0 });
+    try {
+      const base = `http://127.0.0.1:${handle.port}`;
+      const login = await fetch(`${base}/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: 'admin', password: 'admin' }) });
+      const token = (await login.json() as { token: string }).token;
+      const auth = { authorization: `Bearer ${token}` };
+
+      // TANYA chat (used by the UI console).
+      const chat = await fetch(`${base}/tanya/chat`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ message: 'Hello from the UI' }) });
+      assert.equal(chat.status, 200);
+      const chatBody = await chat.json() as { conversationId: string; reply: string };
+      assert.ok(chatBody.conversationId);
+      assert.match(chatBody.reply, /Hello from the UI/);
+
+      // Adaptive dashboard: create layout + add a widget.
+      const layout = await fetch(`${base}/dashboard/layouts`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth }, body: JSON.stringify({ name: 'UI Layout', ownerId: 'admin' }) });
+      assert.equal(layout.status, 201);
+      const layoutBody = await layout.json() as { layout: { id: string } };
+      const layouts = await fetch(`${base}/dashboard/layouts`, { headers: auth });
+      assert.equal((await layouts.json() as { count: number }).count, 1);
+
+      // Engine stats endpoints used by the views.
+      for (const path of ['/cloud/stats', '/cdn/stats', '/email/stats', '/ipam/stats', '/fx/stats', '/memory/stats', '/automations']) {
+        const res = await fetch(`${base}${path}`, { headers: auth });
+        assert.equal(res.status, 200, `${path} should resolve`);
+      }
+
+      // Tool governance sync (used by the Tools view).
+      const sync = await fetch(`${base}/tools/sync`, { method: 'POST', headers: { ...auth }, body: JSON.stringify({}) });
+      assert.equal(sync.status, 200);
+      const syncBody = await sync.json() as { synced: number };
+      assert.ok(syncBody.synced >= 37);
+
+      void layoutBody;
     } finally {
       await handle.close();
     }
