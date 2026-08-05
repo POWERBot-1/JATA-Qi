@@ -537,6 +537,14 @@ function renderView(view, data) {
         <button class="btn-primary" onclick="sendTanya()">Send</button>
       </div>
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">EXPORT CURRENT CONVERSATION</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-ghost" onclick="exportTanyaConversation('json')">Export JSON</button>
+          <button class="btn-ghost" onclick="exportTanyaConversation('markdown')">Export Markdown</button>
+          <button class="btn-ghost" onclick="exportTanyaConversation('text')">Export Text</button>
+        </div>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">SHARE CURRENT CONVERSATION (multi-user)</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <input id="tanya-share-email" placeholder="recipient email (IdP identity)" style="flex:1;min-width:200px">
@@ -867,7 +875,7 @@ function tanyaWsUrl() {
   return `${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`;
 }
 // --- Live activity feed (platform bus events over /ws) ---
-const FEED_ICONS = { security: '🔐', memory: '🧠', tool: '🔧', tanya: '💬', orchestrator: '⚡' };
+const FEED_ICONS = { security: '🔐', memory: '🧠', tool: '🔧', tanya: '💬', orchestrator: '⚡', governance: '🚨' };
 function feedIcon(type) {
   for (const [prefix, icon] of Object.entries(FEED_ICONS)) if (type.startsWith(prefix)) return icon;
   return '📡';
@@ -898,7 +906,7 @@ function startLiveFeed() {
   if (state.feedUnsub || !state.token) return;
   try {
     const ws = new WebSocket(tanyaWsUrl());
-    ws.onopen = () => ws.send(JSON.stringify({ op: 'subscribe', topics: ['security', 'memory', 'tool', 'tanya', 'orchestrator'] }));
+    ws.onopen = () => ws.send(JSON.stringify({ op: 'subscribe', topics: ['security', 'memory', 'tool', 'tanya', 'orchestrator', 'governance'] }));
     ws.onmessage = (ev) => {
       let msg; try { msg = JSON.parse(ev.data); } catch { return; }
       if (!msg.type || msg.type === 'realtime.connected') return;
@@ -1014,6 +1022,24 @@ async function exportAudit(format) {
     const a = document.createElement('a');
     a.href = url;
     a.download = `audit-${scope}-${Date.now()}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
+}
+async function exportTanyaConversation(format) {
+  const convId = $('#tanya-conv')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  try {
+    const res = await fetch(`/chat/export?id=${encodeURIComponent(convId)}&format=${format}`, {
+      headers: { authorization: `Bearer ${state.token}` },
+    });
+    if (!res.ok) throw new Error('export failed');
+    const text = await res.text();
+    const blob = new Blob([text], { type: format === 'json' ? 'application/json' : 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `conversation-${convId.slice(0, 8)}.${format === 'markdown' ? 'md' : format}`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) { alert(e.message); }
@@ -1245,6 +1271,7 @@ window.syncTools = syncTools;
 window.decideApproval = decideApproval;
 window.shareTanyaConversation = shareTanyaConversation;
 window.exportAudit = exportAudit;
+window.exportTanyaConversation = exportTanyaConversation;
 window.runQiL = runQiL;
 $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });

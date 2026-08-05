@@ -260,4 +260,19 @@ describe('jataqi CLI — intelligence commands', () => {
     const share = await jataqi('tanya', 'share', 'nope', '--user', 'x');
     assert.match(share, /not found/);
   });
+
+  it('tools alerts evaluates governance SLA rules', async () => {
+    const out = await jataqi('tools', 'alerts');
+    assert.match(out, /approval-queue-age/);
+    assert.match(out, /deny-spike/);
+    assert.match(out, /r4-invocation-rate/);
+    assert.match(out, /\[warning\]|\[critical\]/);
+  });
+
+  it('tanya export renders a conversation as JSON/markdown', async () => {
+    // Fresh OS: create a conversation, then export it in the SAME invocation
+    // is not possible (stateless), so export of an unknown id fails cleanly.
+    const missing = await jataqi('tanya', 'export', 'nope', '--format', 'json');
+    assert.match(missing, /not found/);
+  });
 });

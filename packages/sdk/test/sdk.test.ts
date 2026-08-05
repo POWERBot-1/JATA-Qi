@@ -513,4 +513,26 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const members = await client.org.members(orgId);
     assert.ok(members.members.length >= 2);
   });
+
+  it('tanya.export returns JSON / Markdown / text documents', async () => {
+    await client.auth.login('admin', 'admin');
+    const chat = await client.tanya.chat('export me');
+    const convId = chat.conversationId;
+
+    const json = await client.tanya.export(convId, 'json');
+    const parsed = JSON.parse(json) as { id: string; title: string; messages: unknown[] };
+    assert.equal(parsed.id, convId);
+    assert.ok(parsed.messages.length >= 2, 'user + assistant messages');
+
+    const md = await client.tanya.export(convId, 'markdown');
+    assert.ok(md.startsWith('# '), 'markdown heading');
+    assert.match(md, /user/, 'user turn rendered');
+    assert.ok(md.includes('export me'), 'message content present');
+
+    const text = await client.tanya.export(convId, 'text');
+    assert.match(text, /\[user\] export me/);
+
+    // Nonexistent conversation → throws.
+    await assert.rejects(client.tanya.export('nope', 'json'), /not found/);
+  });
 });

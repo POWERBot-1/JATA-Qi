@@ -165,6 +165,11 @@ describe('WebUIModule', () => {
     assert.match(js, /audit-export-scope/, 'export scope selector rendered');
     assert.match(js, /Export CSV/, 'CSV export button present');
     assert.match(js, /Export JSON/, 'JSON export button present');
+    // Conversation export + governance feed topic.
+    assert.match(js, /exportTanyaConversation/, 'tanya export action present');
+    assert.match(js, /\/chat\/export\?id=/, 'chat export endpoint wired');
+    assert.match(js, /'governance'/, 'governance topic in the live feed');
+    assert.match(js, /governance: '🚨'/, 'governance feed icon');
     // Multi-user TANYA (org scope + sharing).
     assert.match(js, /\/tanya\/share/, 'share endpoint wired');
     assert.match(js, /\/tanya\/shared/, 'shared-with-me endpoint wired');
@@ -208,7 +213,7 @@ describe('WebUIModule', () => {
     assert.match(js, /decideApproval\(/i, 'approve/deny actions wired');
     // Live activity feed.
     assert.match(js, /startLiveFeed/, 'live feed wired');
-    assert.match(js, /topics: \['security', 'memory', 'tool', 'tanya', 'orchestrator'\]/, 'subscribes to platform topics');
+    assert.match(js, /topics: \['security', 'memory', 'tool', 'tanya', 'orchestrator', 'governance'\]/, 'subscribes to platform topics');
     assert.match(js, /addFeedEvent/, 'feed events appended');
     assert.match(js, /feed-toast/, 'toast element rendered');
     assert.match(js, /activity-feed/, 'feed sidebar section present');

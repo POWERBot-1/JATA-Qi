@@ -81,9 +81,9 @@ Commands:
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
-  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares.
+  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export.
   org <sub>           Organizations: create|invite|accept|list|members.
-  tools <sub>         Tool governance: sync|list|stats|invoke|approvals|approve.
+  tools <sub>         Tool governance: sync|list|stats|alerts|invoke|approvals|approve.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -1816,6 +1816,14 @@ async function main() {
             console.log(JSON.stringify(result, (_k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
             break;
           }
+          case 'alerts': {
+            const result = await toolIntel.evaluateSlaRules();
+            for (const a of result.alerts) {
+              const icon = a.state === 'firing' ? (a.severity === 'critical' ? '🚨' : '⚠️') : '✅';
+              console.log(`${icon} ${a.id} [${a.severity}] ${a.state} — ${a.message} (value ${a.value}/${a.threshold})`);
+            }
+            break;
+          }
           case 'approvals': {
             const pending = toolIntel.listPendingApprovals();
             for (const a of pending) console.log(`- ${a.id} ${a.toolId} by ${a.principalId} [${a.status}] ${a.reason ?? ''}`);
@@ -1835,7 +1843,7 @@ async function main() {
             break;
           }
           default:
-            console.error('Usage: jataqi tools sync|list|stats|invoke|approvals|approve'); process.exit(1);
+            console.error('Usage: jataqi tools sync|list|stats|alerts|invoke|approvals|approve'); process.exit(1);
         }
         break;
       }
@@ -1968,6 +1976,26 @@ async function main() {
             console.log(JSON.stringify(await tanya.stats('cli'), null, 2));
             break;
           }
+          case 'export': {
+            const convId = args[2];
+            const format = flag('format') ?? 'json';
+            if (!convId) { console.error('Usage: jataqi tanya export <convId> [--format json|markdown|text]'); process.exit(1); }
+            try {
+              const conv = await tanya.getConversation(convId);
+              if (!conv) { console.log('not found'); break; }
+              if (format === 'json') {
+                console.log(JSON.stringify(conv, null, 2));
+              } else if (format === 'markdown') {
+                console.log(`# ${conv.title}\n`);
+                for (const m of conv.messages) console.log(`**${m.role}**: ${m.content}\n`);
+              } else {
+                for (const m of conv.messages) console.log(`[${m.role}] ${m.content}`);
+              }
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
           case 'share': {
             const convId = flag('conv') ?? args[2];
             const email = flag('email');
@@ -2013,7 +2041,7 @@ async function main() {
             break;
           }
           default:
-            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares'); process.exit(1);
+            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export'); process.exit(1);
         }
         break;
       }

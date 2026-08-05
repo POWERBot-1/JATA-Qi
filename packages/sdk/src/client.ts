@@ -239,6 +239,10 @@ export class TanyaClient {
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
   }
+  /** Export a conversation as JSON (default), Markdown, or plain text. */
+  async export(conversationId: string, format: 'json' | 'markdown' | 'text' = 'json'): Promise<string> {
+    return this.c.requestText('GET', `/chat/export?format=${format}`, undefined, { id: conversationId });
+  }
   private q(opts: Record<string, string | number | undefined>): Record<string, string> {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(opts)) if (v !== undefined) out[k] = String(v);
