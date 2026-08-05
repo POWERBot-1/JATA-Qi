@@ -17,6 +17,8 @@
 //    ```
 
 export { JataQiClient } from './client.js';
+export { StreamingClient } from './streaming.js';
+export type { StreamingClientOptions, StreamHandlers, StreamMessage, StreamResult } from './streaming.js';
 export type { JataQiClientOptions } from './client.js';
 export { JataQiError } from './client.js';
 export {

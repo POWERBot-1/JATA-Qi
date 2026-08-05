@@ -56,6 +56,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/crypto` | `crypto` | – | KRT digital asset platform — tokens, NFTs, staking, exchange, custody |
 | `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
 | `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
+| `@jataqi/sdk` | – | – | typed HTTP client (22 namespaces) + WebSocket StreamingClient (/ws: tanya.chat, qil.run, chat) |
 | `@jataqi/cli` | – | all | bootstrap (`createJataQi`) + CLI binary |
 
 ## Discovering modules at runtime

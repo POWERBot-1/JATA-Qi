@@ -8,6 +8,8 @@
 // The client manages authentication tokens automatically and provides typed
 // namespaces for every platform module.
 
+import { StreamingClient } from './streaming.js';
+
 export interface JataQiClientOptions {
   baseUrl: string;
   token?: string;
@@ -56,6 +58,8 @@ export class JataQiClient {
   readonly media: MediaClient;
   readonly mfa: MFAClient;
   readonly commerceStats: CommerceStatsClient;
+  /** WebSocket streaming client for the /ws realtime channel. */
+  readonly streaming: StreamingClient;
 
   constructor(opts: JataQiClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
@@ -85,6 +89,7 @@ export class JataQiClient {
     this.media = new MediaClient(this);
     this.mfa = new MFAClient(this);
     this.commerceStats = new CommerceStatsClient(this);
+    this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
 
   /** Internal request method. */
@@ -118,7 +123,10 @@ export class JataQiClient {
   }
 
   /** Set the bearer token manually (e.g. from storage). */
-  setToken(token: string): void { this.token = token; }
+  setToken(token: string): void {
+    this.token = token;
+    this.streaming.setToken(token);
+  }
   getToken(): string | undefined { return this.token; }
   clearToken(): void { this.token = undefined; }
 }
