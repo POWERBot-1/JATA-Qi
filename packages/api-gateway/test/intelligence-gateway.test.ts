@@ -1263,4 +1263,70 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const denied = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'hi' }, guestToken);
     assert.equal(denied.status, 403);
   });
+
+  // --- Tool-intelligence governance (agent tool catalog) -------------------
+
+  it('POST /tools/sync registers all 37 agent tools; R0 invokes; R4 requires approval', async () => {
+    const sync = await jsonRequest('POST', `${base}/tools/sync`, {}, token);
+    assert.equal(sync.status, 200);
+    const syncBody = sync.body as { synced: number; created: number; updated: number };
+    assert.equal(syncBody.synced, 37);
+    assert.equal(syncBody.created, 37);
+
+    const list = await jsonRequest('GET', `${base}/tools`, undefined, token);
+    assert.equal(list.status, 200);
+    const tools = (list.body as { tools: { id: string; canonicalName: string; riskClass: string; privacyClass: string; status: string }[] }).tools;
+    assert.equal(tools.length, 37);
+    const fx = tools.find((t) => t.canonicalName === 'fx.rate')!;
+    assert.equal(fx.riskClass, 'R0');
+    assert.equal(fx.status, 'ACTIVE');
+    const provision = tools.find((t) => t.canonicalName === 'cloud.provision')!;
+    assert.equal(provision.riskClass, 'R4');
+
+    // R0 tool invokes end-to-end through the governed pipeline.
+    const fxMod = kernel.getModule<FxModule>('fx');
+    fxMod.setRate({ base: 'USD', quote: 'KES', bid: 128.5, ask: 129.0, source: 'test' });
+    const inv = await jsonRequest('POST', `${base}/tool/invoke`, {
+      id: fx.id,
+      input: { base: 'USD', quote: 'KES' },
+    }, token);
+    assert.equal(inv.status, 200);
+    const invResult = inv.body as { result: { status: string; output: { pair: string } } };
+    assert.equal(invResult.result.status, 'success');
+    assert.equal(invResult.result.output.pair, 'USD/KES');
+
+    // R4 tool is gated: invoke → 202 pending_approval; approval unblocks it.
+    const gated = await jsonRequest('POST', `${base}/tool/invoke`, {
+      id: provision.id,
+      input: { name: 'web-1', regionId: 'nope', flavorId: 'nope', imageId: 'nope' },
+    }, token);
+    assert.equal(gated.status, 202);
+    assert.equal((gated.body as { result: { status: string } }).result.status, 'pending_approval');
+
+    const req = await jsonRequest('POST', `${base}/tool/request-approval`, {
+      id: provision.id, action: 'invoke', reason: 'provision test server',
+    }, token);
+    assert.equal(req.status, 202);
+    const requestId = (req.body as { approvalRequest: { id: string } }).approvalRequest.id;
+
+    const decide = await jsonRequest('POST', `${base}/tool/approve`, {
+      id: requestId, decision: 'approved',
+    }, token);
+    assert.equal(decide.status, 200);
+
+    const unblocked = await jsonRequest('POST', `${base}/tool/invoke`, {
+      id: provision.id,
+      input: { name: 'web-1', regionId: 'nope', flavorId: 'nope', imageId: 'nope' },
+      approvalRequestId: requestId,
+    }, token);
+    // Approved R4 tool now runs: the engine rejects the bogus region inside the
+    // tool's error envelope — the governance gate no longer blocks it.
+    assert.notEqual(unblocked.status, 202, 'approved R4 tool must no longer be pending approval');
+    const unblockedResult = unblocked.body as { result: { status: string; output?: { error?: string } } };
+    assert.equal(unblockedResult.result.status, 'success');
+    assert.match(unblockedResult.result.output!.error!, /unknown region nope/);
+
+    const approvals = await jsonRequest('GET', `${base}/approvals`, undefined, token);
+    assert.equal((approvals.body as { approvals: unknown[] }).approvals.length, 0); // all decided
+  });
 });

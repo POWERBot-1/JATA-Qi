@@ -35,6 +35,7 @@ import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
 import type { TanyaModule } from '@jataqi/tanya';
+import type { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -80,6 +81,7 @@ Commands:
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
   tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats.
+  tools <sub>         Tool governance: sync|list|invoke|approvals|approve.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -119,6 +121,7 @@ async function main() {
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
   const tanya = kernel.getModule<TanyaModule>('tanya');
+  const toolIntel = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1772,6 +1775,56 @@ async function main() {
         }
         break;
       }
+      case 'tools': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'sync': {
+            const agent = agents.getAgent('main');
+            const result = await toolIntel.syncAgentTools(agent.getTools(), { provider: 'agent-runtime', version: '1.0.0' });
+            console.log(`synced ${result.synced.length} agent tool(s) into governance registry (created ${result.created}, updated ${result.updated})`);
+            break;
+          }
+          case 'list': {
+            const all = await toolIntel.list(flag('category'), flag('status') as never);
+            for (const t of all) console.log(`- ${t.canonicalName} [${t.riskClass}/${t.privacyClass}] ${t.status} (${t.category})`);
+            console.log(`${all.length} tool(s)`);
+            break;
+          }
+          case 'invoke': {
+            const id = args[2] ?? flag('id');
+            if (!id) { console.error('Usage: jataqi tools invoke <id> [--json input]'); process.exit(1); }
+            const input = flag('json') ? JSON.parse(flag('json')!) : {};
+            const result = await toolIntel.invoke(id, input, undefined, flag('approval'));
+            console.log(JSON.stringify(result, (_k, v) => (typeof v === 'bigint' ? v.toString() : v), 2));
+            break;
+          }
+          case 'approvals': {
+            const pending = toolIntel.listPendingApprovals();
+            for (const a of pending) console.log(`- ${a.id} ${a.toolId} by ${a.principalId} [${a.status}] ${a.reason ?? ''}`);
+            console.log(`${pending.length} pending approval(s)`);
+            break;
+          }
+          case 'approve': {
+            const id = args[2] ?? flag('id');
+            const decision = flag('decision') ?? 'approved';
+            if (!id) { console.error('Usage: jataqi tools approve <requestId> [--decision approved|denied]'); process.exit(1); }
+            try {
+              const decided = toolIntel.decideApproval(id, decision as never, 'cli-admin');
+              console.log(`request ${id} -> ${decided.status}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          default:
+            console.error('Usage: jataqi tools sync|list|invoke|approvals|approve'); process.exit(1);
+        }
+        break;
+      }
       case 'tanya': {
         const sub = args[1];
         const flag = (name: string): string | undefined => {
@@ -1853,7 +1906,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

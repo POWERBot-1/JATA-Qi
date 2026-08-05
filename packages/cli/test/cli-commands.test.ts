@@ -220,4 +220,16 @@ describe('jataqi CLI — intelligence commands', () => {
     const stats = await jataqi('tanya', 'stats');
     assert.match(stats, /"conversations": 0/);
   });
+
+  it('tools sync + list register the governed agent tool surface', async () => {
+    const sync = await jataqi('tools', 'sync');
+    assert.match(sync, /synced 39 agent tool\(s\) into governance registry \(created 39, updated 0\)/);
+    // Each invocation boots a fresh in-memory OS: the seeded baseline registry
+    // contains the demo 'echo' tool (R0 read-only, out-of-the-box invocable).
+    const list = await jataqi('tools', 'list');
+    assert.match(list, /- echo \[R0\/INTERNAL\] ACTIVE \(util\)/);
+    assert.match(list, /1 tool\(s\)/);
+    const approvals = await jataqi('tools', 'approvals');
+    assert.match(approvals, /0 pending approval\(s\)/);
+  });
 });

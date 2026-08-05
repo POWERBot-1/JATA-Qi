@@ -104,6 +104,27 @@ export interface ToolEvaluation {
   ts: number;
 }
 
+/**
+ * Structural descriptor of an agent-runtime tool, used by the governance
+ * catalog sync (`syncAgentTools`). Kept dependency-free so this package never
+ * imports the agent runtime; any tool object with the same shape is accepted.
+ */
+export interface AgentToolDescriptor {
+  /** Tool name, e.g. 'fx.rate'. Becomes the registry canonicalName. */
+  name: string;
+  description?: string;
+  inputSchema?: unknown;
+  execute(
+    input: unknown,
+    ctx: {
+      runId: string;
+      signal?: AbortSignal;
+      logger: { info: (m: string, d?: unknown) => void; debug: (m: string, d?: unknown) => void; error: (m: string, d?: unknown) => void };
+      metadata: Record<string, unknown>;
+    },
+  ): Promise<unknown>;
+}
+
 export const ToolEvents = Object.freeze({
   ToolRegistered: 'tool.registered',
   ToolInvoked: 'tool.invoked',

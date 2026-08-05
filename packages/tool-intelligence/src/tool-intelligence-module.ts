@@ -7,6 +7,7 @@ import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { ICollection } from '@jataqi/storage';
 import { ToolEvents } from './types.js';
 import type {
+  AgentToolDescriptor,
   ApprovalDecision,
   ApprovalRequest,
   InvocationContext,
@@ -17,6 +18,7 @@ import type {
   ToolStatus,
 } from './types.js';
 import { needsApproval, suitability } from './risk.js';
+import { AGENT_TOOL_CATALOG_BY_NAME } from './catalog.js';
 
 const COL_TOOLS = 'tools.registry';
 const COL_EVALS = 'tools.evaluations';
@@ -121,6 +123,113 @@ export class ToolIntelligenceModule implements IModule {
   /** Register an executable adapter for a tool (adapters are in-memory / not persisted). */
   registerAdapter(adapter: ToolAdapter): void {
     this.adapters.set(adapter.id, adapter);
+  }
+
+  // --- agent tool governance sync ------------------------------------------
+
+  /**
+   * Synchronize the agent runtime's tool surface into the governance registry.
+   *
+   * Every descriptor (tool) is upserted by canonicalName with the risk/privacy
+   * classification from the agent tool catalog (AGENT_TOOL_CATALOG), and an
+   * adapter is bound that executes the tool via its own `execute` — so the
+   * full invocation pipeline (governance gate → risk gate → approval → audit)
+   * applies to agent tools exactly like any other registered tool.
+   *
+   * Tools absent from the catalog are still registered with a conservative
+   * default classification (R3 / INTERNAL / DISCOVERED) so nothing runs
+   * ungoverned.
+   */
+  async syncAgentTools(
+    tools: AgentToolDescriptor[],
+    opts: { provider?: string; version?: string } = {},
+  ): Promise<{ synced: ToolEntity[]; created: number; updated: number }> {
+    const synced: ToolEntity[] = [];
+    let created = 0;
+    let updated = 0;
+    for (const descriptor of tools) {
+      const existing = await this.byCanonicalName(descriptor.name);
+      const entry = AGENT_TOOL_CATALOG_BY_NAME.get(descriptor.name);
+      const classification = entry
+        ? { riskClass: entry.riskClass, privacyClass: entry.privacyClass, category: entry.category, capabilities: entry.capabilities }
+        : { riskClass: 'R3' as const, privacyClass: 'INTERNAL' as const, category: 'agent', capabilities: [descriptor.name] };
+
+      let tool: ToolEntity;
+      if (existing) {
+        tool = {
+          ...existing,
+          displayName: entry?.displayName ?? existing.displayName,
+          category: classification.category,
+          capabilities: classification.capabilities,
+          riskClass: classification.riskClass,
+          privacyClass: classification.privacyClass,
+          status: 'ACTIVE',
+          metadata: { ...(existing.metadata ?? {}), agentTool: true, description: descriptor.description, governedBy: 'agent-catalog' },
+        };
+        await this.tools.put(tool);
+        updated++;
+      } else {
+        tool = await this.register({
+          canonicalName: descriptor.name,
+          displayName: entry?.displayName ?? descriptor.name,
+          provider: opts.provider ?? 'agent-runtime',
+          version: opts.version ?? '1.0.0',
+          category: classification.category,
+          capabilities: classification.capabilities,
+          protocol: 'function',
+          riskClass: classification.riskClass,
+          privacyClass: classification.privacyClass,
+          status: 'ACTIVE',
+          metadata: { agentTool: true, description: descriptor.description, governedBy: 'agent-catalog' },
+        });
+        created++;
+      }
+
+      // Bind (or refresh) the adapter that executes through the descriptor.
+      this.registerAdapter(this.descriptorAdapter(tool, descriptor));
+      synced.push(tool);
+    }
+    return { synced, created, updated };
+  }
+
+  /** Tools known to the registry that are governed agent tools. */
+  async listAgentTools(): Promise<ToolEntity[]> {
+    const all = await this.tools.all();
+    return all.filter((t) => t.metadata?.agentTool === true);
+  }
+
+  private async byCanonicalName(canonicalName: string): Promise<ToolEntity | undefined> {
+    const all = await this.tools.all();
+    return all.find((t) => t.canonicalName === canonicalName);
+  }
+
+  private descriptorAdapter(tool: ToolEntity, descriptor: AgentToolDescriptor): ToolAdapter {
+    return {
+      id: tool.id,
+      capabilities: () => tool.capabilities,
+      validateInput: (input: unknown) => {
+        // Enforce the tool's JSON-schema-ish shape when required fields exist.
+        const schema = descriptor.inputSchema as { required?: string[]; properties?: Record<string, unknown> } | undefined;
+        if (schema?.required && input && typeof input === 'object') {
+          const record = input as Record<string, unknown>;
+          for (const field of schema.required) {
+            if (record[field] === undefined) return `missing required field "${field}"`;
+          }
+        }
+        return undefined;
+      },
+      async invoke(input: unknown, ctx: InvocationContext): Promise<unknown> {
+        return descriptor.execute(input, {
+          runId: ctx.requestId,
+          logger: {
+            info: () => undefined,
+            debug: () => undefined,
+            error: () => undefined,
+          },
+          metadata: { toolId: tool.id, principal: ctx.principal, governedBy: 'tool-intelligence' },
+        });
+      },
+    };
   }
 
   // --- evaluation ----------------------------------------------------------

@@ -230,6 +230,9 @@ node packages/cli/dist/src/index.js tanya chat "Hello TANYA"
 node packages/cli/dist/src/index.js tanya persona support --prompt "You are a support specialist"
 node packages/cli/dist/src/index.js tanya conversations
 node packages/cli/dist/src/index.js tanya stats
+node packages/cli/dist/src/index.js tools sync
+node packages/cli/dist/src/index.js tools list
+node packages/cli/dist/src/index.js tools approvals
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -404,6 +407,9 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/ipam/blocks` · `/ipam/blocks/addresses` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announcements` · `/ipam/stats` | `ipam:read` | IPAM reads |
 | POST | `/tanya/chat` · `/tanya/conversation/delete` · `/tanya/persona` | `tanya:write` | TANYA chat + conversation/persona management |
 | GET | `/tanya/conversations` · `/tanya/conversation` · `/tanya/personas` · `/tanya/stats` · POST `/tanya/identify` | `tanya:read` | TANYA reads + identity |
+| GET | `/tools` · `/tools/capability` · `/tool` · `/approvals` | `tool:read`/`approval:decide` | Tool registry + pending approvals |
+| POST | `/tools` · `/tools/sync` | `tool:read` | Register tools / sync the agent surface into governance |
+| POST | `/tool/invoke` · `/tool/request-approval` · `/tool/approve` | `tool:invoke`/`approval:decide` | Governed invocation + approval flow |
 
 ### Security model
 
@@ -454,7 +460,7 @@ await kernel.boot();
 
 ## Testing
 
-The full suite (1770+ unit + integration tests across all packages):
+The full suite (1790+ unit + integration tests across all packages):
 
 ```bash
 npm test
@@ -483,6 +489,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
 - ✅ **Agent Intelligence Tools** (32 tools over the Phase 6/7 + PRX engines — `fx.*`, `mobility.*`, `logistics.*`, `agriculture.*`, `circular.*`, `energy.*`, `border.*`, `restaurants.*`, `marketplace.*`, `platform.search`, `wallet.balance`, `crypto.balance`, `cloud.*`, `cdn.*`, `email.*`, `ipam.*`; 37 default agent tools total; graceful degradation on partial kernels)
+- ✅ **Agent Tool Governance** (tool directive #18 — 39-tool catalog with R0–R4 risk classes + privacy classes; `POST /tools/sync` registers the live agent surface into the governed registry; R4 financial/infrastructure tools — `mobility.dispatch`, `cloud.provision`, `cloud.autoscale` — require human approval; unknown tools default conservatively to R3/INTERNAL; CLI `tools sync|list|invoke|approvals|approve`)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
 - ✅ **QiL Tooling** (idempotent formatter, semantic linter, CLI `qil parse|compile|format|lint|run` with auto-provisioned agents)
 - ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit, durable history)

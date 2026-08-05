@@ -7,6 +7,8 @@ import { ToolIntelligenceModule } from '../src/index.js';
 import { PolicyGovernanceModule } from '@jataqi/policy-governance';
 import { MetricsModule } from '@jataqi/metrics';
 import type { ToolAdapter, ToolEntity } from '../src/index.js';
+import { AGENT_TOOL_CATALOG, AGENT_TOOL_NAMES, APPROVAL_GATED_AGENT_TOOLS } from '../src/index.js';
+import type { AgentToolDescriptor } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
 
 function echoAdapter(id: string, capabilities: string[], opts: { fail?: boolean; cost?: number } = {}): ToolAdapter {
@@ -174,5 +176,135 @@ describe('Tool-intelligence — mandatory governance enforcement', () => {
     const res = await ti.invokeWithFallback('echo', { msg: 'x' });
     // The only tool is denied → fallback reports failure.
     assert.equal(res.status, 'failure');
+  });
+});
+
+describe('Agent tool governance catalog (37 default + 2 compute agent tools)', () => {
+  it('classifies all 39 catalogued agent tools with valid risk/privacy classes', () => {
+    assert.equal(AGENT_TOOL_NAMES.length, 39);
+    assert.equal(AGENT_TOOL_CATALOG.length, 39);
+    const names = new Set(AGENT_TOOL_NAMES);
+    for (const entry of AGENT_TOOL_CATALOG) {
+      assert.ok(names.has(entry.name), `duplicate or unknown catalog entry ${entry.name}`);
+      assert.match(entry.riskClass, /^R[0-5]$/);
+      assert.ok(['PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED'].includes(entry.privacyClass));
+      assert.ok(entry.capabilities.length > 0, `capabilities for ${entry.name}`);
+      assert.ok(entry.rationale.length > 10, `rationale for ${entry.name}`);
+    }
+  });
+
+  it('gates exactly the high-risk tools behind human approval (R4)', () => {
+    // Financial/infrastructure actions require approval; everything else runs freely.
+    assert.deepEqual([...APPROVAL_GATED_AGENT_TOOLS].sort(), ['cloud.autoscale', 'cloud.provision', 'mobility.dispatch']);
+    const r4 = AGENT_TOOL_CATALOG.filter((e) => e.riskClass === 'R4' || e.riskClass === 'R5');
+    assert.equal(r4.length, 3);
+    for (const entry of r4) assert.ok(APPROVAL_GATED_AGENT_TOOLS.includes(entry.name));
+  });
+
+  it('covers the full agent tool surface (core + intelligence + compute)', () => {
+    for (const name of [
+      'knowledge.search', 'graph.traverse', 'graph.findEntity', 'graph.retrieve', 'vector.search',
+      'fx.rate', 'fx.convert', 'mobility.dispatch', 'mobility.vehicles',
+      'logistics.track', 'logistics.shipments', 'agriculture.stats', 'agriculture.harvests',
+      'circular.stats', 'circular.collections', 'energy.stats', 'energy.readings',
+      'border.screen', 'border.crossings', 'restaurants.menu', 'restaurants.orders',
+      'marketplace.listings', 'platform.search', 'wallet.balance', 'crypto.balance',
+      'cloud.instances', 'cloud.provision', 'cloud.autoscale',
+      'cdn.zones', 'cdn.lookup', 'cdn.purge',
+      'email.domains', 'email.send', 'email.inbox',
+      'ipam.blocks', 'ipam.announcements', 'ipam.stats',
+      'compute.stats', 'compute.regression',
+    ]) {
+      assert.ok(AGENT_TOOL_NAMES.includes(name), `catalog missing ${name}`);
+    }
+  });
+});
+
+describe('syncAgentTools — governance registry sync from agent tool descriptors', () => {
+  let kernel: Kernel;
+  let ti: ToolIntelligenceModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new ToolIntelligenceModule());
+    await kernel.boot();
+    ti = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+  });
+
+  afterEach(async () => { await kernel.shutdown(); });
+
+  function stubTools(names: string[]): AgentToolDescriptor[] {
+    return names.map((name) => ({
+      name,
+      description: `stub ${name}`,
+      inputSchema: { type: 'object', properties: {}, required: [] },
+      async execute(input: unknown) { return { name, input }; },
+    }));
+  }
+
+  it('syncs descriptors into ACTIVE entities with catalog risk classes and binds adapters', async () => {
+    const result = await ti.syncAgentTools(stubTools(['fx.rate', 'cloud.provision', 'email.send']));
+    assert.equal(result.created, 3);
+    assert.equal(result.updated, 0);
+
+    const fx = await ti.get((await ti.list()).find((t) => t.canonicalName === 'fx.rate')!.id);
+    assert.equal(fx!.riskClass, 'R0');
+    assert.equal(fx!.privacyClass, 'PUBLIC');
+    assert.equal(fx!.status, 'ACTIVE');
+    assert.equal(fx!.metadata?.agentTool, true);
+
+    const provision = (await ti.list()).find((t) => t.canonicalName === 'cloud.provision')!;
+    assert.equal(provision.riskClass, 'R4');
+
+    // Re-sync updates instead of duplicating.
+    const again = await ti.syncAgentTools(stubTools(['fx.rate']));
+    assert.equal(again.created, 0);
+    assert.equal(again.updated, 1);
+    assert.equal((await ti.list()).length, 3);
+    assert.equal((await ti.listAgentTools()).length, 3);
+  });
+
+  it('invokes a synced R0 tool end-to-end through the pipeline', async () => {
+    await ti.syncAgentTools(stubTools(['fx.rate']));
+    const entity = (await ti.list())[0]!;
+    const result = await ti.invoke(entity.id, { pair: 'USD/KES' });
+    assert.equal(result.status, 'success');
+    assert.deepEqual(result.output, { name: 'fx.rate', input: { pair: 'USD/KES' } });
+  });
+
+  it('gates synced R4 tools behind human approval (invoke → pending_approval)', async () => {
+    await ti.syncAgentTools(stubTools(['cloud.provision']));
+    const entity = (await ti.list())[0]!;
+
+    const blocked = await ti.invoke(entity.id, { name: 'web-1' });
+    assert.equal(blocked.status, 'pending_approval');
+    assert.match(blocked.error!, /requires human approval/);
+
+    // Request + approve, then invoke succeeds.
+    const req = ti.requestApproval(entity.id, 'u1', 'invoke', 'provision web server');
+    ti.decideApproval(req.id, 'approved', 'admin');
+    const ok = await ti.invoke(entity.id, { name: 'web-1' }, undefined, req.id);
+    assert.equal(ok.status, 'success');
+    assert.deepEqual(ok.output, { name: 'cloud.provision', input: { name: 'web-1' } });
+  });
+
+  it('validates required input fields from the tool schema', async () => {
+    await ti.syncAgentTools([{
+      name: 'email.send',
+      description: 'send mail',
+      inputSchema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, required: ['from', 'to', 'subject', 'body'] },
+      async execute(input: unknown) { return { ok: true, input }; },
+    }]);
+    const entity = (await ti.list())[0]!;
+    await assert.rejects(ti.invoke(entity.id, { from: 'a@b.co' }), /missing required field "to"/);
+  });
+
+  it('registers unknown tools conservatively (R3 / INTERNAL) so nothing runs ungoverned', async () => {
+    await ti.syncAgentTools(stubTools(['mystery.tool']));
+    const entity = (await ti.list())[0]!;
+    assert.equal(entity.riskClass, 'R3');
+    assert.equal(entity.privacyClass, 'INTERNAL');
+    assert.equal(entity.status, 'ACTIVE');
   });
 });
