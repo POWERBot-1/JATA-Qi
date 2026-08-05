@@ -29,6 +29,7 @@ import type { CircularModule } from '@jataqi/circular';
 import type { EnergyModule } from '@jataqi/energy';
 import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
+import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -67,6 +68,7 @@ Commands:
   energy <sub>        KARIS ENERGY: assets|asset|meters|reading|tariffs|bill|stats.
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
+  maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|categories|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -100,6 +102,7 @@ async function main() {
   const energy = kernel.getModule<EnergyModule>('energy');
   const border = kernel.getModule<BorderModule>('border');
   const restaurants = kernel.getModule<RestaurantsModule>('restaurants');
+  const marketplace = kernel.getModule<MarketplaceModule>('marketplace');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1230,6 +1233,70 @@ async function main() {
         }
         break;
       }
+      case 'maza': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'storefronts':
+            for (const s of marketplace.listStorefronts()) console.log(`- ${s.name} (${s.vendorId}) [${s.status}] rating=${s.rating} (${s.reviewCount})`);
+            console.log(`${marketplace.listStorefronts().length} storefront(s)`);
+            break;
+          case 'storefront': {
+            const vendor = args[2], name = args[3];
+            if (!vendor || !name) { console.error('Usage: jataqi maza storefront <vendorId> <name> [--categories a,b]'); process.exit(1); }
+            const s = marketplace.registerStorefront({ vendorId: vendor, name, ...(flag('categories') ? { categories: flag('categories')!.split(',') } : {}) });
+            console.log(`registered ${s.id}`);
+            break;
+          }
+          case 'listings': {
+            const listings = marketplace.listListings({ ...(flag('q') ? { query: flag('q') } : {}), ...(flag('category') ? { category: flag('category') } : {}) });
+            for (const l of listings) console.log(`- ${l.title} ${l.priceMinor} ${l.currency} [${l.status}]${l.stock !== undefined ? ` stock=${l.stock}` : ''} ★${l.rating}`);
+            console.log(`${listings.length} listing(s)`);
+            break;
+          }
+          case 'listing': {
+            const sfId = args[2], title = args[3], category = args[4], price = args[5];
+            if (!sfId || !title || !category || !price) { console.error('Usage: jataqi maza listing <storefrontId> <title> <category> <priceMinor> [--stock n]'); process.exit(1); }
+            try {
+              const l = await marketplace.createListing({ storefrontId: sfId, title, category, priceMinor: Number(price), ...(flag('stock') ? { stock: Number(flag('stock')) } : {}) });
+              console.log(`created ${l.id}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'review': {
+            const listingId = args[2], reviewer = args[3], rating = args[4];
+            if (!listingId || !reviewer || !rating) { console.error('Usage: jataqi maza review <listingId> <reviewerId> <rating 1-5> [--comment x]'); process.exit(1); }
+            try {
+              const r = await marketplace.addReview({ listingId, reviewerId: reviewer, rating: Number(rating), ...(flag('comment') ? { comment: flag('comment') } : {}) });
+              console.log(`review ${r.id} (${r.rating}★)`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'purchase': {
+            const listingId = args[2], buyer = args[3];
+            if (!listingId || !buyer) { console.error('Usage: jataqi maza purchase <listingId> <buyerId>'); process.exit(1); }
+            const r = await marketplace.purchase(listingId, buyer);
+            console.log(r.ok ? `purchased (order ${r.orderId ?? 'local'})` : `failed: ${r.error}`);
+            break;
+          }
+          case 'categories':
+            console.log(marketplace.categories().join(', '));
+            break;
+          case 'stats':
+            console.log(JSON.stringify(marketplace.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi maza storefronts|storefront|listings|listing|review|purchase|categories|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1239,7 +1306,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

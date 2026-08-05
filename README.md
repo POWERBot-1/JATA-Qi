@@ -61,6 +61,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/energy` | **KARIS ENERGY (Phase 7)** — Energy Intelligence: generation assets, meters + monotonic readings, consumption analytics, tariff billing |
 | `@jataqi/border` | **KARIS BORDER X (Phase 7)** — Border Security Intelligence: posts, watchlist screening, crossing clearances, cargo manifests with risk flagging |
 | `@jataqi/restaurants` | **NYUMBANI KITCHEN (Phase 7)** — Restaurant Intelligence: venues, menus, tables, order flow, ingredient inventory + reorder alerts, revenue analytics |
+| `@jataqi/marketplace` | **MAZA (Phase 7)** — Marketplace Intelligence: vendor storefronts, listings + inventory, reviews & ratings, search, analytics; composes `@jataqi/commerce` for purchases |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -201,6 +202,9 @@ node packages/cli/dist/src/index.js border crossing <postId> "Alice" P7654321 --
 node packages/cli/dist/src/index.js kitchen venue "Nyumbani Grill" u1 --cuisine Swahili
 node packages/cli/dist/src/index.js kitchen item <venueId> "Grilled Fish" 1200 --category main
 node packages/cli/dist/src/index.js kitchen order <venueId> --items <itemId>x2 --table T1
+node packages/cli/dist/src/index.js maza storefront v1 "Karibu Crafts" --categories crafts
+node packages/cli/dist/src/index.js maza listing <storefrontId> "Handwoven Basket" crafts 1500 --stock 5
+node packages/cli/dist/src/index.js maza purchase <listingId> buyer-1
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -361,6 +365,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/border/posts` · `/border/watchlist` · `/border/crossings` · `/border/manifests` · `/border/stats` | `border:read` | KARIS BORDER X reads |
 | POST | `/restaurants/venues` · `/restaurants/menu` · `/restaurants/tables` · `/restaurants/orders` · `/restaurants/ingredients` | `restaurants:write` | NYUMBANI KITCHEN operations |
 | GET | `/restaurants/venues` · `/restaurants/menu` · `/restaurants/tables` · `/restaurants/orders` · `/restaurants/ingredients` · `/restaurants/stats` | `restaurants:read` | NYUMBANI KITCHEN reads |
+| POST | `/marketplace/storefronts` · `/marketplace/listings` · `/marketplace/reviews` · `/marketplace/purchases` | `marketplace:write` | MAZA operations |
+| GET | `/marketplace/storefronts` · `/marketplace/listings` · `/marketplace/reviews` · `/marketplace/categories` · `/marketplace/stats` | `marketplace:read` | MAZA reads |
 
 ### Security model
 
@@ -469,6 +475,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **KARIS ENERGY — Energy Intelligence** (Phase 7 — solar/wind/grid assets, meters, consumption analytics, tariff billing)
 - ✅ **KARIS BORDER X — Border Security Intelligence** (Phase 7 — watchlist screening, crossing clearances, cargo risk flagging)
 - ✅ **NYUMBANI KITCHEN — Restaurant Intelligence** (Phase 7 — menus, table management, order flow, ingredient reorder alerts, revenue analytics)
+- ✅ **MAZA — Marketplace Intelligence** (Phase 7 — vendor storefronts, listings with inventory, reviews & ratings, search, analytics; purchases via the commerce layer)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)

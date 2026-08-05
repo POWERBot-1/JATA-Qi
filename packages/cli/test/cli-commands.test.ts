@@ -160,6 +160,15 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"venues": 0/);
   });
 
+  it('maza storefront + listing + stats work', async () => {
+    const storefront = await jataqi('maza', 'storefront', 'v1', 'Karibu Crafts', '--categories', 'crafts');
+    assert.match(storefront, /registered [0-9a-f-]{36}/);
+    const listing = await jataqi('maza', 'listing', 'nope', 'Basket', 'crafts', '1500');
+    assert.match(listing, /unknown storefront/);
+    const stats = await jataqi('maza', 'stats');
+    assert.match(stats, /"storefronts": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

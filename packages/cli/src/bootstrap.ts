@@ -90,6 +90,7 @@ import { CircularModule } from '@jataqi/circular';
 import { EnergyModule } from '@jataqi/energy';
 import { BorderModule } from '@jataqi/border';
 import { RestaurantsModule } from '@jataqi/restaurants';
+import { MarketplaceModule } from '@jataqi/marketplace';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -284,6 +285,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new BorderModule());
   // Phase 7 — NYUMBANI KITCHEN restaurant intelligence.
   kernel.register(new RestaurantsModule());
+  // Phase 7 — MAZA marketplace (storefront layer over @jataqi/commerce).
+  kernel.register(new MarketplaceModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

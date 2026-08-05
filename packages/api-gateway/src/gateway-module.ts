@@ -68,6 +68,7 @@ import type { CircularModule } from '@jataqi/circular';
 import type { EnergyModule } from '@jataqi/energy';
 import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
+import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -144,6 +145,7 @@ export class ApiGatewayModule implements IModule {
   private energy?: EnergyModule;
   private border?: BorderModule;
   private restaurants?: RestaurantsModule;
+  private marketplace?: MarketplaceModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -227,6 +229,7 @@ export class ApiGatewayModule implements IModule {
     this.energy = this.tryModule<EnergyModule>('energy');
     this.border = this.tryModule<BorderModule>('border');
     this.restaurants = this.tryModule<RestaurantsModule>('restaurants');
+    this.marketplace = this.tryModule<MarketplaceModule>('marketplace');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -809,6 +812,19 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/restaurants/ingredients', auth('restaurants:read', (req) => this.restaurantsIngredientsList(req)));
     route('POST', '/restaurants/ingredients/stock', auth('restaurants:write', (req) => this.restaurantsIngredientsStock(req)));
     route('GET', '/restaurants/stats', auth('restaurants:read', (req) => this.restaurantsStats(req)));
+    // Phase 7 — MAZA marketplace.
+    route('POST', '/marketplace/storefronts', auth('marketplace:write', (req) => this.marketplaceStorefrontsRegister(req)));
+    route('GET', '/marketplace/storefronts', auth('marketplace:read', (req) => this.marketplaceStorefrontsList(req)));
+    route('POST', '/marketplace/storefronts/status', auth('marketplace:write', (req) => this.marketplaceStorefrontsStatus(req)));
+    route('POST', '/marketplace/listings', auth('marketplace:write', (req) => this.marketplaceListingsCreate(req)));
+    route('GET', '/marketplace/listings', auth('marketplace:read', (req) => this.marketplaceListingsList(req)));
+    route('POST', '/marketplace/listings/status', auth('marketplace:write', (req) => this.marketplaceListingsStatus(req)));
+    route('POST', '/marketplace/listings/stock', auth('marketplace:write', (req) => this.marketplaceListingsStock(req)));
+    route('POST', '/marketplace/reviews', auth('marketplace:write', (req) => this.marketplaceReviewsAdd(req)));
+    route('GET', '/marketplace/reviews', auth('marketplace:read', (req) => this.marketplaceReviewsList(req)));
+    route('POST', '/marketplace/purchases', auth('marketplace:write', (req) => this.marketplacePurchases(req)));
+    route('GET', '/marketplace/categories', auth('marketplace:read', () => this.marketplaceCategories()));
+    route('GET', '/marketplace/stats', auth('marketplace:read', () => this.marketplaceStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1115,7 +1131,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants',
+      'energy', 'border', 'restaurants', 'marketplace',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -3900,6 +3916,124 @@ export class ApiGatewayModule implements IModule {
   private restaurantsStats(req: GatewayRequest): GatewayResponse {
     if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
     return json(200, { stats: this.restaurants.stats(req.query.venueId) });
+  }
+
+  // --- Phase 7 — MAZA marketplace ----------------------------------------
+
+  private marketplaceStorefrontsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.vendorId !== 'string' || typeof b.name !== 'string')
+      return json(400, { error: 'fields "vendorId" and "name" are required' });
+    return json(201, { storefront: this.marketplace.registerStorefront({
+      vendorId: b.vendorId, name: b.name,
+      ...(typeof b.description === 'string' ? { description: b.description } : {}),
+      ...(Array.isArray(b.categories) ? { categories: b.categories.map(String) } : {}),
+    }) });
+  }
+
+  private marketplaceStorefrontsList(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const storefronts = this.marketplace.listStorefronts({
+      ...(req.query.vendorId ? { vendorId: req.query.vendorId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { storefronts, count: storefronts.length });
+  }
+
+  private marketplaceStorefrontsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const storefront = this.marketplace.setStorefrontStatus(b.id, b.status as never);
+    return storefront ? json(200, { storefront }) : json(404, { error: 'storefront not found' });
+  }
+
+  private async marketplaceListingsCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.storefrontId !== 'string' || typeof b.title !== 'string' || typeof b.category !== 'string' || typeof b.priceMinor !== 'number')
+      return json(400, { error: 'fields "storefrontId", "title", "category", and "priceMinor" are required' });
+    const listing = await this.marketplace.createListing({
+      storefrontId: b.storefrontId, title: b.title, category: b.category, priceMinor: b.priceMinor,
+      ...(typeof b.currency === 'string' ? { currency: b.currency } : {}),
+      ...(typeof b.description === 'string' ? { description: b.description } : {}),
+      ...(typeof b.stock === 'number' ? { stock: b.stock } : {}),
+    });
+    return json(201, { listing });
+  }
+
+  private marketplaceListingsList(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const listings = this.marketplace.listListings({
+      ...(req.query.storefrontId ? { storefrontId: req.query.storefrontId } : {}),
+      ...(req.query.category ? { category: req.query.category } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.q ? { query: req.query.q } : {}),
+      ...(req.query.maxPrice ? { maxPrice: Number(req.query.maxPrice) } : {}),
+      ...(req.query.minRating ? { minRating: Number(req.query.minRating) } : {}),
+    });
+    return json(200, { listings, count: listings.length });
+  }
+
+  private async marketplaceListingsStatus(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const listing = await this.marketplace.setListingStatus(b.id, b.status as never);
+    return listing ? json(200, { listing }) : json(404, { error: 'listing not found' });
+  }
+
+  private marketplaceListingsStock(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.delta !== 'number')
+      return json(400, { error: 'fields "id" and "delta" are required' });
+    const listing = this.marketplace.adjustStock(b.id, b.delta);
+    return listing ? json(200, { listing }) : json(404, { error: 'listing not found' });
+  }
+
+  private async marketplaceReviewsAdd(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.listingId !== 'string' || typeof b.reviewerId !== 'string' || typeof b.rating !== 'number')
+      return json(400, { error: 'fields "listingId", "reviewerId", and "rating" (1..5) are required' });
+    const review = await this.marketplace.addReview({
+      listingId: b.listingId, reviewerId: b.reviewerId, rating: b.rating,
+      ...(typeof b.comment === 'string' ? { comment: b.comment } : {}),
+    });
+    return json(201, { review });
+  }
+
+  private marketplaceReviewsList(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const reviews = req.query.listingId
+      ? this.marketplace.reviewsForListing(req.query.listingId)
+      : req.query.storefrontId
+        ? this.marketplace.reviewsForStorefront(req.query.storefrontId)
+        : [];
+    return json(200, { reviews, count: reviews.length });
+  }
+
+  private async marketplacePurchases(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.listingId !== 'string' || typeof b.buyerId !== 'string')
+      return json(400, { error: 'fields "listingId" and "buyerId" are required' });
+    const result = await this.marketplace.purchase(b.listingId, b.buyerId);
+    return result.ok ? json(200, { orderId: result.orderId }) : json(400, { error: result.error });
+  }
+
+  private marketplaceCategories(): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    return json(200, { categories: this.marketplace.categories() });
+  }
+
+  private marketplaceStats(): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    return json(200, { stats: this.marketplace.stats() });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

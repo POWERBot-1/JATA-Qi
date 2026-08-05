@@ -37,6 +37,7 @@ import { CircularModule } from '@jataqi/circular';
 import { EnergyModule } from '@jataqi/energy';
 import { BorderModule } from '@jataqi/border';
 import { RestaurantsModule } from '@jataqi/restaurants';
+import { MarketplaceModule } from '@jataqi/marketplace';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -104,6 +105,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new EnergyModule());
     kernel.register(new BorderModule());
     kernel.register(new RestaurantsModule());
+    kernel.register(new MarketplaceModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -958,6 +960,36 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const s = stats.body as { stats: { revenueMinorUnits: number; avgOrderValueMinorUnits?: number } };
     assert.equal(s.stats.revenueMinorUnits, 2400);
     assert.equal(s.stats.avgOrderValueMinorUnits, 2400);
+  });
+
+  // --- Phase 7 — MAZA marketplace via gateway ---------------------------
+
+  it('marketplace: storefront → listing → review → purchase → stats over HTTP', async () => {
+    const storefront = await jsonRequest('POST', `${base}/marketplace/storefronts`, { vendorId: 'v1', name: 'Karibu Crafts', categories: ['crafts'] }, token);
+    assert.equal(storefront.status, 201);
+    const sfId = (storefront.body as { storefront: { id: string } }).storefront.id;
+
+    const listing = await jsonRequest('POST', `${base}/marketplace/listings`, { storefrontId: sfId, title: 'Handwoven Basket', category: 'crafts', priceMinor: 1500, stock: 3 }, token);
+    assert.equal(listing.status, 201);
+    const listingId = (listing.body as { listing: { id: string } }).listing.id;
+
+    const review = await jsonRequest('POST', `${base}/marketplace/reviews`, { listingId, reviewerId: 'u1', rating: 5, comment: 'Lovely' }, token);
+    assert.equal(review.status, 201);
+
+    const search = await jsonRequest('GET', `${base}/marketplace/listings?q=basket&category=crafts`, undefined, token);
+    assert.equal((search.body as { count: number }).count, 1);
+
+    const purchase = await jsonRequest('POST', `${base}/marketplace/purchases`, { listingId, buyerId: 'buyer-1' }, token);
+    assert.equal(purchase.status, 200);
+
+    const stats = await jsonRequest('GET', `${base}/marketplace/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    const s = stats.body as { stats: { listings: number; listedListings: number; reviews: number } };
+    assert.equal(s.stats.listings, 1);
+    assert.equal(s.stats.reviews, 1);
+
+    const categories = await jsonRequest('GET', `${base}/marketplace/categories`, undefined, token);
+    assert.ok((categories.body as { categories: string[] }).categories.includes('crafts'));
   });
 
   // --- Authz guard --------------------------------------------------------
