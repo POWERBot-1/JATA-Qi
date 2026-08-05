@@ -28,6 +28,10 @@ export interface TanyaPersona {
   agentName: string;
 }
 
+export const TanyaEvents = Object.freeze({
+  ChatCompleted: 'tanya.chat.completed',
+} as const);
+
 export interface TanyaChatInput {
   /** Owner of the conversation (from the session principal). */
   userId: string;
@@ -40,6 +44,12 @@ export interface TanyaChatInput {
   title?: string;
   /** How many prior turns to feed the agent as context (default 20). */
   maxHistory?: number;
+  /**
+   * Optional streaming callback: receives the assistant reply in word chunks
+   * as it is produced (WebSocket clients render these progressively).
+   * Streaming is best-effort — a throwing callback never fails the chat.
+   */
+  onChunk?: (chunk: string) => void | Promise<void>;
 }
 
 export interface TanyaChatResult {
@@ -182,8 +192,10 @@ export class TanyaModule implements IModule {
     await this.conversations.addMessage(conv.id, 'user', input.message);
 
     const maxHistory = input.maxHistory ?? 20;
+    // A turn = user + assistant message pair, so cap at 2× the turn count;
+    // the extra +1 excludes the user message we just added at the tail.
     const history = conv.messages
-      .slice(-maxHistory, -1) // everything except the message we just added
+      .slice(-(maxHistory * 2 + 1), -1)
       .map((m) => ({ role: m.role, content: m.content }));
 
     const result = await this.agents.run(input.message, {
@@ -200,10 +212,22 @@ export class TanyaModule implements IModule {
       result: tc.error ? { error: tc.error } : tc.output,
     }));
 
+    // Stream the reply in word chunks when a callback is provided (WS clients).
+    if (input.onChunk) {
+      try {
+        const words = reply.split(/(\s+)/); // keep whitespace so chunks reassemble exactly
+        for (const word of words) await input.onChunk(word);
+      } catch { /* streaming is best-effort; never fail the chat */ }
+    }
+
     const message = await this.conversations.addMessage(conv.id, 'assistant', reply, {
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     });
     void message;
+
+    await this.api.bus.emit(TanyaEvents.ChatCompleted, {
+      conversationId: conv.id, userId: input.userId, persona: persona.id, messageCount: (await this.conversations.get(conv.id))?.messages.length ?? 0,
+    });
 
     return {
       conversationId: conv.id,

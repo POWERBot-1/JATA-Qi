@@ -119,6 +119,11 @@ describe('WebUIModule', () => {
     // Tool governance actions.
     assert.match(js, /\/tools\/sync/, 'tools sync wired');
     assert.match(js, /decideApproval/, 'approval decision wired');
+    // TANYA WebSocket streaming (with HTTP fallback).
+    assert.match(js, /new WebSocket\(tanyaWsUrl\(\)\)/, 'tanya chat streams over /ws');
+    assert.match(js, /tanya\.chunk/, 'streams tanya.chunk events');
+    assert.match(js, /sendTanyaHttp/, 'HTTP fallback preserved');
+    assert.match(js, /\/ws\?token=/, 'socket authenticates with the session token');
   });
 
   it('serves the UI through the API gateway', async () => {

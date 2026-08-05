@@ -5764,6 +5764,52 @@ export class ApiGatewayModule implements IModule {
 
       ws.send(JSON.stringify({ type: 'chat.done', ...(convId ? { conversationId: convId } : {}), full: answer }));
     }
+
+    // TANYA streaming chat — product-layer protocol over /ws. Reuses the
+    // TANYA module (personas, history, tool calls, persistence) and streams
+    // the reply in word chunks via tanya.chunk, ending with tanya.done.
+    if (msg.type === 'tanya.chat' && typeof msg.message === 'string' && principal) {
+      const message = msg.message as string;
+      const conversationId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
+      const persona = typeof msg.persona === 'string' && msg.persona ? msg.persona : 'main';
+
+      // Safety scan.
+      if (this.aiSafety) {
+        const scan = this.aiSafety.scan(message);
+        if (scan.blocked) {
+          ws.send(JSON.stringify({ type: 'tanya.error', error: 'input blocked by safety filter', risk: scan.risk }));
+          return;
+        }
+      }
+
+      if (!this.tanya) {
+        ws.send(JSON.stringify({ type: 'tanya.error', error: 'tanya module not registered' }));
+        return;
+      }
+
+      try {
+        const result = await this.tanya.chat({
+          userId: principal.userId,
+          message,
+          ...(conversationId ? { conversationId } : {}),
+          persona,
+          onChunk: (chunk) => { ws.send(JSON.stringify({ type: 'tanya.chunk', content: chunk })); },
+        });
+        ws.send(JSON.stringify({
+          type: 'tanya.done',
+          conversationId: result.conversationId,
+          persona: result.persona,
+          agent: result.agent,
+          reply: result.reply,
+          toolCalls: result.toolCalls,
+          finishedReason: result.finishedReason,
+          messageCount: result.messageCount,
+          ...(result.error ? { error: result.error } : {}),
+        }));
+      } catch (e) {
+        ws.send(JSON.stringify({ type: 'tanya.error', error: e instanceof Error ? e.message : String(e) }));
+      }
+    }
   }
 
   // --- TANYA AI conversational product layer --------------------------------
@@ -5772,6 +5818,11 @@ export class ApiGatewayModule implements IModule {
     if (!this.tanya) return json(501, { error: 'tanya module not registered' });
     const b = this.asObject(req.body);
     if (typeof b.message !== 'string' || !b.message.trim()) return json(400, { error: 'field "message" is required' });
+    // AI safety scan (parity with the unified /chat API).
+    if (this.aiSafety) {
+      const scan = this.aiSafety.scan(b.message);
+      if (scan.blocked) return json(400, { error: 'input blocked by safety filter', risk: scan.risk, violations: scan.violations.map((v) => v.type) });
+    }
     try {
       const result = await this.tanya.chat({
         userId: req.principal!.userId,

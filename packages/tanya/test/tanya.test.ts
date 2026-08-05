@@ -245,4 +245,73 @@ describe('TANYA AI conversational product layer', () => {
       await kernel.shutdown();
     }
   });
+
+  it('streams the reply in word chunks through onChunk (exact reassembly)', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const chunks: string[] = [];
+      const result = await tanya.chat({ userId: 'u1', message: 'Stream me this answer', onChunk: (c) => { chunks.push(c); } });
+      assert.ok(chunks.length > 1, 'multiple chunks for a multi-word reply');
+      assert.equal(chunks.join(''), result.reply, 'chunks reassemble to the exact reply');
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('a throwing onChunk callback never fails the chat', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const result = await tanya.chat({
+        userId: 'u1', message: 'robust streaming',
+        onChunk: () => { throw new Error('client disconnected'); },
+      });
+      assert.ok(result.reply);
+      assert.equal(result.messageCount, 2);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('emits tanya.chat.completed bus events with conversation context', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const events: Record<string, unknown>[] = [];
+      const unsub = kernel.bus.on('tanya.chat.completed', (e: Record<string, unknown>) => { events.push(e); });
+      const result = await tanya.chat({ userId: 'u1', message: 'event please' });
+      assert.equal(events.length, 1);
+      assert.equal(events[0]!.conversationId, result.conversationId);
+      assert.equal(events[0]!.userId, 'u1');
+      assert.equal(events[0]!.persona, 'main');
+      unsub();
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('caps history fed to the agent at maxHistory turns', async () => {
+    const llm = new RecordingLLM();
+    const kernel = await bootTanya({ llm });
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      // Three prior turns, then ask with maxHistory 2 → only the last two turns
+      // (user+assistant pairs) plus the current message reach the model.
+      let convId: string | undefined;
+      for (let i = 0; i < 3; i++) {
+        const r = await tanya.chat({ userId: 'u1', conversationId: convId, message: `turn ${i}` });
+        convId = r.conversationId;
+      }
+      await tanya.chat({ userId: 'u1', conversationId: convId, message: 'final', maxHistory: 2 });
+      const seen = llm.seen[llm.seen.length - 1]!;
+      // system + history(4 messages = 2 turns) + current user message.
+      assert.equal(seen.length, 6);
+      assert.equal(seen[1]!.content, 'turn 1');
+      assert.equal(seen[5]!.content, 'final');
+      assert.equal(seen[0]!.role, 'system');
+    } finally {
+      await kernel.shutdown();
+    }
+  });
 });

@@ -477,8 +477,36 @@ function appendChatMessage(role, content, toolCalls) {
   bubble.innerHTML = inner;
   log.appendChild(bubble);
   log.scrollTop = log.scrollHeight;
+  return bubble.querySelector('.chat-bubble');
 }
-async function sendTanya() {
+function startStreamBubble() {
+  const log = $('#tanya-messages');
+  const bubble = document.createElement('div');
+  bubble.className = 'chat-msg chat-assistant';
+  bubble.innerHTML = '<div class="chat-bubble"></div>';
+  log.appendChild(bubble);
+  log.scrollTop = log.scrollHeight;
+  return bubble.querySelector('.chat-bubble');
+}
+function finalizeStreamBubble(el, toolCalls) {
+  if (!el) return;
+  if (!el.textContent.trim()) el.textContent = '…';
+  if (toolCalls && toolCalls.length) {
+    const chips = document.createElement('div');
+    chips.className = 'chat-tools';
+    chips.textContent = toolCalls.map((t) => `🔧 ${t.name}`).join(' · ');
+    el.parentElement.appendChild(chips);
+  }
+  const log = $('#tanya-messages');
+  if (log) log.scrollTop = log.scrollHeight;
+}
+function tanyaWsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`;
+}
+// Stream a TANYA turn over the /ws realtime channel (tanya.chunk events),
+// falling back to the HTTP /tanya/chat API when the socket cannot connect.
+function sendTanya() {
   const input = $('#tanya-input');
   const message = input.value.trim();
   if (!message) return;
@@ -486,10 +514,43 @@ async function sendTanya() {
   input.value = '';
   const persona = $('#tanya-persona')?.value || 'main';
   const convId = $('#tanya-conv')?.value || undefined;
+  let ws;
+  try { ws = new WebSocket(tanyaWsUrl()); } catch { sendTanyaHttp(message, persona, convId); return; }
+  let finished = false;
+  const fallback = () => { if (!finished) sendTanyaHttp(message, persona, convId); };
+  ws.onerror = fallback;
+  ws.onclose = () => { if (!finished) fallback(); };
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'tanya.chat', message, persona, ...(convId ? { conversationId: convId } : {}) }));
+  };
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'tanya.chunk') {
+      const el = state._streamEl || (state._streamEl = startStreamBubble());
+      el.textContent += msg.content;
+    } else if (msg.type === 'tanya.done') {
+      finished = true;
+      finalizeStreamBubble(state._streamEl, msg.toolCalls);
+      state._streamEl = null;
+      state.conv = msg.conversationId;
+      const cSel = $('#tanya-conv');
+      if (cSel && !convId) {
+        cSel.insertAdjacentHTML('afterbegin', `<option value="${esc(msg.conversationId)}">${esc((msg.reply || '').slice(0, 40))}…</option>`);
+        cSel.value = msg.conversationId;
+      }
+      ws.close();
+    } else if (msg.type === 'tanya.error' || msg.type === 'chat.error') {
+      finished = true;
+      finalizeStreamBubble(state._streamEl, []);
+      state._streamEl = null;
+      appendChatMessage('system', `Error: ${msg.error}`);
+      ws.close();
+    }
+  };
+}
+async function sendTanyaHttp(message, persona, convId) {
   try {
-    const body = { message, persona };
-    if (convId) body.conversationId = convId;
-    const result = await api('POST', '/tanya/chat', body);
+    const result = await api('POST', '/tanya/chat', { message, persona, ...(convId ? { conversationId: convId } : {}) });
     appendChatMessage('assistant', result.reply, result.toolCalls);
     state.conv = result.conversationId;
     const cSel = $('#tanya-conv');
