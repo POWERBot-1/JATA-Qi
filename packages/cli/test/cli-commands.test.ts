@@ -169,6 +169,15 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"storefronts": 0/);
   });
 
+  it('cloud region + image + stats work', async () => {
+    const region = await jataqi('cloud', 'region', 'Nairobi', 'NBO', 'KE', 'nbo-1', '--capacity', '10');
+    assert.match(region, /registered [0-9a-f-]{36}/);
+    const image = await jataqi('cloud', 'image', 'Ubuntu', 'ubuntu', '24.04');
+    assert.match(image, /registered [0-9a-f-]{36}/);
+    const stats = await jataqi('cloud', 'stats');
+    assert.match(stats, /"regions": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

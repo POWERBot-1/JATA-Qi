@@ -30,6 +30,7 @@ import type { EnergyModule } from '@jataqi/energy';
 import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { MarketplaceModule } from '@jataqi/marketplace';
+import type { CloudModule } from '@jataqi/cloud';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -70,6 +71,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|categories|stats.
+  cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -104,6 +106,7 @@ async function main() {
   const border = kernel.getModule<BorderModule>('border');
   const restaurants = kernel.getModule<RestaurantsModule>('restaurants');
   const marketplace = kernel.getModule<MarketplaceModule>('marketplace');
+  const cloud = kernel.getModule<CloudModule>('cloud');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1415,6 +1418,127 @@ async function main() {
         }
         break;
       }
+      case 'cloud': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'regions':
+            for (const r of cloud.listRegions()) console.log(`- ${r.code} ${r.name} (${r.country}) ${r.usedSlots}/${r.capacitySlots} [${r.status}]`);
+            console.log(`${cloud.listRegions().length} region(s)`);
+            break;
+          case 'region': {
+            const name = args[2], code = args[3], country = args[4], zones = args[5];
+            if (!name || !code || !country || !zones) { console.error('Usage: jataqi cloud region <name> <code> <country> <zone1,zone2> [--capacity n]'); process.exit(1); }
+            const r = cloud.registerRegion({ name, code, country, zones: zones.split(',').map((z) => z.trim()), ...(flag('capacity') ? { capacitySlots: Number(flag('capacity')) } : {}) });
+            console.log(`registered ${r.id}`);
+            break;
+          }
+          case 'flavors':
+            for (const f of cloud.listFlavors()) console.log(`- ${f.name} [${f.tier}] ${f.vcpu}vCPU/${f.ramGb}GB ${f.gpu ? `${f.gpu}GPU ` : ''}${f.pricePerHourMinor}/hr`);
+            console.log(`${cloud.listFlavors().length} flavor(s)`);
+            break;
+          case 'flavor': {
+            const name = args[2], tier = args[3], vcpu = args[4], ram = args[5], disk = args[6], price = args[7];
+            if (!name || !tier || !vcpu || !ram || !disk || !price) { console.error('Usage: jataqi cloud flavor <name> <tier> <vcpu> <ramGb> <diskGb> <pricePerHourMinor> [--gpu n]'); process.exit(1); }
+            const f = cloud.registerFlavor({ name, tier: tier as never, vcpu: Number(vcpu), ramGb: Number(ram), diskGb: Number(disk), pricePerHourMinor: Number(price), ...(flag('gpu') ? { gpu: Number(flag('gpu')) } : {}) });
+            console.log(`registered ${f.id}`);
+            break;
+          }
+          case 'images':
+            for (const i of cloud.listImages()) console.log(`- ${i.name} (${i.os} ${i.version}, ${i.arch})`);
+            console.log(`${cloud.listImages().length} image(s)`);
+            break;
+          case 'image': {
+            const name = args[2], os = args[3], version = args[4];
+            if (!name || !os || !version) { console.error('Usage: jataqi cloud image <name> <os> <version>'); process.exit(1); }
+            const i = cloud.registerImage({ name, os, version });
+            console.log(`registered ${i.id}`);
+            break;
+          }
+          case 'instances': {
+            const instances = cloud.listInstances({ ...(flag('region') ? { regionId: flag('region') } : {}), ...(flag('status') ? { status: flag('status') as never } : {}) });
+            for (const i of instances) console.log(`- ${i.name} [${i.status}] ${i.publicIp ?? '-'} flavor=${i.flavorId}${i.hostingPlanId ? ' (hosting)' : ''}`);
+            console.log(`${instances.length} instance(s)`);
+            break;
+          }
+          case 'instance': {
+            const name = args[2], regionId = args[3], flavorId = args[4], imageId = args[5];
+            if (!name || !regionId || !flavorId || !imageId) { console.error('Usage: jataqi cloud instance <name> <regionId> <flavorId> <imageId> [--vpc id]'); process.exit(1); }
+            try {
+              const i = await cloud.provisionInstance({ name, regionId, flavorId, imageId, ...(flag('vpc') ? { vpcId: flag('vpc') } : {}) });
+              console.log(`provisioned ${i.id}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'volumes': {
+            const volumes = cloud.listVolumes(flag('region'));
+            for (const v of volumes) console.log(`- ${v.name} ${v.sizeGb}GB [${v.status}]${v.instanceId ? ` -> ${v.instanceId}` : ''}`);
+            console.log(`${volumes.length} volume(s)`);
+            break;
+          }
+          case 'volume': {
+            const name = args[2], size = args[3], regionId = args[4];
+            if (!name || !size || !regionId) { console.error('Usage: jataqi cloud volume <name> <sizeGb> <regionId>'); process.exit(1); }
+            const v = cloud.createVolume({ name, sizeGb: Number(size), regionId });
+            console.log(`created ${v.id}`);
+            break;
+          }
+          case 'vpcs':
+            for (const v of cloud.listVpcs(flag('region'))) console.log(`- ${v.name} ${v.cidr} ${v.subnetCidrs.join(', ')}`);
+            console.log(`${cloud.listVpcs().length} vpc(s)`);
+            break;
+          case 'vpc': {
+            const name = args[2], regionId = args[3], cidr = args[4], subnets = args[5];
+            if (!name || !regionId || !cidr || !subnets) { console.error('Usage: jataqi cloud vpc <name> <regionId> <cidr> <subnet1,subnet2>'); process.exit(1); }
+            const v = cloud.createVpc({ name, regionId, cidr, subnetCidrs: subnets.split(',').map((s) => s.trim()) });
+            console.log(`created ${v.id}`);
+            break;
+          }
+          case 'firewall': {
+            const vpcId = args[2];
+            if (!vpcId) { console.error('Usage: jataqi cloud firewall <vpcId>'); process.exit(1); }
+            for (const r of cloud.listFirewallRules(vpcId)) console.log(`- ${r.name} ${r.direction} ${r.protocol}${r.portRange ? ':' + r.portRange : ''} from ${r.sourceCidr ?? '*'}: ${r.action}`);
+            console.log(`${cloud.listFirewallRules(vpcId).length} rule(s)`);
+            break;
+          }
+          case 'lbs':
+            for (const lb of cloud.listLoadBalancers(flag('region'))) console.log(`- ${lb.name} ${lb.protocol}:${lb.port} targets=${lb.targetInstanceIds.length} [${lb.status}]`);
+            console.log(`${cloud.listLoadBalancers().length} load balancer(s)`);
+            break;
+          case 'hosting': {
+            const planId = args[2], regionId = args[3], site = args[4], imageId = args[5];
+            if (!planId || !regionId || !site || !imageId) { console.error('Usage: jataqi cloud hosting <planId> <regionId> <siteName> <imageId>'); process.exit(1); }
+            try {
+              const i = await cloud.provisionHosting({ planId, regionId, siteName: site, imageId });
+              console.log(`provisioned hosting ${i.id}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'plans':
+            for (const p of cloud.listHostingPlans()) console.log(`- ${p.name} [${p.tier}] ${p.monthlyPriceMinor}/mo ssl=${p.sslAutomation} cdn=${p.cdnIncluded} backup=${p.backupIncluded}`);
+            console.log(`${cloud.listHostingPlans().length} plan(s)`);
+            break;
+          case 'autoscale': {
+            const groupId = args[2], load = args[3];
+            if (!groupId || !load) { console.error('Usage: jataqi cloud autoscale <groupId> <load 0..1>'); process.exit(1); }
+            console.log(JSON.stringify(cloud.evaluateAutoscaling(groupId, Number(load))));
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(cloud.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi cloud regions|region|flavors|flavor|images|image|instances|instance|volumes|volume|vpcs|vpc|firewall|lbs|hosting|plans|autoscale|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1424,7 +1548,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

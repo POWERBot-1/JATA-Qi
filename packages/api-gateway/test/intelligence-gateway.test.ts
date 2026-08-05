@@ -38,6 +38,7 @@ import { EnergyModule } from '@jataqi/energy';
 import { BorderModule } from '@jataqi/border';
 import { RestaurantsModule } from '@jataqi/restaurants';
 import { MarketplaceModule } from '@jataqi/marketplace';
+import { CloudModule } from '@jataqi/cloud';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -106,6 +107,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new BorderModule());
     kernel.register(new RestaurantsModule());
     kernel.register(new MarketplaceModule());
+    kernel.register(new CloudModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -1078,6 +1080,51 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const directory = await jsonRequest('GET', `${base}/pki/acme/directory`, undefined, token);
     assert.equal(directory.status, 200);
     assert.equal((directory.body as { newOrder: string }).newOrder, '/new-order');
+  });
+
+  // --- PRX Part E — Cloud platform via gateway ---------------------------
+
+  it('cloud: region → flavor → image → instance → volume → hosting → stats over HTTP', async () => {
+    const region = await jsonRequest('POST', `${base}/cloud/regions`, { name: 'Nairobi', code: 'NBO', country: 'KE', zones: ['nbo-1'], capacitySlots: 10 }, token);
+    assert.equal(region.status, 201);
+    const regionId = (region.body as { region: { id: string } }).region.id;
+
+    const flavor = await jsonRequest('POST', `${base}/cloud/flavors`, { name: 'vps-2', tier: 'vps', vcpu: 2, ramGb: 4, diskGb: 80, pricePerHourMinor: 500 }, token);
+    assert.equal(flavor.status, 201);
+    const flavorId = (flavor.body as { flavor: { id: string } }).flavor.id;
+
+    const image = await jsonRequest('POST', `${base}/cloud/images`, { name: 'Ubuntu', os: 'ubuntu', version: '24.04' }, token);
+    const imageId = (image.body as { image: { id: string } }).image.id;
+
+    const instance = await jsonRequest('POST', `${base}/cloud/instances`, { name: 'web-1', regionId, flavorId, imageId }, token);
+    assert.equal(instance.status, 201);
+    const instanceId = (instance.body as { instance: { id: string } }).instance.id;
+
+    const running = await jsonRequest('POST', `${base}/cloud/instances/status`, { id: instanceId, status: 'running' }, token);
+    assert.equal((running.body as { instance: { status: string } }).instance.status, 'running');
+
+    const volume = await jsonRequest('POST', `${base}/cloud/volumes`, { name: 'data', sizeGb: 100, regionId }, token);
+    assert.equal(volume.status, 201);
+    const volumeId = (volume.body as { volume: { id: string } }).volume.id;
+
+    const attached = await jsonRequest('POST', `${base}/cloud/volumes/attach`, { volumeId, instanceId }, token);
+    assert.equal(attached.status, 200);
+    assert.equal((attached.body as { volume: { status: string } }).volume.status, 'attached');
+
+    const plan = await jsonRequest('POST', `${base}/cloud/hosting-plans`, { name: 'Starter VPS', tier: 'vps', monthlyPriceMinor: 150000, flavorId, sslAutomation: true }, token);
+    assert.equal(plan.status, 201);
+    const planId = (plan.body as { plan: { id: string } }).plan.id;
+
+    const hosting = await jsonRequest('POST', `${base}/cloud/hosting`, { planId, regionId, siteName: 'acme.com', imageId }, token);
+    assert.equal(hosting.status, 201);
+    assert.equal((hosting.body as { instance: { hostingPlanId: string } }).instance.hostingPlanId, planId);
+
+    const stats = await jsonRequest('GET', `${base}/cloud/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    const s = stats.body as { stats: { regions: number; instances: number; runningInstances: number } };
+    assert.equal(s.stats.regions, 1);
+    assert.equal(s.stats.instances, 2); // web-1 + hosting
+    assert.equal(s.stats.runningInstances, 1);
   });
 
   // --- Authz guard --------------------------------------------------------

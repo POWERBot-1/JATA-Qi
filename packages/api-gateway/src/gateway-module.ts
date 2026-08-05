@@ -69,6 +69,7 @@ import type { EnergyModule } from '@jataqi/energy';
 import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { MarketplaceModule } from '@jataqi/marketplace';
+import type { CloudModule } from '@jataqi/cloud';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -146,6 +147,7 @@ export class ApiGatewayModule implements IModule {
   private border?: BorderModule;
   private restaurants?: RestaurantsModule;
   private marketplace?: MarketplaceModule;
+  private cloud?: CloudModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -230,6 +232,7 @@ export class ApiGatewayModule implements IModule {
     this.border = this.tryModule<BorderModule>('border');
     this.restaurants = this.tryModule<RestaurantsModule>('restaurants');
     this.marketplace = this.tryModule<MarketplaceModule>('marketplace');
+    this.cloud = this.tryModule<CloudModule>('cloud');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -839,6 +842,39 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/marketplace/purchases', auth('marketplace:write', (req) => this.marketplacePurchases(req)));
     route('GET', '/marketplace/categories', auth('marketplace:read', () => this.marketplaceCategories()));
     route('GET', '/marketplace/stats', auth('marketplace:read', () => this.marketplaceStats()));
+    // PRX Part E — Cloud Infrastructure Provider.
+    route('POST', '/cloud/regions', auth('cloud:write', (req) => this.cloudRegionsRegister(req)));
+    route('GET', '/cloud/regions', auth('cloud:read', (req) => this.cloudRegionsList(req)));
+    route('POST', '/cloud/regions/status', auth('cloud:write', (req) => this.cloudRegionsStatus(req)));
+    route('POST', '/cloud/flavors', auth('cloud:write', (req) => this.cloudFlavorsRegister(req)));
+    route('GET', '/cloud/flavors', auth('cloud:read', (req) => this.cloudFlavorsList(req)));
+    route('POST', '/cloud/images', auth('cloud:write', (req) => this.cloudImagesRegister(req)));
+    route('GET', '/cloud/images', auth('cloud:read', () => this.cloudImagesList()));
+    route('POST', '/cloud/instances', auth('cloud:write', (req) => this.cloudInstancesProvision(req)));
+    route('GET', '/cloud/instances', auth('cloud:read', (req) => this.cloudInstancesList(req)));
+    route('POST', '/cloud/instances/status', auth('cloud:write', (req) => this.cloudInstancesStatus(req)));
+    route('POST', '/cloud/instances/reboot', auth('cloud:write', (req) => this.cloudInstancesReboot(req)));
+    route('POST', '/cloud/instances/terminate', auth('cloud:write', (req) => this.cloudInstancesTerminate(req)));
+    route('POST', '/cloud/volumes', auth('cloud:write', (req) => this.cloudVolumesCreate(req)));
+    route('GET', '/cloud/volumes', auth('cloud:read', (req) => this.cloudVolumesList(req)));
+    route('POST', '/cloud/volumes/attach', auth('cloud:write', (req) => this.cloudVolumesAttach(req)));
+    route('POST', '/cloud/volumes/detach', auth('cloud:write', (req) => this.cloudVolumesDetach(req)));
+    route('POST', '/cloud/snapshots', auth('cloud:write', (req) => this.cloudSnapshotsCreate(req)));
+    route('GET', '/cloud/snapshots', auth('cloud:read', (req) => this.cloudSnapshotsList(req)));
+    route('POST', '/cloud/vpcs', auth('cloud:write', (req) => this.cloudVpcsCreate(req)));
+    route('GET', '/cloud/vpcs', auth('cloud:read', (req) => this.cloudVpcsList(req)));
+    route('POST', '/cloud/firewall', auth('cloud:write', (req) => this.cloudFirewallAdd(req)));
+    route('GET', '/cloud/firewall', auth('cloud:read', (req) => this.cloudFirewallList(req)));
+    route('POST', '/cloud/load-balancers', auth('cloud:write', (req) => this.cloudLoadBalancersCreate(req)));
+    route('GET', '/cloud/load-balancers', auth('cloud:read', (req) => this.cloudLoadBalancersList(req)));
+    route('POST', '/cloud/load-balancers/targets', auth('cloud:write', (req) => this.cloudLoadBalancersAddTarget(req)));
+    route('POST', '/cloud/hosting-plans', auth('cloud:write', (req) => this.cloudHostingPlansCreate(req)));
+    route('GET', '/cloud/hosting-plans', auth('cloud:read', (req) => this.cloudHostingPlansList(req)));
+    route('POST', '/cloud/hosting', auth('cloud:write', (req) => this.cloudHostingProvision(req)));
+    route('POST', '/cloud/autoscaling', auth('cloud:write', (req) => this.cloudAutoscalingCreate(req)));
+    route('GET', '/cloud/autoscaling', auth('cloud:read', () => this.cloudAutoscalingList()));
+    route('POST', '/cloud/autoscaling/evaluate', auth('cloud:write', (req) => this.cloudAutoscalingEvaluate(req)));
+    route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1145,7 +1181,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -4076,6 +4112,280 @@ export class ApiGatewayModule implements IModule {
       const e = err as { status?: number; message: string };
       return json(e.status ?? 400, { error: e.message });
     }
+  }
+
+  // --- PRX Part E — Cloud Infrastructure Provider ------------------------
+
+  private cloudRegionsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.code !== 'string' || typeof b.country !== 'string' || !Array.isArray(b.zones))
+      return json(400, { error: 'fields "name", "code", "country", and "zones" (array) are required' });
+    return json(201, { region: this.cloud.registerRegion({
+      name: b.name, code: b.code, country: b.country, zones: b.zones.map(String),
+      ...(typeof b.capacitySlots === 'number' ? { capacitySlots: b.capacitySlots } : {}),
+    }) });
+  }
+
+  private cloudRegionsList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const regions = this.cloud.listRegions(req.query.status as never);
+    return json(200, { regions, count: regions.length });
+  }
+
+  private cloudRegionsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const region = this.cloud.setRegionStatus(b.id, b.status as never);
+    return region ? json(200, { region }) : json(404, { error: 'region not found' });
+  }
+
+  private cloudFlavorsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.tier !== 'string' || typeof b.vcpu !== 'number' || typeof b.ramGb !== 'number' || typeof b.diskGb !== 'number' || typeof b.pricePerHourMinor !== 'number')
+      return json(400, { error: 'fields "name", "tier", "vcpu", "ramGb", "diskGb", and "pricePerHourMinor" are required' });
+    return json(201, { flavor: this.cloud.registerFlavor({
+      name: b.name, tier: b.tier as never, vcpu: b.vcpu, ramGb: b.ramGb, diskGb: b.diskGb,
+      ...(typeof b.gpu === 'number' ? { gpu: b.gpu } : {}),
+      pricePerHourMinor: b.pricePerHourMinor,
+    }) });
+  }
+
+  private cloudFlavorsList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const flavors = this.cloud.listFlavors(req.query.tier as never);
+    return json(200, { flavors, count: flavors.length });
+  }
+
+  private cloudImagesRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.os !== 'string' || typeof b.version !== 'string')
+      return json(400, { error: 'fields "name", "os", and "version" are required' });
+    return json(201, { image: this.cloud.registerImage({ name: b.name, os: b.os, version: b.version, ...(typeof b.arch === 'string' ? { arch: b.arch as never } : {}) }) });
+  }
+
+  private cloudImagesList(): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const images = this.cloud.listImages();
+    return json(200, { images, count: images.length });
+  }
+
+  private async cloudInstancesProvision(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.regionId !== 'string' || typeof b.flavorId !== 'string' || typeof b.imageId !== 'string')
+      return json(400, { error: 'fields "name", "regionId", "flavorId", and "imageId" are required' });
+    const instance = await this.cloud.provisionInstance({
+      name: b.name, regionId: b.regionId, flavorId: b.flavorId, imageId: b.imageId,
+      ...(typeof b.zone === 'string' ? { zone: b.zone } : {}),
+      ...(typeof b.vpcId === 'string' ? { vpcId: b.vpcId } : {}),
+      ...(typeof b.hostingPlanId === 'string' ? { hostingPlanId: b.hostingPlanId } : {}),
+    });
+    return json(201, { instance });
+  }
+
+  private cloudInstancesList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const instances = this.cloud.listInstances({
+      ...(req.query.regionId ? { regionId: req.query.regionId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { instances, count: instances.length });
+  }
+
+  private async cloudInstancesStatus(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const instance = await this.cloud.setInstanceStatus(b.id, b.status as never);
+    return instance ? json(200, { instance }) : json(404, { error: 'instance not found' });
+  }
+
+  private cloudInstancesReboot(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const instance = this.cloud.rebootInstance(b.id);
+    return instance ? json(200, { instance }) : json(404, { error: 'instance not found' });
+  }
+
+  private async cloudInstancesTerminate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const instance = await this.cloud.terminateInstance(b.id);
+    return instance ? json(200, { instance }) : json(404, { error: 'instance not found' });
+  }
+
+  private cloudVolumesCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.sizeGb !== 'number' || typeof b.regionId !== 'string')
+      return json(400, { error: 'fields "name", "sizeGb", and "regionId" are required' });
+    return json(201, { volume: this.cloud.createVolume({ name: b.name, sizeGb: b.sizeGb, regionId: b.regionId }) });
+  }
+
+  private cloudVolumesList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const volumes = this.cloud.listVolumes(req.query.regionId);
+    return json(200, { volumes, count: volumes.length });
+  }
+
+  private cloudVolumesAttach(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.volumeId !== 'string' || typeof b.instanceId !== 'string')
+      return json(400, { error: 'fields "volumeId" and "instanceId" are required' });
+    const volume = this.cloud.attachVolume(b.volumeId, b.instanceId);
+    return volume ? json(200, { volume }) : json(404, { error: 'volume or instance not found' });
+  }
+
+  private cloudVolumesDetach(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.volumeId !== 'string') return json(400, { error: 'field "volumeId" is required' });
+    const volume = this.cloud.detachVolume(b.volumeId);
+    return volume ? json(200, { volume }) : json(404, { error: 'volume not found' });
+  }
+
+  private cloudSnapshotsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.volumeId !== 'string') return json(400, { error: 'field "volumeId" is required' });
+    return json(201, { snapshot: this.cloud.createSnapshot(b.volumeId) });
+  }
+
+  private cloudSnapshotsList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const snapshots = this.cloud.listSnapshots(req.query.volumeId);
+    return json(200, { snapshots, count: snapshots.length });
+  }
+
+  private cloudVpcsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.regionId !== 'string' || typeof b.cidr !== 'string')
+      return json(400, { error: 'fields "name", "regionId", and "cidr" are required' });
+    return json(201, { vpc: this.cloud.createVpc({
+      name: b.name, regionId: b.regionId, cidr: b.cidr,
+      subnetCidrs: Array.isArray(b.subnetCidrs) ? b.subnetCidrs.map(String) : [],
+    }) });
+  }
+
+  private cloudVpcsList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const vpcs = this.cloud.listVpcs(req.query.regionId);
+    return json(200, { vpcs, count: vpcs.length });
+  }
+
+  private cloudFirewallAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.vpcId !== 'string' || typeof b.name !== 'string' || typeof b.direction !== 'string' || typeof b.protocol !== 'string')
+      return json(400, { error: 'fields "vpcId", "name", "direction", and "protocol" are required' });
+    return json(201, { rule: this.cloud.addFirewallRule({
+      vpcId: b.vpcId, name: b.name, direction: b.direction as never, protocol: b.protocol as never,
+      ...(typeof b.portRange === 'string' ? { portRange: b.portRange } : {}),
+      ...(typeof b.sourceCidr === 'string' ? { sourceCidr: b.sourceCidr } : {}),
+      action: (b.action as never) ?? 'allow',
+    }) });
+  }
+
+  private cloudFirewallList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    if (!req.query.vpcId) return json(400, { error: 'query parameter "vpcId" is required' });
+    const rules = this.cloud.listFirewallRules(req.query.vpcId);
+    return json(200, { rules, count: rules.length });
+  }
+
+  private cloudLoadBalancersCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.regionId !== 'string' || typeof b.port !== 'number')
+      return json(400, { error: 'fields "name", "regionId", and "port" are required' });
+    return json(201, { loadBalancer: this.cloud.createLoadBalancer({ name: b.name, regionId: b.regionId, protocol: (b.protocol as never) ?? 'tcp', port: b.port }) });
+  }
+
+  private cloudLoadBalancersList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const loadBalancers = this.cloud.listLoadBalancers(req.query.regionId);
+    return json(200, { loadBalancers, count: loadBalancers.length });
+  }
+
+  private cloudLoadBalancersAddTarget(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.lbId !== 'string' || typeof b.instanceId !== 'string')
+      return json(400, { error: 'fields "lbId" and "instanceId" are required' });
+    const lb = this.cloud.addLoadBalancerTarget(b.lbId, b.instanceId);
+    return lb ? json(200, { loadBalancer: lb }) : json(404, { error: 'load balancer or instance not found' });
+  }
+
+  private cloudHostingPlansCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.tier !== 'string' || typeof b.monthlyPriceMinor !== 'number')
+      return json(400, { error: 'fields "name", "tier", and "monthlyPriceMinor" are required' });
+    return json(201, { plan: this.cloud.createHostingPlan({
+      name: b.name, tier: b.tier as never, monthlyPriceMinor: b.monthlyPriceMinor,
+      ...(typeof b.flavorId === 'string' ? { flavorId: b.flavorId } : {}),
+      ...(typeof b.sslAutomation === 'boolean' ? { sslAutomation: b.sslAutomation } : {}),
+      ...(typeof b.cdnIncluded === 'boolean' ? { cdnIncluded: b.cdnIncluded } : {}),
+      ...(typeof b.backupIncluded === 'boolean' ? { backupIncluded: b.backupIncluded } : {}),
+      ...(typeof b.databasesIncluded === 'number' ? { databasesIncluded: b.databasesIncluded } : {}),
+    }) });
+  }
+
+  private cloudHostingPlansList(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const plans = this.cloud.listHostingPlans(req.query.tier as never);
+    return json(200, { plans, count: plans.length });
+  }
+
+  private async cloudHostingProvision(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.planId !== 'string' || typeof b.regionId !== 'string' || typeof b.siteName !== 'string' || typeof b.imageId !== 'string')
+      return json(400, { error: 'fields "planId", "regionId", "siteName", and "imageId" are required' });
+    const instance = await this.cloud.provisionHosting({ planId: b.planId, regionId: b.regionId, siteName: b.siteName, imageId: b.imageId });
+    return json(201, { instance });
+  }
+
+  private cloudAutoscalingCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.regionId !== 'string' || typeof b.templateInstanceId !== 'string' || typeof b.min !== 'number' || typeof b.max !== 'number')
+      return json(400, { error: 'fields "name", "regionId", "templateInstanceId", "min", and "max" are required' });
+    return json(201, { group: this.cloud.createAutoscalingGroup({
+      name: b.name, regionId: b.regionId, templateInstanceId: b.templateInstanceId, min: b.min, max: b.max,
+      ...(typeof b.cpuHighThreshold === 'number' ? { cpuHighThreshold: b.cpuHighThreshold } : {}),
+      ...(typeof b.cpuLowThreshold === 'number' ? { cpuLowThreshold: b.cpuLowThreshold } : {}),
+    }) });
+  }
+
+  private cloudAutoscalingList(): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const groups = this.cloud.listAutoscalingGroups();
+    return json(200, { groups, count: groups.length });
+  }
+
+  private cloudAutoscalingEvaluate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.groupId !== 'string' || typeof b.load !== 'number')
+      return json(400, { error: 'fields "groupId" and "load" (0..1) are required' });
+    const result = this.cloud.evaluateAutoscaling(b.groupId, b.load);
+    return json(200, { result });
+  }
+
+  private cloudStats(): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    return json(200, { stats: this.cloud.stats() });
   }
 
   // --- Phase 7 — MAZA marketplace ----------------------------------------

@@ -79,7 +79,8 @@
     "@jataqi/energy": "0.1.0",
     "@jataqi/border": "0.1.0",
     "@jataqi/restaurants": "0.1.0",
-    "@jataqi/marketplace": "0.1.0"
+    "@jataqi/marketplace": "0.1.0",
+    "@jataqi/cloud": "0.1.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
