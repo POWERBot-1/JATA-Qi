@@ -330,4 +330,49 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     assert.ok(completed!.data?.conversationId, 'carries the conversation id');
     unsub();
   });
+
+  it('pki namespace: idpRefresh + rotate + upsertProfile (deep IdP)', async () => {
+    await client.auth.login('admin', 'admin'); // admin has pki:write
+    // Upsert profile with roles.
+    const prof = await client.pki.upsertProfile('sdk-ext', { preferred_username: 'sdk-idp-user', roles: ['analyst'] });
+    assert.deepEqual((prof.profile as { roles: string[] }).roles, ['analyst']);
+
+    // Register a client via the gateway (admin), then run the code flow.
+    const clientRes = await fetch(`http://127.0.0.1:${port}/pki/idp/clients`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${client.getToken()}` },
+      body: JSON.stringify({ name: 'sdk-console', redirectUris: ['https://sdk.example.com/ui'] }),
+    });
+    const creds = await clientRes.json() as { clientId: string; clientSecret: string };
+
+    const authz = await fetch(`http://127.0.0.1:${port}/pki/idp/authorize`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${client.getToken()}` },
+      body: JSON.stringify({ clientId: creds.clientId, redirectUri: 'https://sdk.example.com/ui', scope: 'openid profile', userId: 'sdk-ext' }),
+    });
+    const { code } = await authz.json() as { code: string };
+    const tkRes = await fetch(`http://127.0.0.1:${port}/pki/idp/token`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: 'https://sdk.example.com/ui' }),
+    });
+    const tokens = await tkRes.json() as { refresh_token: string };
+
+    // Refresh via the SDK pki namespace.
+    const refreshed = await client.pki.idpRefresh(tokens.refresh_token, creds.clientId, creds.clientSecret);
+    assert.ok(refreshed.access_token);
+    assert.ok(refreshed.expires_in > 0);
+
+    // Rotate → new platform session.
+    const rotated = await client.pki.rotate(tokens.refresh_token, creds.clientId, creds.clientSecret);
+    assert.equal(rotated.ok, true);
+    assert.equal(rotated.principal!.username, 'sdk-idp-user');
+    assert.ok(rotated.session!.token);
+
+    // The rotated session authenticates through the SDK.
+    const probe = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    probe.setToken(rotated.session!.token);
+    const me = await probe.auth.whoami();
+    assert.equal(me.principal.username, 'sdk-idp-user');
+
+    // Invalid refresh → error surfaced.
+    await assert.rejects(client.pki.idpRefresh('bogus', creds.clientId, creds.clientSecret), /invalid refresh token/);
+  });
 });

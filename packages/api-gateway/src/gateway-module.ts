@@ -739,6 +739,9 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/pki/idp/userinfo', auth('pki:read', (req) => this.pkiIdpUserinfo(req)));
     route('GET', '/pki/idp/discovery', () => this.pkiIdpDiscovery());
     route('POST', '/pki/idp/login', (req) => this.pkiIdpLogin(req));
+    route('POST', '/pki/idp/refresh', (req) => this.pkiIdpRefresh(req));
+    route('POST', '/pki/idp/rotate', (req) => this.pkiIdpRotate(req));
+    route('POST', '/pki/idp/profile', auth('pki:write', (req) => this.pkiIdpProfile(req)));
     // PRX Part C — ACME (RFC 8555) automated certificate issuance.
     route('GET', '/pki/acme/directory', auth('pki:read', () => this.pkiAcmeDirectory()));
     route('GET', '/pki/acme/new-nonce', auth('pki:read', () => this.pkiAcmeNewNonce()));
@@ -3201,6 +3204,45 @@ export class ApiGatewayModule implements IModule {
     });
     if (!result.ok) return json(401, { error: result.reason ?? 'login failed' });
     return json(200, { ok: true, session: result.session, principal: result.principal });
+  }
+
+  private pkiIdpRefresh(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.refreshToken !== 'string' || typeof b.clientId !== 'string' || typeof b.clientSecret !== 'string')
+      return json(400, { error: 'fields "refreshToken", "clientId", and "clientSecret" are required' });
+    try {
+      const tokens = this.pki.idpRefresh({ refreshToken: b.refreshToken, clientId: b.clientId, clientSecret: b.clientSecret });
+      return json(200, { access_token: tokens.access_token, token_type: tokens.token_type, expires_in: tokens.expires_in, ...(tokens.scope ? { scope: tokens.scope } : {}) });
+    } catch (err) {
+      return json(400, { error: (err as Error).message });
+    }
+  }
+
+  private async pkiIdpRotate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.refreshToken !== 'string' || typeof b.clientId !== 'string' || typeof b.clientSecret !== 'string')
+      return json(400, { error: 'fields "refreshToken", "clientId", and "clientSecret" are required' });
+    const result = await this.pki.rotateSession({
+      refreshToken: b.refreshToken, clientId: b.clientId, clientSecret: b.clientSecret,
+      ...(typeof b.remoteAddress === 'string' ? { remoteAddress: b.remoteAddress } : {}),
+    });
+    if (!result.ok) return json(401, { error: result.reason ?? 'session rotation failed' });
+    return json(200, { ok: true, idpTokens: result.idpTokens, session: result.session, principal: result.principal });
+  }
+
+  private pkiIdpProfile(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.sub !== 'string' || !b.sub) return json(400, { error: 'field "sub" is required' });
+    const claims: Record<string, unknown> = {};
+    if (typeof b.name === 'string') claims.name = b.name;
+    if (typeof b.email === 'string') claims.email = b.email;
+    if (typeof b.preferred_username === 'string') claims.preferred_username = b.preferred_username;
+    if (Array.isArray(b.roles)) claims.roles = b.roles.filter((r): r is string => typeof r === 'string');
+    const profile = this.pki.idp.upsertUser(b.sub, claims);
+    return json(200, { profile: { sub: profile.sub, ...(profile.name ? { name: profile.name } : {}), ...(profile.email ? { email: profile.email } : {}), ...(profile.preferred_username ? { preferred_username: profile.preferred_username } : {}), ...(profile.roles ? { roles: profile.roles } : {}) } });
   }
 
   // --- Phase 7 — MOTO X mobility -----------------------------------------

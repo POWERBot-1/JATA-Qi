@@ -57,6 +57,7 @@ export class JataQiClient {
   readonly gov: GovClient;
   readonly media: MediaClient;
   readonly mfa: MFAClient;
+  readonly pki: PkiClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -88,6 +89,7 @@ export class JataQiClient {
     this.gov = new GovClient(this);
     this.media = new MediaClient(this);
     this.mfa = new MFAClient(this);
+    this.pki = new PkiClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -129,6 +131,29 @@ export class JataQiClient {
   }
   getToken(): string | undefined { return this.token; }
   clearToken(): void { this.token = undefined; }
+}
+
+// --- PKI / IdP ------------------------------------------------------------------
+
+export class PkiClient {
+  constructor(private c: JataQiClient) {}
+  /** OIDC refresh_token grant — exchange a refresh token for a new access token. */
+  async idpRefresh(refreshToken: string, clientId: string, clientSecret: string): Promise<{ access_token: string; token_type: string; expires_in: number; scope?: string }> {
+    return this.c.request('POST', '/pki/idp/refresh', { refreshToken, clientId, clientSecret });
+  }
+  /** One-call session rotation — refreshed IdP token + fresh platform session. */
+  async rotate(refreshToken: string, clientId: string, clientSecret: string): Promise<{
+    ok: boolean; reason?: string;
+    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    session?: { token: string; userId: string; username: string; expiresAt: number };
+    principal?: { userId: string; username: string; roles: string[] };
+  }> {
+    return this.c.request('POST', '/pki/idp/rotate', { refreshToken, clientId, clientSecret });
+  }
+  /** Upsert an IdP user profile (claims incl. roles) — requires pki:write. */
+  async upsertProfile(sub: string, claims: { name?: string; email?: string; preferred_username?: string; roles?: string[] } = {}): Promise<{ profile: Record<string, unknown> }> {
+    return this.c.request('POST', '/pki/idp/profile', { sub, ...claims });
+  }
 }
 
 // --- Auth ---------------------------------------------------------------------

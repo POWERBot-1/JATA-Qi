@@ -1508,4 +1508,51 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const limited = (await jsonRequest('GET', `${base}/audit?action=auth.login&limit=1`, undefined, token)).body as { records: unknown[] };
     assert.ok(limited.records.length <= 1);
   });
+
+  it('POST /pki/idp/refresh + /pki/idp/rotate + /pki/idp/profile (deep IdP)', async () => {
+    // Admin upserts an IdP profile with roles (pki:write).
+    const profile = await jsonRequest('POST', `${base}/pki/idp/profile`, { sub: 'ext-user', preferred_username: 'idp-alice', roles: ['developer', 'analyst'] }, token);
+    assert.equal(profile.status, 200);
+    assert.deepEqual((profile.body as { profile: { roles: string[] } }).profile.roles, ['developer', 'analyst']);
+
+    // Register a console client.
+    const client = await jsonRequest('POST', `${base}/pki/idp/clients`, { name: 'console-e2e', redirectUris: ['https://console.example.com/ui'] }, token);
+    assert.equal(client.status, 201);
+    const creds = client.body as { clientId: string; clientSecret: string };
+
+    // Authorization-code flow → tokens incl. refresh_token.
+    const authz = await jsonRequest('POST', `${base}/pki/idp/authorize`, { clientId: creds.clientId, redirectUri: 'https://console.example.com/ui', scope: 'openid profile', userId: 'ext-user' }, token);
+    assert.equal(authz.status, 200);
+    const code = (authz.body as { code: string }).code;
+    const tokens = await jsonRequest('POST', `${base}/pki/idp/token`, { code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: 'https://console.example.com/ui' });
+    assert.equal(tokens.status, 200);
+    const tokenBody = tokens.body as { access_token: string; refresh_token: string };
+
+    // Refresh grant.
+    const refreshed = await jsonRequest('POST', `${base}/pki/idp/refresh`, { refreshToken: tokenBody.refresh_token, clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(refreshed.status, 200);
+    assert.ok((refreshed.body as { access_token: string }).access_token);
+
+    // Bad refresh → 400.
+    const bad = await jsonRequest('POST', `${base}/pki/idp/refresh`, { refreshToken: 'nope', clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(bad.status, 400);
+
+    // Rotate: refreshed IdP token → new platform session (JIT user idp-alice).
+    const rotated = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken: tokenBody.refresh_token, clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(rotated.status, 200);
+    const rotBody = rotated.body as { ok: boolean; idpTokens: { access_token: string }; session: { token: string; username: string }; principal: { roles: string[] } };
+    assert.equal(rotBody.ok, true);
+    assert.ok(rotBody.idpTokens.access_token);
+    assert.equal(rotBody.session.username, 'idp-alice');
+    assert.deepEqual(rotBody.principal.roles, ['developer', 'analyst']);
+
+    // The rotated session works on protected routes.
+    const whoami = await jsonRequest('GET', `${base}/whoami`, undefined, rotBody.session.token);
+    assert.equal(whoami.status, 200);
+    assert.equal((whoami.body as { principal: { username: string } }).principal.username, 'idp-alice');
+
+    // Bad rotate → 401.
+    const badRotate = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken: 'nope', clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(badRotate.status, 401);
+  });
 });

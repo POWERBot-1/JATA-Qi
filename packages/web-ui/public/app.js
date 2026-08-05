@@ -19,11 +19,19 @@ async function api(method, path, body) {
   if (!res.ok) {
     // Expired / revoked session — drop auth and return to the login screen.
     if (res.status === 401 && state.token && !path.startsWith('/auth/')) {
-      stopLiveFeed();
-      state.token = null; state.principal = null; state.expiresAt = null;
-      localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
-      state.authNotice = 'Your session expired — please sign in again.';
-      render();
+      // Try one silent rotation before forcing a fresh login.
+      if (!state._rotating) {
+        state._rotating = true;
+        rotateIdpSession().then((rotated) => {
+          state._rotating = false;
+          if (rotated) { render(); return; }
+          stopLiveFeed();
+          state.token = null; state.principal = null; state.expiresAt = null;
+          localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
+          state.authNotice = 'Your session expired — please sign in again.';
+          render();
+        });
+      }
     }
     throw new Error(json?.error || `HTTP ${res.status}`);
   }
@@ -52,10 +60,58 @@ async function login(username, password) {
   localStorage.setItem('jq_expires', String(state.expiresAt));
   state.authNotice = '';
   render();
+  linkIdpSession(r.principal, username); // best-effort, never blocks login
 }
 async function registerAndLogin(username, password) {
   await api('POST', '/auth/register', { username, password, roles: ['developer'] });
   await login(username, password);
+}
+
+// --- IdP session linking + rotation (deep PKI IdP integration) ---
+// After password login, the console links an IdP session (registers a
+// console client once, upserts the IdP profile with the user's roles,
+// runs the authorization-code flow) and stores the refresh token so the
+// platform session can be silently rotated when it expires.
+async function linkIdpSession(principal, username) {
+  try {
+    if (localStorage.getItem('jq_idp_client')) return;
+    const client = await api('POST', '/pki/idp/clients', { name: 'jataqi-console', redirectUris: [location.origin + '/ui'] });
+    localStorage.setItem('jq_idp_client', JSON.stringify(client));
+    await api('POST', '/pki/idp/profile', { sub: principal.userId, preferred_username: username, roles: principal.roles });
+    const authz = await api('POST', '/pki/idp/authorize', { clientId: client.clientId, redirectUri: location.origin + '/ui', scope: 'openid profile', userId: principal.userId });
+    const tokens = await api('POST', '/pki/idp/token', { code: authz.code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: location.origin + '/ui' });
+    if (tokens.refresh_token) {
+      localStorage.setItem('jq_idp_tokens', JSON.stringify({ refresh_token: tokens.refresh_token, access_token: tokens.access_token, expires_in: tokens.expires_in }));
+    }
+  } catch { /* non-admin or IdP unavailable — rotation stays disabled */ }
+}
+function idpClientStored() {
+  try { return JSON.parse(localStorage.getItem('jq_idp_client')); } catch { return null; }
+}
+/** Silently rotate the platform session via the IdP refresh token. */
+async function rotateIdpSession() {
+  const client = idpClientStored();
+  const tokens = (() => { try { return JSON.parse(localStorage.getItem('jq_idp_tokens')); } catch { return null; } })();
+  if (!client || !tokens?.refresh_token) return false;
+  try {
+    const r = await fetch('/pki/idp/rotate', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: tokens.refresh_token, clientId: client.clientId, clientSecret: client.clientSecret }),
+    });
+    if (!r.ok) return false;
+    const result = await r.json();
+    if (!result.ok || !result.session) return false;
+    state.token = result.session.token;
+    state.principal = result.principal;
+    state.expiresAt = result.session.expiresAt;
+    localStorage.setItem('jq_token', result.session.token);
+    localStorage.setItem('jq_principal', JSON.stringify(result.principal));
+    localStorage.setItem('jq_expires', String(result.session.expiresAt));
+    if (result.idpTokens?.access_token) {
+      localStorage.setItem('jq_idp_tokens', JSON.stringify({ refresh_token: tokens.refresh_token, access_token: result.idpTokens.access_token, expires_in: result.idpTokens.expires_in }));
+    }
+    return true;
+  } catch { return false; }
 }
 function logout() {
   stopLiveFeed();
@@ -102,11 +158,16 @@ function startSessionTimer() {
     }
     if (remaining <= 0) {
       clearInterval(state._sessionTimer);
-      stopLiveFeed();
-      state.token = null; state.principal = null; state.expiresAt = null;
-      localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
-      state.authNotice = 'Your session expired — please sign in again.';
-      render();
+      // Silent rotation first: if an IdP refresh token is stored, re-mint the
+      // platform session without bothering the user.
+      rotateIdpSession().then((rotated) => {
+        if (rotated) { render(); return; }
+        stopLiveFeed();
+        state.token = null; state.principal = null; state.expiresAt = null;
+        localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
+        state.authNotice = 'Your session expired — please sign in again.';
+        render();
+      });
     }
   }, 1000);
 }

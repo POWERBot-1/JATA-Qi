@@ -126,6 +126,12 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // Deep IdP integration (refresh + rotation).
+    assert.match(js, /\/pki\/idp\/rotate/, 'session rotation endpoint wired');
+    assert.match(js, /\/pki\/idp\/token/, 'idp authorization-code exchange wired');
+    assert.match(js, /linkIdpSession/, 'idp linking on login wired');
+    assert.match(js, /rotateIdpSession/, 'silent rotation helper present');
+    assert.match(js, /jq_idp_tokens/, 'refresh token stored for rotation');
     // Audit trail view.
     assert.match(js, /audit: async/, 'audit view present');
     assert.match(js, /tool\.approval\.decided/, 'approval ledger fetched');

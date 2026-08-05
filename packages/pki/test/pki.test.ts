@@ -392,3 +392,101 @@ describe('PkiModule integration', () => {
     }
   });
 });
+
+describe('IdP refresh + session rotation (deep integration)', () => {
+  it('idpRefresh exchanges a refresh token for a new access token', async () => {
+    const t = await import('@jataqi/core-kernel/testing');
+    const { StorageModule } = await import('@jataqi/storage');
+    const { SecurityModule } = await import('@jataqi/security');
+    const { PkiModule } = await import('../src/index.js');
+    const kernel = t.createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    const pki = new PkiModule({ issuer: 'https://id.rotate.test' });
+    kernel.register(pki);
+    await kernel.boot();
+    try {
+      const client = pki.registerIdpClient({ name: 'rotate-app', redirectUris: ['https://rotate.example.com/cb'] });
+      pki.idp.upsertUser('ext-1', { preferred_username: 'bob', roles: ['analyst'] });
+      const { code } = pki.idpAuthorize({ clientId: client.clientId, redirectUri: 'https://rotate.example.com/cb', userId: 'ext-1' });
+      const tokens = pki.idpToken({ code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: 'https://rotate.example.com/cb' });
+      assert.ok(tokens.refresh_token);
+
+      const refreshed = pki.idpRefresh({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.ok(refreshed.access_token);
+      assert.equal(refreshed.token_type, 'Bearer');
+      assert.ok(refreshed.expires_in > 0);
+
+      // The refreshed access token is live.
+      assert.equal(pki.idp.introspect(refreshed.access_token).active, true);
+      assert.equal(pki.idp.userinfo(refreshed.access_token)?.sub, 'ext-1');
+
+      // Bad refresh token / wrong client → throws.
+      assert.throws(() => pki.idpRefresh({ refreshToken: 'bogus', clientId: client.clientId, clientSecret: client.clientSecret }), /invalid refresh token/);
+      assert.throws(() => pki.idpRefresh({ refreshToken: tokens.refresh_token!, clientId: 'other', clientSecret: 'x' }), /different client/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('rotateSession refreshes the IdP token AND mints a fresh platform session', async () => {
+    const t = await import('@jataqi/core-kernel/testing');
+    const { StorageModule } = await import('@jataqi/storage');
+    const { SecurityModule } = await import('@jataqi/security');
+    const { PkiModule } = await import('../src/index.js');
+    const kernel = t.createTestKernel();
+    kernel.register(new StorageModule());
+    const sec = new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } });
+    kernel.register(sec);
+    const pki = new PkiModule({ issuer: 'https://id.rotate2.test' });
+    kernel.register(pki);
+    await kernel.boot();
+    try {
+      const client = pki.registerIdpClient({ name: 'rotate-app', redirectUris: ['https://rotate.example.com/cb'] });
+      pki.idp.upsertUser('ext-2', { preferred_username: 'carol', roles: ['developer'] });
+      const { code } = pki.idpAuthorize({ clientId: client.clientId, redirectUri: 'https://rotate.example.com/cb', userId: 'ext-2' });
+      const tokens = pki.idpToken({ code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: 'https://rotate.example.com/cb' });
+
+      const rotated = await pki.rotateSession({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.equal(rotated.ok, true);
+      assert.ok(rotated.idpTokens?.access_token);
+      assert.ok(rotated.session?.token, 'new platform session minted');
+      assert.equal(rotated.principal?.username, 'carol');
+      assert.deepEqual(rotated.principal?.roles, ['developer']);
+
+      // The rotated platform session authenticates.
+      const principal = await sec.authenticate(rotated.session!.token);
+      assert.equal(principal?.username, 'carol');
+
+      // Second rotation also works (refresh token still valid).
+      const again = await pki.rotateSession({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.equal(again.ok, true);
+      assert.ok(again.session?.token);
+
+      // Invalid refresh token → ok:false with reason.
+      const bad = await pki.rotateSession({ refreshToken: 'nope', clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.equal(bad.ok, false);
+      assert.ok(bad.reason);
+
+      // No security module → graceful failure (reason, not a throw).
+      const k2 = t.createTestKernel();
+      k2.register(new StorageModule());
+      const pki2 = new PkiModule({ issuer: 'https://id.rotate3.test' });
+      k2.register(pki2);
+      await k2.boot();
+      try {
+        const c2 = pki2.registerIdpClient({ name: 'x', redirectUris: ['https://x.example.com/cb'] });
+        pki2.idp.upsertUser('u-3', { preferred_username: 'dave' });
+        const { code: c } = pki2.idpAuthorize({ clientId: c2.clientId, redirectUri: 'https://x.example.com/cb', userId: 'u-3' });
+        const tk = pki2.idpToken({ code: c, clientId: c2.clientId, clientSecret: c2.clientSecret, redirectUri: 'https://x.example.com/cb' });
+        const res = await pki2.rotateSession({ refreshToken: tk.refresh_token!, clientId: c2.clientId, clientSecret: c2.clientSecret });
+        assert.equal(res.ok, false);
+        assert.match(res.reason ?? '', /security module unavailable/);
+      } finally {
+        await k2.shutdown();
+      }
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+});

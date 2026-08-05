@@ -12,6 +12,7 @@ import { ConversationsModule } from '@jataqi/conversations';
 import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
 import type { ILLM, ChatMessage, LLMRequest, LLMResponse } from '@jataqi/agent-runtime';
 import { PkiModule } from '@jataqi/pki';
+import { SecurityModule } from '@jataqi/security';
 import { TanyaModule } from '../src/index.js';
 import type { TanyaChatResult } from '../src/index.js';
 
@@ -41,6 +42,7 @@ async function bootTanya(opts: { llm?: ILLM; withPki?: boolean; withAgents?: boo
   kernel.register(new KnowledgeService());
   kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
   kernel.register(new ConversationsModule());
+  kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
   if (opts.withPki !== false) {
     kernel.register(new PkiModule({ issuer: 'https://id.jataqi.local' }));
   }
@@ -310,6 +312,50 @@ describe('TANYA AI conversational product layer', () => {
       assert.equal(seen[1]!.content, 'turn 1');
       assert.equal(seen[5]!.content, 'final');
       assert.equal(seen[0]!.role, 'system');
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('idpRefresh and rotateSession passthroughs (deep IdP integration)', async () => {
+    const kernel = await bootTanya({ withPki: true });
+    try {
+      const pki = kernel.getModule<PkiModule>('pki');
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      assert.equal(tanya.registerIdentity({ sub: 'ext-u', name: 'Ext', preferred_username: 'ext', roles: ['analyst'] }), true);
+
+      const client = pki.registerIdpClient({ name: 'tanya-idp', redirectUris: ['https://app.jataqi.local/cb'] });
+      const auth = pki.idpAuthorize({ clientId: client.clientId, redirectUri: 'https://app.jataqi.local/cb', scope: 'openid profile', userId: 'ext-u' });
+      const tokens = pki.idpToken({ code: auth.code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: 'https://app.jataqi.local/cb' });
+
+      // idpRefresh passthrough.
+      const refreshed = tanya.idpRefresh({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.ok(refreshed?.access_token);
+
+      // rotateSession passthrough — mints a platform session.
+      const rotated = await tanya.rotateSession({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.equal(rotated.ok, true);
+      assert.equal(rotated.principal?.username, 'ext');
+      assert.deepEqual(rotated.principal?.roles, ['analyst']);
+      assert.ok(rotated.session?.token);
+
+      // Invalid → graceful failure.
+      const bad = await tanya.rotateSession({ refreshToken: 'bogus', clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.equal(bad.ok, false);
+      assert.equal(tanya.idpRefresh({ refreshToken: 'bogus', clientId: client.clientId, clientSecret: client.clientSecret }), undefined);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('idpRefresh/rotateSession degrade without the pki module', async () => {
+    const kernel = await bootTanya({ withPki: false, withAgents: false });
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      assert.equal(tanya.idpRefresh({ refreshToken: 'x', clientId: 'c', clientSecret: 's' }), undefined);
+      const rotated = await tanya.rotateSession({ refreshToken: 'x', clientId: 'c', clientSecret: 's' });
+      assert.equal(rotated.ok, false);
+      assert.match(rotated.reason ?? '', /pki module not registered/);
     } finally {
       await kernel.shutdown();
     }

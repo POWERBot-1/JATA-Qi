@@ -151,14 +151,40 @@ export class TanyaModule implements IModule {
   }
 
   /** Register or update an identity profile on the IdP. */
-  registerIdentity(user: { sub: string; name?: string; email?: string; preferred_username?: string }): boolean {
+  registerIdentity(user: { sub: string; name?: string; email?: string; preferred_username?: string; roles?: string[] }): boolean {
     if (!this.pki || !user.sub) return false;
     this.pki.idp.upsertUser(user.sub, {
       name: user.name,
       email: user.email,
       preferred_username: user.preferred_username,
+      ...(Array.isArray(user.roles) ? { roles: user.roles } : {}),
     });
     return true;
+  }
+
+  /** OIDC refresh_token grant via the PKI IdP (deep IdP integration). */
+  idpRefresh(input: { refreshToken: string; clientId: string; clientSecret: string }): { access_token: string; token_type: 'Bearer'; expires_in: number; scope?: string } | undefined {
+    if (!this.pki) return undefined;
+    try {
+      return this.pki.idpRefresh(input);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * One-call session rotation: refreshes the IdP access token and mints a
+   * fresh platform session (TANYA-level passthrough of PkiModule.rotateSession).
+   */
+  async rotateSession(input: { refreshToken: string; clientId: string; clientSecret: string; remoteAddress?: string }): Promise<{
+    ok: boolean;
+    reason?: string;
+    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    session?: { token: string; userId: string; username: string; expiresAt: number };
+    principal?: { userId: string; username: string; roles: string[] };
+  }> {
+    if (!this.pki) return { ok: false, reason: 'pki module not registered on this kernel' };
+    return this.pki.rotateSession(input);
   }
 
   // ---- chat ----------------------------------------------------------------

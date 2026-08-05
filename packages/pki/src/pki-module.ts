@@ -22,6 +22,8 @@ export const PkiEvents = Object.freeze({
   RaApproved: 'pki.ra.approved',
   ClientRegistered: 'pki.idp.client.registered',
   TokensIssued: 'pki.idp.tokens.issued',
+  TokensRefreshed: 'pki.idp.tokens.refreshed',
+  SessionRotated: 'pki.idp.session.rotated',
 } as const);
 
 export interface PkiModuleConfig {
@@ -166,6 +168,43 @@ export class PkiModule implements IModule {
 
   idpUserinfo(accessToken: string): UserInfo | undefined {
     return this.idp.userinfo(accessToken);
+  }
+
+  /** OIDC refresh_token grant — exchanges a refresh token for a new access token. */
+  idpRefresh(input: { refreshToken: string; clientId: string; clientSecret: string }): TokenResponse {
+    const response = this.idp.refresh(input);
+    void this.api.bus.emit(PkiEvents.TokensRefreshed, { clientId: input.clientId });
+    return response;
+  }
+
+  /**
+   * One-call session rotation: refreshes the IdP access token and mints a
+   * fresh platform session from it (via loginWithIdpToken). Used by clients
+   * (web consoles, SDKs) to silently re-authenticate when the platform
+   * session expires while the IdP refresh token is still valid.
+   */
+  async rotateSession(input: { refreshToken: string; clientId: string; clientSecret: string; remoteAddress?: string }): Promise<{
+    ok: boolean;
+    reason?: string;
+    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    session?: { token: string; userId: string; username: string; expiresAt: number };
+    principal?: { userId: string; username: string; roles: string[] };
+  }> {
+    let refreshed: TokenResponse;
+    try {
+      refreshed = this.idpRefresh(input);
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+    const login = await this.loginWithIdpToken(refreshed.access_token, { remoteAddress: input.remoteAddress });
+    if (!login.ok) return { ok: false, reason: login.reason ?? 'session rotation failed' };
+    void this.api.bus.emit(PkiEvents.SessionRotated, { userId: login.principal?.userId });
+    return {
+      ok: true,
+      idpTokens: { access_token: refreshed.access_token, expires_in: refreshed.expires_in, ...(refreshed.scope ? { scope: refreshed.scope } : {}) },
+      session: login.session,
+      principal: login.principal,
+    };
   }
 
   /**
