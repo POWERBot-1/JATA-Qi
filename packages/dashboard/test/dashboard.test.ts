@@ -32,7 +32,24 @@ describe('WidgetRegistry — built-in catalog', () => {
     const reg = new WidgetRegistry();
     reg.register({ id: 'custom-1', title: 'Custom', category: 'custom', defaultSize: 'medium', renderer: 'custom-renderer' });
     assert.ok(reg.get('custom-1'));
-    assert.equal(reg.count, 16);
+    assert.equal(reg.count, 20); // 15 base + 4 tool-governance + 1 custom
+  });
+
+  it('catalogs tool-governance widgets with data-source requirements', () => {
+    const reg = new WidgetRegistry();
+    for (const id of ['kpi-tools-governed', 'kpi-tools-invocations', 'kpi-tools-decisions', 'list-tool-approvals']) {
+      const w = reg.get(id);
+      assert.ok(w, `widget ${id} present`);
+      assert.equal(w!.requiresDataSource, true, `${id} requires a data source`);
+    }
+    const governed = reg.get('kpi-tools-governed')!;
+    assert.equal(governed.category, 'kpi');
+    assert.equal(governed.renderer, 'kpi-card');
+    assert.deepEqual(governed.configSchema![0]!.options, ['total', 'active', 'agentTools', 'approvalGated']);
+    const approvals = reg.get('list-tool-approvals')!;
+    assert.equal(approvals.category, 'notification');
+    assert.equal(approvals.renderer, 'notification-list');
+    assert.ok(approvals.allowedRoles!.includes('developer'));
   });
 });
 

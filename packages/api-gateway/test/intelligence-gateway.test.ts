@@ -1394,4 +1394,33 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const anon = await jsonRequest('GET', `${base}/auth/session`);
     assert.equal(anon.status, 401);
   });
+
+  it('exposes governance widgets + data for adaptive dashboards', async () => {
+    // Widget catalog exposes the governance widgets.
+    const widgets = await jsonRequest('GET', `${base}/dashboard/widgets`, undefined, token);
+    assert.equal(widgets.status, 200);
+    const defs = (widgets.body as { widgets: { id: string; requiresDataSource?: boolean }[] }).widgets;
+    for (const id of ['kpi-tools-governed', 'kpi-tools-invocations', 'kpi-tools-decisions', 'list-tool-approvals']) {
+      const w = defs.find((d) => d.id === id);
+      assert.ok(w, `widget ${id} in catalog`);
+      assert.equal(w!.requiresDataSource, true);
+    }
+
+    // A layout can host a governance widget (add-widget path used by the UI).
+    const layout = await jsonRequest('POST', `${base}/dashboard/layouts`, { name: 'Governance Layout', ownerId: 'admin' }, token);
+    const layoutId = (layout.body as { layout: { id: string } }).layout.id;
+    const add = await jsonRequest('POST', `${base}/dashboard/widgets`, { layoutId, widgetDefId: 'kpi-tools-governed' }, token);
+    assert.equal(add.status, 201);
+    const inst = (add.body as { widget: { widgetDefId: string } }).widget;
+    assert.equal(inst.widgetDefId, 'kpi-tools-governed');
+
+    // The data source for the widget renders (governance stats resolve).
+    const gstats = await jsonRequest('GET', `${base}/tools/governance-stats`, undefined, token);
+    assert.equal(gstats.status, 200);
+    assert.ok((gstats.body as { tools: { total: number } }).tools.total >= 37);
+
+    // AI-adapt keeps the layout healthy.
+    const adapted = await jsonRequest('POST', `${base}/dashboard/adapt`, { layoutId, userId: 'admin' }, token);
+    assert.equal(adapted.status, 200);
+  });
 });

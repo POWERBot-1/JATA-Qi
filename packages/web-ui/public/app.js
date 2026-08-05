@@ -206,13 +206,15 @@ const VIEWS = {
     };
   },
   dashboards: async () => {
-    const [layouts, widgets, analytics] = await Promise.allSettled([
+    const [layouts, widgets, analytics, gstats] = await Promise.allSettled([
       api('GET', '/dashboard/layouts'), api('GET', '/dashboard/widgets'), api('GET', '/dashboard/analytics'),
+      api('GET', '/tools/governance-stats'),
     ]);
     return {
       layouts: layouts.status === 'fulfilled' ? layouts.value.layouts : [],
       widgets: widgets.status === 'fulfilled' ? widgets.value.widgets : [],
       analytics: analytics.status === 'fulfilled' ? analytics.value.analytics : null,
+      gstats: gstats.status === 'fulfilled' ? gstats.value : null,
     };
   },
   search: async (q) => {
@@ -386,6 +388,7 @@ function renderView(view, data) {
       });
     }, 0);
   } else if (view === 'dashboards') {
+    const g = data.gstats || {};
     html += `<div class="stat-grid">
       ${statCard('Layouts', data.layouts?.length ?? 0)}
       ${statCard('Widget Types', data.widgets?.length ?? 0)}
@@ -400,7 +403,21 @@ function renderView(view, data) {
         <input id="layout-id" placeholder="layout id"><button class="btn-ghost" onclick="adaptLayout()">AI-Adapt</button>
         <button class="btn-ghost" onclick="autoArrange()">Auto-arrange</button>
       </div></div>
-    <div class="card"><div class="card-title">Available Widgets</div>${tableFrom(data.widgets, ['id', 'name', 'category', 'roles'])}</div>`;
+    <div class="card"><div class="card-title">Available Widgets</div>${tableFrom(data.widgets, ['id', 'name', 'category', 'roles'])}</div>
+    <div class="card"><div class="card-title">Tool Governance Widgets</div>
+      <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">Live widget data from the governed tool registry (add these widgets to a layout via the registry above).</p>
+      <div class="stat-grid">
+        ${statCard('Governed Tools', g.tools?.total ?? null)}
+        ${statCard('Agent Tools', g.tools?.agentTools ?? null)}
+        ${statCard('R4 Gated', g.tools?.approvalGated ?? null, 'yellow')}
+        ${statCard('Invocations', g.invocations?.total ?? 0)}
+        ${statCard('Avg Duration', g.avgDurationMs != null ? g.avgDurationMs + ' ms' : null)}
+        ${statCard('ALLOW', g.decisions?.byDecision?.ALLOW ?? 0, 'green')}
+        ${statCard('DENY', g.decisions?.byDecision?.DENY ?? 0, 'red')}
+        ${statCard('Pending Approvals', g.approvals?.pending ?? 0, (g.approvals?.pending ?? 0) ? 'yellow' : 'green')}
+      </div>
+      <div id="gov-approvals" style="margin-top:12px">${(g.approvals?.pending ?? 0) === 0 ? '<p style="color:var(--text-dim)">No pending approvals.</p>' : `<p style="color:var(--yellow)">${g.approvals.pending} approval request(s) awaiting review — see the Tools view.</p>`}</div>
+    </div>`;
   } else if (view === 'search') {
     html += `<div class="card">
       <div class="form-group"><label>Search the platform (knowledge, memory, graph, conversations, tools)</label>

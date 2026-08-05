@@ -21,6 +21,11 @@ const BUILTIN_WIDGETS: WidgetDef[] = [
   { id: 'ai-overview', title: 'AI Overview', category: 'ai', defaultSize: 'wide', renderer: 'ai-insight-panel', allowedRoles: ['admin', 'manager'] },
   { id: 'kpi-health', title: 'System Health', category: 'kpi', defaultSize: 'small', renderer: 'health-gauge' },
   { id: 'chart-performance', title: 'Performance', category: 'chart', defaultSize: 'medium', renderer: 'area-chart' },
+  // Tool-governance widgets (powered by the tool-intelligence governanceStats endpoint).
+  { id: 'kpi-tools-governed', title: 'Governed Tools', category: 'kpi', defaultSize: 'small', renderer: 'kpi-card', requiresDataSource: true, configSchema: [{ key: 'metric', type: 'select', label: 'Metric', options: ['total', 'active', 'agentTools', 'approvalGated'], default: 'total' }] },
+  { id: 'kpi-tools-invocations', title: 'Tool Invocations', category: 'kpi', defaultSize: 'small', renderer: 'kpi-card', requiresDataSource: true, configSchema: [{ key: 'metric', type: 'select', label: 'Metric', options: ['total', 'success', 'denied', 'pending_approval'], default: 'total' }] },
+  { id: 'kpi-tools-decisions', title: 'Governance Decisions', category: 'kpi', defaultSize: 'small', renderer: 'kpi-card', requiresDataSource: true, configSchema: [{ key: 'metric', type: 'select', label: 'Metric', options: ['ALLOW', 'DENY', 'REQUIRES_APPROVAL'], default: 'ALLOW' }] },
+  { id: 'list-tool-approvals', title: 'Pending Tool Approvals', category: 'notification', defaultSize: 'medium', renderer: 'notification-list', requiresDataSource: true, allowedRoles: ['admin', 'manager', 'developer'] },
 ];
 
 export class WidgetRegistry {

@@ -79,6 +79,8 @@ export const DEFAULT_CAPABILITIES: Capability[] = [
   cap({ id: 'compute', name: 'Scientific/math compute (stats, regression, optimization)', category: 'intelligence', status: 'TESTED', module: '@jataqi/compute', evidence: ['11 tests', 'agent tools'] }),
   cap({ id: 'simulation', name: 'Simulation engine (Monte-Carlo)', category: 'intelligence', status: 'TESTED', module: '@jataqi/simulation', evidence: ['7 tests', 'probabilistic outputs'] }),
   cap({ id: 'scheduler', name: 'Compute scheduler + adaptive router', category: 'intelligence', status: 'TESTED', module: '@jataqi/scheduler', evidence: ['priority queue, targets, profile router'] }),
+  cap({ id: 'adaptive-dashboard', name: 'Adaptive dashboard — widget catalog with governance widgets (kpi-tools-governed, kpi-tools-invocations, kpi-tools-decisions, list-tool-approvals) + governance data panel', category: 'ui', status: 'TESTED', module: '@jataqi/dashboard', evidence: ['19 built-in widgets (15 base + 4 tool-governance with requiresDataSource)', 'governance widgets: governed tools / invocations / decisions KPIs + pending-approvals list (allowedRoles admin/manager/developer)', 'web UI dashboards view renders the live governance panel from GET /tools/governance-stats', 'add-widget + AI-adapt flow verified via gateway (layout hosting a governance widget)', '20 tests'] }),
+
 
   // --- Developer (P2) ---
   cap({ id: 'cli', name: 'Developer CLI', category: 'developer', status: 'TESTED', module: '@jataqi/cli', evidence: ['serve, ask, models, simulate, plugins'] }),

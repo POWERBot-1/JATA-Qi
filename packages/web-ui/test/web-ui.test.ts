@@ -122,6 +122,10 @@ describe('WebUIModule', () => {
     // Tool governance observability.
     assert.match(js, /\/tools\/governance-stats/, 'governance stats endpoint wired');
     assert.match(js, /Decisions ALLOW/, 'decision stat cards rendered');
+    // Tool governance widgets in the dashboards view.
+    assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
+    assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
+    assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
     // Auth polish: session introspection + register-first + countdown.
     assert.match(js, /\/auth\/session/, 'session introspection wired');
     assert.match(js, /registerAndLogin/, 'register-first flow present');
