@@ -1249,6 +1249,11 @@ window.runQiL = runQiL;
 $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
+// PWA shell: register the service worker (offline-first console).
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('/ui/sw.js').catch(() => { /* SW optional */ });
+}
+
 // Init.
 (async () => {
   if (await checkStoredAuth()) { render(); startSessionTimer(); return; }

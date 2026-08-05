@@ -67,6 +67,32 @@ describe('WebUIModule', () => {
     assert.ok(files.includes('index.html'));
     assert.ok(files.includes('style.css'));
     assert.ok(files.includes('app.js'));
+    assert.ok(files.includes('manifest.json'), 'PWA manifest present');
+    assert.ok(files.includes('sw.js'), 'service worker present');
+    assert.ok(files.includes('icon.svg'), 'app icon present');
+  });
+
+  it('serves the PWA shell (manifest + service worker) with correct MIME', () => {
+    const manifest = ui.serve('/ui/manifest.json')!;
+    assert.match(manifest.contentType, /application\/json/);
+    const parsed = JSON.parse(manifest.content.toString('utf8')) as { start_url: string; display: string; icons: { type: string }[] };
+    assert.equal(parsed.start_url, '/ui/');
+    assert.equal(parsed.display, 'standalone');
+    assert.ok(parsed.icons.some((i) => i.type === 'image/svg+xml'));
+
+    const sw = ui.serve('/ui/sw.js')!;
+    assert.match(sw.contentType, /javascript/);
+    const swText = sw.content.toString('utf8');
+    assert.match(swText, /cache-first/, 'shell strategy documented');
+    assert.match(swText, /addAll\(SHELL\)/, 'shell precached');
+
+    const icon = ui.serve('/ui/icon.svg')!;
+    assert.match(icon.contentType, /image\/svg/);
+
+    // index.html links the manifest + icon.
+    const html = ui.serve('/ui/index.html')!.content.toString('utf8');
+    assert.match(html, /rel="manifest" href="\/ui\/manifest\.json"/, 'manifest linked');
+    assert.match(html, /theme-color/, 'theme color declared');
   });
 
   it('serves index.html with correct MIME type', () => {
@@ -131,6 +157,8 @@ describe('WebUIModule', () => {
     assert.match(js, /\/governance\/alerts/, 'alerts endpoint wired');
     assert.match(js, /SLA Rules/, 'rules panel rendered');
     assert.match(js, /JataQiToolApprovalQueueHigh/, 'prometheus rule names surfaced');
+    // PWA shell.
+    assert.match(js, /serviceWorker\.register\('\/ui\/sw\.js'\)/, 'service worker registered');
     // Audit export (CSV/JSON compliance handoff).
     assert.match(js, /exportAudit/, 'audit export action present');
     assert.match(js, /\/audit\/export/, 'export endpoint wired');
@@ -220,6 +248,13 @@ describe('WebUIModule', () => {
       const js = await fetch(`http://127.0.0.1:${handle.port}/ui/app.js`);
       assert.equal(js.status, 200);
       assert.match(js.headers.get('content-type')!, /javascript/);
+      // PWA shell files.
+      const manifest = await fetch(`http://127.0.0.1:${handle.port}/ui/manifest.json`);
+      assert.equal(manifest.status, 200);
+      assert.match(manifest.headers.get('content-type')!, /application\/json/);
+      const sw = await fetch(`http://127.0.0.1:${handle.port}/ui/sw.js`);
+      assert.equal(sw.status, 200);
+      assert.match(sw.headers.get('content-type')!, /javascript/);
     } finally {
       await handle.close();
     }

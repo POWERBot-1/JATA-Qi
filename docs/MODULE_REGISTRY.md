@@ -51,7 +51,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
 | `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |
-| `@jataqi/web-ui` | `web-ui` | – | Admin Console SPA served at `/ui` — TANYA chat, dashboards, engines, tools governance |
+| `@jataqi/web-ui` | `web-ui` | – | Admin Console SPA served at `/ui` — TANYA chat, dashboards, engines, tools governance; PWA shell (manifest + service worker) |
 | `@jataqi/dashboard` | `dashboard` | learning | adaptive dashboard — widget framework + layout + AI personalization |
 | `@jataqi/universal-wallet` | `universal-wallet` | – | double-entry wallet engine (finance/commerce/game consolidation) |
 | `@jataqi/payments` | `flutterwave` | – | payment provider bridges (M-Pesa, Flutterwave, Pesapal, Stripe, …) |

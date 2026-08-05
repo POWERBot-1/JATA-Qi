@@ -1,0 +1,39 @@
+{
+  "name": "JATA Qi Admin Console",
+  "short_name": "JATA Qi",
+  "description": "JATA Qi — Modular AI Operating System admin console: TANYA conversational AI, adaptive dashboards, tool governance, and platform observability.",
+  "start_url": "/ui/",
+  "scope": "/ui/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f1117",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/ui/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/ui/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["productivity", "developer", "ai"],
+  "shortcuts": [
+    {
+      "name": "TANYA Chat",
+      "short_name": "TANYA",
+      "url": "/ui/#tanya",
+      "icons": [{ "src": "/ui/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+    },
+    {
+      "name": "Governance Alerts",
+      "short_name": "Alerts",
+      "url": "/ui/#alerts"
+    }
+  ]
+}
