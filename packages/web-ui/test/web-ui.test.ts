@@ -126,6 +126,11 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // Approvals workflow view.
+    assert.match(js, /approvals: async/, 'approvals view present');
+    assert.match(js, /\/approvals\?status=all/, 'history fetch wired');
+    assert.match(js, /Approval Queue/, 'queue rendered');
+    assert.match(js, /decideApproval\(/i, 'approve/deny actions wired');
     // Live activity feed.
     assert.match(js, /startLiveFeed/, 'live feed wired');
     assert.match(js, /topics: \['security', 'memory', 'tool', 'tanya', 'orchestrator'\]/, 'subscribes to platform topics');

@@ -477,7 +477,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/tool/invoke', auth('tool:invoke', (req) => this.toolInvoke(req)));
     route('POST', '/tool/request-approval', auth('tool:invoke', (req) => this.toolRequestApproval(req)));
     route('POST', '/tool/approve', auth('approval:decide', (req) => this.toolApprove(req)));
-    route('GET', '/approvals', auth('approval:decide', () => this.approvalsList()));
+    route('GET', '/approvals', auth('approval:decide', (req) => this.approvalsList(req)));
     // JQ-CIP creator identity & provenance (public read-only; never exposes private keys).
     route('GET', '/identity', () => this.identityInfo());
     route('GET', '/identity/creator', () => this.identityCreator());
@@ -5010,9 +5010,16 @@ export class ApiGatewayModule implements IModule {
     }
   }
 
-  private approvalsList(): GatewayResponse {
+  private approvalsList(req: GatewayRequest): GatewayResponse {
     if (!this.tools) return json(501, { error: 'tool-intelligence module not registered' });
-    return json(200, { approvals: this.tools.listPendingApprovals() });
+    // Backward compatible: no filter → pending only. `?status=all` (or any
+    // explicit status) returns the full history / filtered history.
+    const status = req.query.status;
+    if (!status || status === 'pending') return json(200, { approvals: this.tools.listPendingApprovals() });
+    if (status === 'all') return json(200, { approvals: this.tools.listApprovals() });
+    const valid = ['pending', 'approved', 'denied', 'expired'].includes(status);
+    if (!valid) return json(400, { error: 'query "status" must be pending|approved|denied|expired|all' });
+    return json(200, { approvals: this.tools.listApprovals(status as 'pending' | 'approved' | 'denied' | 'expired') });
   }
 
   // --- JQ-CIP creator identity & provenance (public, read-only) -----------

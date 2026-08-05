@@ -310,6 +310,16 @@ export class ToolIntelligenceModule implements IModule {
     return [...this.approvals.values()].filter((a) => a.status === 'pending');
   }
 
+  /**
+   * Full approval-request history, newest first. `status` filters by
+   * 'pending' | 'approved' | 'denied' | 'expired' (or omit for everything).
+   */
+  listApprovals(status?: ApprovalRequest['status']): ApprovalRequest[] {
+    const all = [...this.approvals.values()];
+    const filtered = status ? all.filter((a) => a.status === status) : all;
+    return filtered.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
   // --- governance observability -------------------------------------------
 
   /**

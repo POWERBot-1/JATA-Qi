@@ -1423,4 +1423,36 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const adapted = await jsonRequest('POST', `${base}/dashboard/adapt`, { layoutId, userId: 'admin' }, token);
     assert.equal(adapted.status, 200);
   });
+
+  it('GET /approvals supports history + status filters (approval workflow)', async () => {
+    // Ensure a governed R4 tool exists.
+    await jsonRequest('POST', `${base}/tools/sync`, {}, token);
+    const tools = (await jsonRequest('GET', `${base}/tools`, undefined, token)).body as { tools: { id: string; canonicalName: string }[] };
+    const pid = tools.tools.find((t) => t.canonicalName === 'cloud.provision')!.id;
+
+    // Create one pending + one decided request.
+    const req = await jsonRequest('POST', `${base}/tool/request-approval`, { id: pid, action: 'invoke', reason: 'workflow test' }, token);
+    const requestId = (req.body as { approvalRequest: { id: string } }).approvalRequest.id;
+    await jsonRequest('POST', `${base}/tool/approve`, { id: requestId, decision: 'approved' }, token);
+    await jsonRequest('POST', `${base}/tool/request-approval`, { id: pid, action: 'invoke', reason: 'workflow pending' }, token);
+
+    // Default: pending only (backward compatible).
+    const pending = (await jsonRequest('GET', `${base}/approvals`, undefined, token)).body as { approvals: { status: string }[] };
+    assert.ok(pending.approvals.length >= 1);
+    for (const a of pending.approvals) assert.equal(a.status, 'pending');
+
+    // Status filter: approved.
+    const approved = (await jsonRequest('GET', `${base}/approvals?status=approved`, undefined, token)).body as { approvals: { status: string }[] };
+    assert.ok(approved.approvals.length >= 1);
+    for (const a of approved.approvals) assert.equal(a.status, 'approved');
+
+    // All history includes both statuses.
+    const all = (await jsonRequest('GET', `${base}/approvals?status=all`, undefined, token)).body as { approvals: { status: string }[] };
+    assert.ok(all.approvals.some((a) => a.status === 'approved'));
+    assert.ok(all.approvals.some((a) => a.status === 'pending'));
+
+    // Invalid status → 400.
+    const bad = await jsonRequest('GET', `${base}/approvals?status=bogus`, undefined, token);
+    assert.equal(bad.status, 400);
+  });
 });

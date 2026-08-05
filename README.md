@@ -416,7 +416,7 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/ipam/blocks` · `/ipam/blocks/addresses` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announcements` · `/ipam/stats` | `ipam:read` | IPAM reads |
 | POST | `/tanya/chat` · `/tanya/conversation/delete` · `/tanya/persona` | `tanya:write` | TANYA chat + conversation/persona management |
 | GET | `/tanya/conversations` · `/tanya/conversation` · `/tanya/personas` · `/tanya/stats` · POST `/tanya/identify` | `tanya:read` | TANYA reads + identity |
-| GET | `/tools` · `/tools/capability` · `/tool` · `/approvals` | `tool:read`/`approval:decide` | Tool registry + pending approvals |
+| GET | `/tools` · `/tools/capability` · `/tool` · `/approvals?status=pending\|approved\|denied\|expired\|all` | `tool:read`/`approval:decide` | Tool registry + approval queue/history |
 | POST | `/tools` · `/tools/sync` | `tool:read` | Register tools / sync the agent surface into governance |
 | GET | `/tools/governance-stats` | `tool:read` | Aggregate governance posture (registry, approvals, invocations, decisions) |
 | POST | `/tool/invoke` · `/tool/request-approval` · `/tool/approve` | `tool:invoke`/`approval:decide` | Governed invocation + approval flow |
@@ -501,6 +501,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Agent Intelligence Tools** (32 tools over the Phase 6/7 + PRX engines — `fx.*`, `mobility.*`, `logistics.*`, `agriculture.*`, `circular.*`, `energy.*`, `border.*`, `restaurants.*`, `marketplace.*`, `platform.search`, `wallet.balance`, `crypto.balance`, `cloud.*`, `cdn.*`, `email.*`, `ipam.*`; 37 default agent tools total; graceful degradation on partial kernels)
 - ✅ **Agent Tool Governance** (tool directive #18 — 39-tool catalog with R0–R4 risk classes + privacy classes; `POST /tools/sync` registers the live agent surface into the governed registry; R4 financial/infrastructure tools — `mobility.dispatch`, `cloud.provision`, `cloud.autoscale` — require human approval; unknown tools default conservatively to R3/INTERNAL; CLI `tools sync|list|stats|invoke|approvals|approve`)
 - ✅ **Tool Governance Observability** (Prometheus: `jataqi_tool_invocations_total{risk,status}`, `jataqi_tool_invocation_duration_ms`, `jataqi_tool_governance_decisions_total{decision}`, `jataqi_tool_approval_requests_total{decision}`, `jataqi_tool_pending_approvals`; aggregate `GET /tools/governance-stats`, CLI `tools stats`, web UI governance stat cards)
+- ✅ **Approval Workflow UI** (web console Approvals view — pending queue with approve/deny, full history table with decider + timestamps, status filters via `GET /approvals?status=all|approved|denied|expired`, counts)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
 - ✅ **QiL Live Execution** (WebSocket `qil.run` → `qil.step`… → `qil.done` — plan steps stream as they complete, objectives compile to retrieve→reason→report, AI-safety gate, `qil.error`; web UI QiL console)
 - ✅ **QiL Tooling** (idempotent formatter, semantic linter, CLI `qil parse|compile|format|lint|run` with auto-provisioned agents)

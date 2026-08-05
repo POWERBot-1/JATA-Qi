@@ -127,6 +127,7 @@ const NAV = [
   { id: 'ipam', label: 'IPAM', icon: '🗂️' },
   { id: 'automations', label: 'Automations', icon: '⏰' },
   { id: 'tools', label: 'Tools', icon: '🔧' },
+  { id: 'approvals', label: 'Approvals', icon: '✅' },
   { id: 'health', label: 'System Health', icon: '💚' },
   { id: 'identity', label: 'Creator Identity', icon: '🔐' },
   { id: 'readiness', label: 'Readiness', icon: '✅' },
@@ -193,6 +194,17 @@ const VIEWS = {
   devices: async () => api('GET', '/devices'),
   twins: async () => api('GET', '/twins'),
   flags: async () => api('GET', '/flags'),
+
+  approvals: async () => {
+    const [pending, history, gstats] = await Promise.allSettled([
+      api('GET', '/approvals'), api('GET', '/approvals?status=all'), api('GET', '/tools/governance-stats'),
+    ]);
+    return {
+      pending: pending.status === 'fulfilled' ? pending.value.approvals : [],
+      history: history.status === 'fulfilled' ? history.value.approvals : [],
+      gstats: gstats.status === 'fulfilled' ? gstats.value : null,
+    };
+  },
 
   // --- QiL console (interactive) ---
   qil: async () => null,
@@ -502,6 +514,21 @@ function renderView(view, data) {
       ${statCard('Failed', s.failed ?? null)}
     </div>
     <div class="card"><div class="card-title">Automations</div>${tableFrom(data.automations, ['id', 'name', 'trigger', 'enabled', 'status'])}</div>`;
+  } else if (view === 'approvals') {
+    const pending = data.pending || [];
+    const history = data.history || [];
+    const g = data.gstats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Pending', pending.length, pending.length ? 'yellow' : 'green')}
+      ${statCard('Approved', history.filter((a) => a.status === 'approved').length, 'green')}
+      ${statCard('Denied', history.filter((a) => a.status === 'denied').length, 'red')}
+      ${statCard('Expired', history.filter((a) => a.status === 'expired').length)}
+      ${statCard('Total Requests', g.approvals?.requested ?? history.length)}
+    </div>
+    <div class="card"><div class="card-title">Approval Queue (${pending.length})</div>
+      ${pending.length === 0 ? '<p style="color:var(--text-dim)">Nothing awaiting review.</p>' : pending.map((a) => `<div class="notif-item"><div class="notif-dot"></div><div><div style="font-weight:600">${esc(a.toolId)}</div><div style="color:var(--text-dim);font-size:13px">${esc(a.reason || a.action)} — requested by ${esc(a.principalId)} · ${new Date(a.createdAt).toLocaleString()}</div><div style="margin-top:6px;display:flex;gap:8px"><button class="btn-primary" onclick="decideApproval('${esc(a.id)}','approved')">Approve</button><button class="btn-danger" onclick="decideApproval('${esc(a.id)}','denied')">Deny</button></div></div></div>`).join('')}
+    </div>
+    <div class="card"><div class="card-title">History (${history.length})</div>${tableFrom(history, ['toolId', 'action', 'status', 'principalId', 'decidedBy', 'createdAt'])}</div>`;
   } else if (view === 'tools') {
     const tools = data.tools?.tools || [];
     const approvals = data.approvals?.approvals || [];
@@ -788,7 +815,8 @@ async function syncTools() {
 async function decideApproval(id, decision) {
   try {
     await api('POST', '/tool/approve', { id, decision });
-    await loadView('tools');
+    if (state.view === 'approvals') await loadView('approvals');
+    else await loadView('tools');
   } catch (e) { alert(e.message); }
 }
 

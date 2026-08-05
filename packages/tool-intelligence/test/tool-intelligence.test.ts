@@ -425,3 +425,42 @@ describe('Tool governance observability (metrics + governanceStats)', () => {
     }
   });
 });
+
+describe('Approval workflow — history + filters', () => {
+  let kernel: Kernel;
+  let ti: ToolIntelligenceModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new ToolIntelligenceModule());
+    await kernel.boot();
+    ti = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+  });
+
+  afterEach(async () => { await kernel.shutdown(); });
+
+  it('tracks the full request history with status filters, newest first', async () => {
+    const t1 = await ti.register({ canonicalName: 'a', provider: 'p', version: '1', category: 'c', capabilities: ['a'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+    const t2 = await ti.register({ canonicalName: 'b', provider: 'p', version: '1', category: 'c', capabilities: ['b'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+
+    const r1 = ti.requestApproval(t1.id, 'u1', 'invoke', 'first');
+    ti.decideApproval(r1.id, 'approved', 'admin');
+    await new Promise((r) => setTimeout(r, 5)); // distinct createdAt for ordering
+    const r2 = ti.requestApproval(t2.id, 'u2', 'invoke', 'second');
+    ti.decideApproval(r2.id, 'denied', 'admin');
+    await new Promise((r) => setTimeout(r, 5));
+    const r3 = ti.requestApproval(t1.id, 'u3', 'invoke', 'third'); // stays pending
+
+    const all = ti.listApprovals();
+    assert.equal(all.length, 3);
+    assert.equal(all[0]!.id, r3.id, 'newest first');
+    assert.equal(all[2]!.id, r1.id);
+
+    assert.equal(ti.listApprovals('pending').length, 1);
+    assert.equal(ti.listApprovals('approved').length, 1);
+    assert.equal(ti.listApprovals('denied').length, 1);
+    assert.equal(ti.listApprovals('expired').length, 0);
+    assert.equal(ti.listPendingApprovals().length, 1);
+  });
+});
