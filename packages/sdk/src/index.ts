@@ -27,5 +27,5 @@ export {
   ToolsClient, DevicesClient, TwinsClient, ModelsClient,
   SimulateClient, TeamClient, CommerceClient, CommerceStatsClient,
   OrgClient, NotificationsClient, FlagsClient, GovClient,
-  MediaClient, MFAClient, PkiClient,
+  MediaClient, MFAClient, PkiClient, AuditClient,
 } from './client.js';

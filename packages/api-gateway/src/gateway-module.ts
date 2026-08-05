@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { SecurityModule } from '@jataqi/security';
+import { auditCsv, auditJson } from '@jataqi/security';
 import type { StorageModule, TenantScope, INamespace } from '@jataqi/storage';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
@@ -439,6 +440,7 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/workflow', auth('qil:run', (req) => this.getWorkflow(req)));
     route('POST', '/ask', auth('agent:run', (req) => this.ask(req)));
     route('GET', '/audit', auth('audit:read', (req) => this.audit(req)));
+    route('GET', '/audit/export', auth('audit:read', (req) => this.auditExport(req)));
     route('GET', '/stats', auth('knowledge:read', () => this.stats()));
     route('GET', '/whoami', auth(null, (req) => json(200, { principal: req.principal })));
     route('GET', '/metrics', auth('metrics:read', () => this.metricsHandler()));
@@ -1102,7 +1104,11 @@ export class ApiGatewayModule implements IModule {
     // exact "text/plain" match was treated as text, which silently JSON-quoted
     // the metrics exposition and broke Prometheus scraping.
     const isText = contentType.startsWith('text/');
-    const payload = isText ? String(resp.body) : JSON.stringify(resp.body);
+    // String bodies under application/json are already-serialized documents
+    // (e.g. audit/chat exports) and must be written verbatim — JSON-encoding
+    // them would double-quote the payload.
+    const isJsonString = contentType.startsWith('application/json') && typeof resp.body === 'string';
+    const payload = isText || isJsonString ? String(resp.body) : JSON.stringify(resp.body);
     res.writeHead(resp.status, {
       'content-type': contentType,
       'content-length': Buffer.byteLength(payload),
@@ -1356,6 +1362,31 @@ export class ApiGatewayModule implements IModule {
       limit: req.query.limit ? Number(req.query.limit) : 50,
     });
     return json(200, { records, count: records.length });
+  }
+
+  /**
+   * Audit export for compliance handoff: same filters as GET /audit plus
+   * ?format=csv|json (default csv). Returns the raw document with an
+   * attachment Content-Disposition so clients can download it directly.
+   */
+  private async auditExport(req: GatewayRequest): Promise<GatewayResponse> {
+    const log = this.sec.getAuditLog();
+    const records = await log.query({
+      ...(req.query.actor ? { actor: req.query.actor } : {}),
+      ...(req.query.action ? { action: req.query.action } : {}),
+      ...(req.query.result ? { result: req.query.result as 'success' | 'failure' | 'denied' } : {}),
+      ...(req.query.since ? { since: Number(req.query.since) } : {}),
+      limit: req.query.limit ? Number(req.query.limit) : 10_000,
+    });
+    const format = req.query.format === 'json' ? 'json' : 'csv';
+    const body = format === 'json' ? auditJson(records) : auditCsv(records);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    return {
+      status: 200,
+      body,
+      contentType: format === 'json' ? 'application/json; charset=utf-8' : 'text/csv; charset=utf-8',
+      headers: { 'content-disposition': `attachment; filename="audit-${stamp}.${format}"` },
+    };
   }
 
   private async stats(): Promise<GatewayResponse> {

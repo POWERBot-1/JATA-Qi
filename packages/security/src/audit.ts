@@ -14,6 +14,33 @@ export interface AuditQuery {
   limit?: number;
 }
 
+/** Escape a field per RFC 4180 (quotes doubled; wrap when containing , " \n \r). */
+function csvField(value: unknown): string {
+  const s = value === null || value === undefined ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+/** Render audit records as CSV (RFC 4180) with a stable header row. */
+export function auditCsv(records: AuditRecord[]): string {
+  const header = ['id', 'ts', 'actor', 'action', 'result', 'resource', 'detail'];
+  const rows = records.map((r) => [
+    csvField(r.id),
+    csvField(r.ts),
+    csvField(r.actor),
+    csvField(r.action),
+    csvField(r.result),
+    csvField(r.resource),
+    csvField(r.detail),
+  ]);
+  return [header.join(','), ...rows.map((row) => row.join(','))].join('\r\n') + '\r\n';
+}
+
+/** Render audit records as a JSON array (pretty-printed for readability). */
+export function auditJson(records: AuditRecord[]): string {
+  return JSON.stringify(records, null, 2) + '\n';
+}
+
 export class AuditLog {
   constructor(private readonly ns: INamespace) {}
 

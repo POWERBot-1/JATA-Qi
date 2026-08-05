@@ -126,6 +126,12 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // Audit export (CSV/JSON compliance handoff).
+    assert.match(js, /exportAudit/, 'audit export action present');
+    assert.match(js, /\/audit\/export/, 'export endpoint wired');
+    assert.match(js, /audit-export-scope/, 'export scope selector rendered');
+    assert.match(js, /Export CSV/, 'CSV export button present');
+    assert.match(js, /Export JSON/, 'JSON export button present');
     // Multi-user TANYA (org scope + sharing).
     assert.match(js, /\/tanya\/share/, 'share endpoint wired');
     assert.match(js, /\/tanya\/shared/, 'shared-with-me endpoint wired');

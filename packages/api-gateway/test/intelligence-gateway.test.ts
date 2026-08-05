@@ -1608,4 +1608,49 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal(hack.status, 400);
     assert.match((hack.body as { error: string }).error, /does not belong to this user/);
   });
+
+  it('GET /audit/export returns CSV and JSON compliance documents', async () => {
+    const before = await jsonRequest('GET', `${base}/audit?limit=100`, undefined, token);
+    const beforeCount = (before.body as { count: number }).count;
+    // Prior tests wrote audit records fire-and-forget — wait until the
+    // filtered records are visible before exporting.
+    let ready = 0;
+    for (let i = 0; i < 30; i++) {
+      const probe = (await jsonRequest('GET', `${base}/audit?action=tool.approval.decided`, undefined, token)).body as { count: number };
+      ready = probe.count;
+      if (ready >= 1) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.ok(ready >= 1, 'approval decisions recorded before export');
+
+    // CSV export (default format) — text/csv + attachment disposition.
+    const csvRes = await fetch(`${base}/audit/export?action=tool.approval.decided`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(csvRes.status, 200);
+    assert.match(csvRes.headers.get('content-type')!, /text\/csv/);
+    assert.match(csvRes.headers.get('content-disposition')!, /attachment; filename="audit-.*\.csv"/);
+    const csv = await csvRes.text();
+    assert.ok(csv.startsWith('id,ts,actor,action,result,resource,detail'), 'CSV header present');
+    assert.ok(csv.includes('tool.approval.decided'), 'rows include the filtered action');
+
+    // JSON export — application/json + parseable array.
+    const jsonRes = await fetch(`${base}/audit/export?action=tool.approval.decided&format=json`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    assert.equal(jsonRes.status, 200);
+    assert.match(jsonRes.headers.get('content-type')!, /application\/json/);
+    const jsonText = await jsonRes.text();
+    const json = JSON.parse(jsonText) as Array<{ action: string }>;
+    assert.ok(json.length >= 1);
+    for (const r of json) assert.equal(r.action, 'tool.approval.decided');
+
+    // Filters + since apply; total ledger unaffected by export.
+    const after = await jsonRequest('GET', `${base}/audit?limit=100`, undefined, token);
+    assert.equal((after.body as { count: number }).count, beforeCount);
+
+    // Unauthenticated → 401.
+    const anon = await fetch(`${base}/audit/export`);
+    assert.equal(anon.status, 401);
+  });
 });

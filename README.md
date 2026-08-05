@@ -339,6 +339,7 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/workflow?id=` | `qil:run` | Fetch a specific run by id |
 | POST | `/ask` | `agent:run` | `{message}` → agent passthrough |
 | GET | `/audit` | `audit:read` | Query the audit ledger |
+| GET | `/audit/export?format=csv\|json` | `audit:read` | Compliance export (RFC 4180 CSV / pretty JSON, filters + attachment) |
 | GET | `/stats` | `knowledge:read` | Knowledge + graph stats |
 | GET | `/whoami` | bearer | Resolved principal |
 | GET | `/metrics` | `metrics:read` | Prometheus exposition (counters/gauges/histograms) |
@@ -508,6 +509,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Tool Governance Observability** (Prometheus: `jataqi_tool_invocations_total{risk,status}`, `jataqi_tool_invocation_duration_ms`, `jataqi_tool_governance_decisions_total{decision}`, `jataqi_tool_approval_requests_total{decision}`, `jataqi_tool_pending_approvals`; aggregate `GET /tools/governance-stats`, CLI `tools stats`, web UI governance stat cards)
 - ✅ **Approval Workflow UI** (web console Approvals view — pending queue with approve/deny, full history table with decider + timestamps, status filters via `GET /approvals?status=all|approved|denied|expired`, counts)
 - ✅ **Approval Audit Trail** (every request/decision/denial writes an immutable ledger record — `tool.approval.requested` / `tool.approval.decided` / `tool.approval.required` — queryable via `GET /audit?action=…`, attributed with actor + decision + reason; web console **Audit Trail** view: approval decisions, denied high-risk invocations, recent logins)
+- ✅ **Audit Export (CSV/JSON)** (`GET /audit/export?format=csv|json` — RFC 4180 CSV with proper escaping or pretty JSON, same filters as `/audit`, `Content-Disposition` attachment; SDK `audit.exportCsv/exportJson`; web UI export buttons with scope selector; also fixes the chat-export endpoint which previously double-quoted JSON)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
 - ✅ **QiL Live Execution** (WebSocket `qil.run` → `qil.step`… → `qil.done` — plan steps stream as they complete, objectives compile to retrieve→reason→report, AI-safety gate, `qil.error`; web UI QiL console)
 - ✅ **QiL Tooling** (idempotent formatter, semantic linter, CLI `qil parse|compile|format|lint|run` with auto-provisioned agents)
@@ -551,7 +553,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
 - ✅ **Adaptive Dashboard** (Phase 5 step 3 — widget framework, responsive layout engine, AI personalization; 19 built-in widgets incl. tool-governance widgets — governed tools / invocations / decisions KPIs + pending-approvals list, live governance panel in the web UI)
 - ✅ **Admin Console Web UI** (Phase 5 step 4 — `/ui` SPA served by the gateway: TANYA chat with personas + conversation history streaming over `/ws` (word-by-word chunks, HTTP fallback), QiL console streaming plan steps live, adaptive dashboard layouts (create/AI-adapt/auto-arrange), federated search console, memory/learning/FX views, PRX engine views (cloud/CDN/email/IPAM), tool-governance console (sync + approvals), **live activity feed** (subscribes to platform bus topics — security/memory/tool/tanya/orchestrator — with sidebar feed + toast notifications), system health/readiness/identity views)
-- ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, `subscribe(topics)` for platform bus events, bearer-token auth, reconnect with backoff, handshake watchdog; `pki` namespace with `idpRefresh`/`rotate`/`upsertProfile`; `examples/sdk-streaming.mjs`)
+- ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, `subscribe(topics)` for platform bus events, bearer-token auth, reconnect with backoff, handshake watchdog; `pki` namespace with `idpRefresh`/`rotate`/`upsertProfile`; `audit` namespace with `list`/`exportCsv`/`exportJson`; `examples/sdk-streaming.mjs`)
 - ✅ **Auth polish** (`GET /auth/session` expiry introspection; web UI register-first flow (Sign In / Create Account), session validation on restore, live countdown + auto-logout on expiry, global 401 handling; SDK `auth.session()`)
 - ✅ **Universal Wallet** (Phase 2 — double-entry ledger consolidating finance/commerce/game-economy wallets; escrow, treasury, multi-currency)
 - ✅ **Payments** (Phase 3 — M-Pesa, Flutterwave, Pesapal, Airtel Money, PayPal, Stripe adapters)

@@ -375,4 +375,25 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     // Invalid refresh → error surfaced.
     await assert.rejects(client.pki.idpRefresh('bogus', creds.clientId, creds.clientSecret), /invalid refresh token/);
   });
+
+  it('audit namespace: list + CSV/JSON export', async () => {
+    await client.auth.login('admin', 'admin');
+
+    const list = await client.audit.list({ limit: 5 });
+    assert.ok(list.count >= 1);
+    assert.ok(Array.isArray(list.records));
+
+    const csv = await client.audit.exportCsv({ limit: 10 });
+    assert.ok(csv.startsWith('id,ts,actor,action,result,resource,detail'), 'CSV header present');
+
+    const json = await client.audit.exportJson({ limit: 10 });
+    const parsed = JSON.parse(json) as Array<{ id: string }>;
+    assert.ok(parsed.length >= 1);
+    assert.ok(parsed[0]!.id);
+
+    // Action filter narrows the export.
+    const filtered = await client.audit.exportJson({ action: 'tool.approval.decided', limit: 10 });
+    const filteredParsed = JSON.parse(filtered) as Array<{ action: string }>;
+    for (const r of filteredParsed) assert.equal(r.action, 'tool.approval.decided');
+  });
 });

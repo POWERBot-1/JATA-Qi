@@ -178,3 +178,37 @@ describe('SecurityModule (kernel integration)', () => {
     assert.equal(await sec.sessionInfo(undefined), undefined);
   });
 });
+
+describe('audit export — CSV/JSON rendering', () => {
+  it('auditCsv renders RFC 4180 rows with escaping', async () => {
+    const { auditCsv, auditJson } = await import('../src/index.js');
+    const records = [
+      { id: 'r1', ts: 1700000000000, actor: 'alice', action: 'auth.login', result: 'success' as const, resource: 'session', detail: { via: 'idp', note: 'has, commas and "quotes" and\nnewlines' } },
+      { id: 'r2', ts: 1700000001000, actor: 'bob', action: 'tool.approval.decided', result: 'success' as const, detail: { decision: 'approved' } },
+    ];
+    const csv = auditCsv(records);
+    const lines = csv.split('\r\n');
+    assert.equal(lines[0], 'id,ts,actor,action,result,resource,detail');
+    // A detail field containing a newline legitimately spans physical lines
+    // (it stays inside the quoted field), so the file is ≥ header + 1.
+    assert.ok(lines.length >= 3);
+    assert.equal(lines[1]!.split(',')[2], 'alice');
+    // Escaping: the detail with commas/quotes/newlines is wrapped in quotes
+    // with doubled quotes (RFC 4180); JSON-escaped quotes inside the detail
+    // appear as backslash + doubled quotes in the raw cell.
+    const detailCell = lines[1]!.split(',')[6]!;
+    assert.ok(detailCell.startsWith('"'), 'detail wrapped in quotes');
+    assert.ok(detailCell.endsWith('"'), 'detail closes with a quote');
+    assert.ok(detailCell.includes('""'), 'quotes doubled per RFC 4180');
+    // Empty records → header only.
+    assert.equal(auditCsv([]), 'id,ts,actor,action,result,resource,detail\r\n');
+  });
+
+  it('auditJson renders a pretty JSON array', async () => {
+    const { auditJson } = await import('../src/index.js');
+    const records = [{ id: 'r1', ts: 1, actor: 'a', action: 'x', result: 'success' as const }];
+    const parsed = JSON.parse(auditJson(records)) as Array<{ id: string }>;
+    assert.equal(parsed.length, 1);
+    assert.equal(parsed[0]!.id, 'r1');
+  });
+});

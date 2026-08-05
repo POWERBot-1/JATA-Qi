@@ -617,6 +617,18 @@ function renderView(view, data) {
       ${statCard('Denied Invokes', denied.length, 'red')}
       ${statCard('Logins (10)', login.length)}
     </div>
+    <div class="card"><div class="card-title">Export (compliance handoff)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn-primary" onclick="exportAudit('csv')">Export CSV</button>
+        <button class="btn-ghost" onclick="exportAudit('json')">Export JSON</button>
+        <select id="audit-export-scope" style="max-width:220px">
+          <option value="decided">approval decisions</option>
+          <option value="denied">denied invocations</option>
+          <option value="logins">logins</option>
+          <option value="all">all records</option>
+        </select>
+      </div>
+    </div>
     <div class="card"><div class="card-title">Approval Decisions (ledger)</div>${tableFrom(approval, ['ts', 'action', 'actor', 'result', 'detail'])}</div>
     <div class="card"><div class="card-title">Denied High-Risk Invocations</div>${tableFrom(denied, ['ts', 'action', 'actor', 'result', 'resource'])}</div>
     <div class="card"><div class="card-title">Recent Logins</div>${tableFrom(login, ['ts', 'actor', 'action', 'result'])}</div>`;
@@ -844,6 +856,26 @@ async function sendTanyaHttp(message, persona, convId, orgId) {
     appendChatMessage('system', `Error: ${e.message}`);
   }
 }
+async function exportAudit(format) {
+  const scope = $('#audit-export-scope')?.value || 'decided';
+  const filters = scope === 'decided' ? '?action=tool.approval.decided'
+    : scope === 'denied' ? '?action=tool.approval.required'
+    : scope === 'logins' ? '?action=auth.login' : '';
+  try {
+    const res = await fetch(`/audit/export${filters}${filters ? '&' : '?'}format=${format}`, {
+      headers: { authorization: `Bearer ${state.token}` },
+    });
+    if (!res.ok) throw new Error('export failed');
+    const text = await res.text();
+    const blob = new Blob([text], { type: format === 'csv' ? 'text/csv' : 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit-${scope}-${Date.now()}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
+}
 async function shareTanyaConversation() {
   const convId = $('#tanya-conv')?.value;
   if (!convId) { alert('Select a conversation first.'); return; }
@@ -1056,6 +1088,7 @@ window.doSearch = doSearch;
 window.syncTools = syncTools;
 window.decideApproval = decideApproval;
 window.shareTanyaConversation = shareTanyaConversation;
+window.exportAudit = exportAudit;
 window.runQiL = runQiL;
 $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });

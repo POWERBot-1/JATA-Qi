@@ -13,7 +13,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector, fx, mobility, logistics, agriculture, circular, energy, border, restaurants, marketplace, search, universal-wallet, crypto, cloud, cdn, email, ipam | ReAct agents + 37 default tools (knowledge/graph/vector + 32 intelligence tools) + LLMs |
 | `@jataqi/qil` | `qil` | – | QiL language → execution plan; idempotent formatter + semantic linter |
 | `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history + per-step streaming (onStep) |
-| `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger, session introspection (sessionInfo) |
+| `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger + CSV/JSON export, session introspection (sessionInfo) |
 | `@jataqi/api-gateway` | `api-gateway` | security, orchestrator | HTTP gateway, rate limiting, OpenAPI |
 | `@jataqi/realtime` | `realtime` | – | WebSocket server — auth, topic subscriptions, bus-event broadcast (security/orchestrator/memory/tools/tanya) |
 | `@jataqi/metrics` | `metrics` | – | counters / gauges / histograms |
@@ -58,7 +58,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/crypto` | `crypto` | – | KRT digital asset platform — tokens, NFTs, staking, exchange, custody |
 | `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
 | `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
-| `@jataqi/sdk` | – | – | typed HTTP client (22 namespaces) + WebSocket StreamingClient (/ws: tanya.chat, qil.run, chat) |
+| `@jataqi/sdk` | – | – | typed HTTP client (24 namespaces incl. pki + audit) + WebSocket StreamingClient (/ws: tanya.chat, qil.run, chat) |
 | `@jataqi/cli` | – | all | bootstrap (`createJataQi`) + CLI binary |
 
 ## Discovering modules at runtime

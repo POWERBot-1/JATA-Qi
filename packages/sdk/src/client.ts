@@ -58,6 +58,7 @@ export class JataQiClient {
   readonly media: MediaClient;
   readonly mfa: MFAClient;
   readonly pki: PkiClient;
+  readonly audit: AuditClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -90,6 +91,7 @@ export class JataQiClient {
     this.media = new MediaClient(this);
     this.mfa = new MFAClient(this);
     this.pki = new PkiClient(this);
+    this.audit = new AuditClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -124,6 +126,26 @@ export class JataQiClient {
     }
   }
 
+  /** Like request() but returns the raw response body as text (for CSV/plain exports). */
+  async requestText(method: string, path: string, body?: unknown, query?: Record<string, string>): Promise<string> {
+    const url = new URL(this.baseUrl + path);
+    if (query) for (const [k, v] of Object.entries(query)) url.searchParams.set(k, v);
+    const headers: Record<string, string> = { ...this.extraHeaders };
+    if (this.token) headers['authorization'] = `Bearer ${this.token}`;
+    const res = await fetch(url.toString(), {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      let parsed: { error?: string } | undefined;
+      try { parsed = text ? JSON.parse(text) : undefined; } catch { /* not JSON */ }
+      throw new JataQiError(parsed?.error ?? `HTTP ${res.status}`, res.status, undefined, text);
+    }
+    return text;
+  }
+
   /** Set the bearer token manually (e.g. from storage). */
   setToken(token: string): void {
     this.token = token;
@@ -131,6 +153,37 @@ export class JataQiClient {
   }
   getToken(): string | undefined { return this.token; }
   clearToken(): void { this.token = undefined; }
+}
+
+// --- Audit ---------------------------------------------------------------------
+
+export class AuditClient {
+  constructor(private c: JataQiClient) {}
+  /** Query the immutable audit ledger (newest first). */
+  async list(opts: { actor?: string; action?: string; result?: string; limit?: number } = {}): Promise<{ records: Record<string, unknown>[]; count: number }> {
+    const query: Record<string, string> = {};
+    if (opts.actor) query.actor = opts.actor;
+    if (opts.action) query.action = opts.action;
+    if (opts.result) query.result = opts.result;
+    if (opts.limit) query.limit = String(opts.limit);
+    return this.c.request('GET', '/audit', undefined, query);
+  }
+  /** Export the ledger as CSV (default) or JSON for compliance handoff. */
+  async exportCsv(opts: { actor?: string; action?: string; result?: string; limit?: number } = {}): Promise<string> {
+    return this.c.requestText('GET', '/audit/export?format=csv', undefined, this.query(opts));
+  }
+  /** Export the ledger as a pretty JSON document. */
+  async exportJson(opts: { actor?: string; action?: string; result?: string; limit?: number } = {}): Promise<string> {
+    return this.c.requestText('GET', '/audit/export?format=json', undefined, this.query(opts));
+  }
+  private query(opts: { actor?: string; action?: string; result?: string; limit?: number }): Record<string, string> {
+    const q: Record<string, string> = {};
+    if (opts.actor) q.actor = opts.actor;
+    if (opts.action) q.action = opts.action;
+    if (opts.result) q.result = opts.result;
+    if (opts.limit) q.limit = String(opts.limit);
+    return q;
+  }
 }
 
 // --- PKI / IdP ------------------------------------------------------------------
