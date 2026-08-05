@@ -355,13 +355,14 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     });
     const tokens = await tkRes.json() as { refresh_token: string };
 
-    // Refresh via the SDK pki namespace.
+    // Refresh via the SDK pki namespace (rotates the refresh token).
     const refreshed = await client.pki.idpRefresh(tokens.refresh_token, creds.clientId, creds.clientSecret);
     assert.ok(refreshed.access_token);
     assert.ok(refreshed.expires_in > 0);
+    assert.ok(refreshed.refresh_token, 'rotated refresh token returned');
 
-    // Rotate → new platform session.
-    const rotated = await client.pki.rotate(tokens.refresh_token, creds.clientId, creds.clientSecret);
+    // Rotate → new platform session (uses the rotated refresh token).
+    const rotated = await client.pki.rotate(refreshed.refresh_token!, creds.clientId, creds.clientSecret);
     assert.equal(rotated.ok, true);
     assert.equal(rotated.principal!.username, 'sdk-idp-user');
     assert.ok(rotated.session!.token);

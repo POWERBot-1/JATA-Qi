@@ -195,10 +195,16 @@ export class IdentityProvider {
     if (!client || client.clientSecret !== input.clientSecret) throw new Error('invalid client credentials');
     if (Date.now() > refreshToken.expiresAt) throw new Error('refresh token expired');
     const accessToken = this.issueAccessToken(refreshToken.clientId, refreshToken.userId, refreshToken.scope);
+    // Refresh-token rotation (RFC 6819 §5.2.2.3): the old refresh token is
+    // revoked and a fresh one issued, so a stolen token cannot outlive its
+    // first use.
+    this.tokens.delete(refreshToken.token);
+    const nextRefresh = this.issueRefreshToken(refreshToken.clientId, refreshToken.userId, refreshToken.scope);
     return {
       access_token: accessToken.token,
       token_type: 'Bearer',
       expires_in: this.cfg.accessTokenTtlSec,
+      refresh_token: nextRefresh.token,
       scope: refreshToken.scope,
     };
   }

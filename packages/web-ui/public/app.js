@@ -113,8 +113,8 @@ async function consoleLoginIdp(username) {
     localStorage.setItem('jq_principal', JSON.stringify(result.principal));
     localStorage.setItem('jq_expires', String(result.session.expiresAt));
     if (result.idpTokens?.access_token) {
-      let refresh = null;
-      try { refresh = JSON.parse(localStorage.getItem('jq_idp_tokens')).refresh_token; } catch { /* none */ }
+      let refresh = result.idpTokens.refresh_token || null;
+      if (!refresh) { try { refresh = JSON.parse(localStorage.getItem('jq_idp_tokens')).refresh_token; } catch { /* none */ } }
       localStorage.setItem('jq_idp_tokens', JSON.stringify({ refresh_token: refresh, access_token: result.idpTokens.access_token, expires_in: result.idpTokens.expires_in }));
     }
     return result.principal;
@@ -140,13 +140,25 @@ async function rotateIdpSession() {
     localStorage.setItem('jq_principal', JSON.stringify(result.principal));
     localStorage.setItem('jq_expires', String(result.session.expiresAt));
     if (result.idpTokens?.access_token) {
-      localStorage.setItem('jq_idp_tokens', JSON.stringify({ refresh_token: tokens.refresh_token, access_token: result.idpTokens.access_token, expires_in: result.idpTokens.expires_in }));
+      // Refresh-token rotation: persist the NEW refresh token (the old one
+      // was revoked server-side on first use).
+      localStorage.setItem('jq_idp_tokens', JSON.stringify({ refresh_token: result.idpTokens.refresh_token || tokens.refresh_token, access_token: result.idpTokens.access_token, expires_in: result.idpTokens.expires_in }));
     }
     return true;
   } catch { return false; }
 }
 function logout() {
   stopLiveFeed();
+  // Revoke-on-logout parity: invalidate the stored IdP tokens so a stolen
+  // refresh token cannot outlive the session.
+  const tokens = (() => { try { return JSON.parse(localStorage.getItem('jq_idp_tokens')); } catch { return null; } })();
+  if (tokens?.refresh_token || tokens?.access_token) {
+    fetch('/pki/idp/revoke', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: tokens.refresh_token || tokens.access_token }),
+    }).catch(() => {});
+    localStorage.removeItem('jq_idp_tokens');
+  }
   api('POST', '/auth/logout').catch(() => {});
   state.token = null; state.principal = null; state.expiresAt = null;
   localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');

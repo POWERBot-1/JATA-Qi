@@ -209,11 +209,16 @@ export class PkiModule implements IModule {
     return this.idp.userinfo(accessToken);
   }
 
-  /** OIDC refresh_token grant — exchanges a refresh token for a new access token. */
+  /** OIDC refresh_token grant — exchanges a refresh token for a new access token (+ rotated refresh token). */
   idpRefresh(input: { refreshToken: string; clientId: string; clientSecret: string }): TokenResponse {
     const response = this.idp.refresh(input);
     void this.api.bus.emit(PkiEvents.TokensRefreshed, { clientId: input.clientId });
     return response;
+  }
+
+  /** Revoke an IdP access or refresh token (revoke-on-logout parity). */
+  idpRevoke(token: string): boolean {
+    return this.idp.revoke(token);
   }
 
   /**
@@ -225,7 +230,7 @@ export class PkiModule implements IModule {
   async rotateSession(input: { refreshToken: string; clientId: string; clientSecret: string; remoteAddress?: string }): Promise<{
     ok: boolean;
     reason?: string;
-    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    idpTokens?: { access_token: string; expires_in: number; refresh_token?: string; scope?: string };
     session?: { token: string; userId: string; username: string; expiresAt: number };
     principal?: { userId: string; username: string; roles: string[] };
   }> {
@@ -238,9 +243,21 @@ export class PkiModule implements IModule {
     const login = await this.loginWithIdpToken(refreshed.access_token, { remoteAddress: input.remoteAddress });
     if (!login.ok) return { ok: false, reason: login.reason ?? 'session rotation failed' };
     void this.api.bus.emit(PkiEvents.SessionRotated, { userId: login.principal?.userId });
+    // Immutable audit trail for the rotation (best-effort).
+    if (login.principal) {
+      try {
+        const security = this.api.getModule('security') as unknown as { audit: (rec: Record<string, unknown>) => Promise<{ id: string }> };
+        void security.audit({ actor: login.principal.userId, action: 'auth.session.rotated', resource: 'session', result: 'success', detail: { via: 'idp' } }).catch(() => undefined);
+      } catch { /* security absent — skip */ }
+    }
     return {
       ok: true,
-      idpTokens: { access_token: refreshed.access_token, expires_in: refreshed.expires_in, ...(refreshed.scope ? { scope: refreshed.scope } : {}) },
+      idpTokens: {
+        access_token: refreshed.access_token,
+        expires_in: refreshed.expires_in,
+        ...(refreshed.refresh_token ? { refresh_token: refreshed.refresh_token } : {}),
+        ...(refreshed.scope ? { scope: refreshed.scope } : {}),
+      },
       session: login.session,
       principal: login.principal,
     };

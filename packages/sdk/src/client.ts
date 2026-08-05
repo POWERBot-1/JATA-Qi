@@ -190,14 +190,18 @@ export class AuditClient {
 
 export class PkiClient {
   constructor(private c: JataQiClient) {}
-  /** OIDC refresh_token grant — exchange a refresh token for a new access token. */
-  async idpRefresh(refreshToken: string, clientId: string, clientSecret: string): Promise<{ access_token: string; token_type: string; expires_in: number; scope?: string }> {
+  /** OIDC refresh_token grant — new access token + rotated refresh token. */
+  async idpRefresh(refreshToken: string, clientId: string, clientSecret: string): Promise<{ access_token: string; token_type: string; expires_in: number; refresh_token?: string; scope?: string }> {
     return this.c.request('POST', '/pki/idp/refresh', { refreshToken, clientId, clientSecret });
+  }
+  /** Revoke an IdP token (access or refresh) — revoke-on-logout parity. */
+  async revoke(token: string): Promise<{ revoked: boolean }> {
+    return this.c.request('POST', '/pki/idp/revoke', { token });
   }
   /** One-call session rotation — refreshed IdP token + fresh platform session. */
   async rotate(refreshToken: string, clientId: string, clientSecret: string): Promise<{
     ok: boolean; reason?: string;
-    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    idpTokens?: { access_token: string; expires_in: number; refresh_token?: string; scope?: string };
     session?: { token: string; userId: string; username: string; expiresAt: number };
     principal?: { userId: string; username: string; roles: string[] };
   }> {

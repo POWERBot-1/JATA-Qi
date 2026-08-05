@@ -188,7 +188,7 @@ export class TanyaModule implements IModule {
   }
 
   /** OIDC refresh_token grant via the PKI IdP (deep IdP integration). */
-  idpRefresh(input: { refreshToken: string; clientId: string; clientSecret: string }): { access_token: string; token_type: 'Bearer'; expires_in: number; scope?: string } | undefined {
+  idpRefresh(input: { refreshToken: string; clientId: string; clientSecret: string }): { access_token: string; token_type: 'Bearer'; expires_in: number; refresh_token?: string; scope?: string } | undefined {
     if (!this.pki) return undefined;
     try {
       return this.pki.idpRefresh(input);

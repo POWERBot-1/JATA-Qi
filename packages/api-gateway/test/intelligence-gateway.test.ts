@@ -1530,17 +1530,19 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal(tokens.status, 200);
     const tokenBody = tokens.body as { access_token: string; refresh_token: string };
 
-    // Refresh grant.
+    // Refresh grant (rotates the refresh token — the old one is revoked).
     const refreshed = await jsonRequest('POST', `${base}/pki/idp/refresh`, { refreshToken: tokenBody.refresh_token, clientId: creds.clientId, clientSecret: creds.clientSecret });
     assert.equal(refreshed.status, 200);
     assert.ok((refreshed.body as { access_token: string }).access_token);
+    const rotatedRefresh = (refreshed.body as { refresh_token: string }).refresh_token;
+    assert.ok(rotatedRefresh, 'refresh returns a rotated refresh token');
 
     // Bad refresh → 400.
     const bad = await jsonRequest('POST', `${base}/pki/idp/refresh`, { refreshToken: 'nope', clientId: creds.clientId, clientSecret: creds.clientSecret });
     assert.equal(bad.status, 400);
 
-    // Rotate: refreshed IdP token → new platform session (JIT user idp-alice).
-    const rotated = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken: tokenBody.refresh_token, clientId: creds.clientId, clientSecret: creds.clientSecret });
+    // Rotate with the ROTATED refresh token → new platform session (JIT user idp-alice).
+    const rotated = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken: rotatedRefresh, clientId: creds.clientId, clientSecret: creds.clientSecret });
     assert.equal(rotated.status, 200);
     const rotBody = rotated.body as { ok: boolean; idpTokens: { access_token: string }; session: { token: string; username: string }; principal: { roles: string[] } };
     assert.equal(rotBody.ok, true);
@@ -1738,5 +1740,43 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.deepEqual(ids, ['approval-queue-age', 'deny-spike', 'r4-invocation-rate']);
     for (const a of body2.alerts) assert.ok(['firing', 'ok'].includes(a.state));
     for (const a of body2.alerts) assert.ok(['warning', 'critical'].includes(a.severity));
+  });
+
+  it('POST /pki/idp/revoke + rotation audit + rotated refresh token', async () => {
+    // Fresh console client + code flow.
+    const who = await jsonRequest('GET', `${base}/whoami`, undefined, token);
+    const uid = (who.body as { principal: { userId: string } }).principal.userId;
+    const client = await jsonRequest('POST', `${base}/pki/idp/clients`, { name: 'console-harden', redirectUris: ['https://console.example.com/ui'], userId: uid }, token);
+    const creds = client.body as { clientId: string; clientSecret: string };
+    const authz = await jsonRequest('POST', `${base}/pki/idp/authorize`, { clientId: creds.clientId, redirectUri: 'https://console.example.com/ui', userId: uid }, token);
+    const tokens = await jsonRequest('POST', `${base}/pki/idp/token`, { code: (authz.body as { code: string }).code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: 'https://console.example.com/ui' });
+    const refreshToken = (tokens.body as { refresh_token: string }).refresh_token;
+
+    // Rotate → response carries a ROTATED refresh token.
+    const rotated = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken, clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(rotated.status, 200);
+    const rotBody = rotated.body as { idpTokens: { access_token: string; refresh_token: string } };
+    assert.ok(rotBody.idpTokens.refresh_token, 'rotated refresh token returned');
+
+    // Old refresh token is dead.
+    const stale = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken, clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(stale.status, 401);
+
+    // Rotation is audited (auth.session.rotated) — poll for the async write.
+    let audited = 0;
+    for (let i = 0; i < 30; i++) {
+      const r = (await jsonRequest('GET', `${base}/audit?action=auth.session.rotated`, undefined, token)).body as { count: number };
+      audited = r.count;
+      if (audited >= 1) break;
+      await new Promise((res) => setTimeout(res, 25));
+    }
+    assert.ok(audited >= 1, 'rotation audited');
+
+    // Revoke the rotated access token → introspect inactive.
+    const revoked = await jsonRequest('POST', `${base}/pki/idp/revoke`, { token: rotBody.idpTokens.access_token });
+    assert.equal(revoked.status, 200);
+    assert.equal((revoked.body as { revoked: boolean }).revoked, true);
+    const intro = await jsonRequest('POST', `${base}/pki/idp/introspect`, { token: rotBody.idpTokens.access_token });
+    assert.equal((intro.body as { active: boolean }).active, false);
   });
 });

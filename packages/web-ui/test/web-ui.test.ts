@@ -151,6 +151,10 @@ describe('WebUIModule', () => {
     assert.match(js, /\/orgs/, 'my-orgs fetch wired');
     assert.match(js, /state\.myOrgs\[0\]/, 'TANYA defaults to the first org');
     assert.match(js, /\/tanya\/conversations\?orgId=/, 'org-scoped conversation list wired');
+    // Session rotation hardening.
+    assert.match(js, /\/pki\/idp\/revoke/, 'idp revoke endpoint wired on logout');
+    assert.match(js, /result\.idpTokens\.refresh_token \|\| tokens\.refresh_token/, 'rotated refresh token persisted');
+    assert.match(js, /localStorage.removeItem\('jq_idp_tokens'\)/, 'tokens cleared on logout');
     // IdP-first login (client-credentials grant).
     assert.match(js, /\/pki\/idp\/console-login/, 'console-login endpoint wired');
     assert.match(js, /consoleLoginIdp/, 'passwordless IdP login helper present');

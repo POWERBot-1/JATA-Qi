@@ -747,6 +747,7 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/pki/idp/discovery', () => this.pkiIdpDiscovery());
     route('POST', '/pki/idp/login', (req) => this.pkiIdpLogin(req));
     route('POST', '/pki/idp/console-login', (req) => this.pkiIdpConsoleLogin(req));
+    route('POST', '/pki/idp/revoke', (req) => this.pkiIdpRevoke(req));
     route('POST', '/pki/idp/refresh', (req) => this.pkiIdpRefresh(req));
     route('POST', '/pki/idp/rotate', (req) => this.pkiIdpRotate(req));
     route('POST', '/pki/idp/profile', auth('pki:write', (req) => this.pkiIdpProfile(req)));
@@ -3266,10 +3267,18 @@ export class ApiGatewayModule implements IModule {
       return json(400, { error: 'fields "refreshToken", "clientId", and "clientSecret" are required' });
     try {
       const tokens = this.pki.idpRefresh({ refreshToken: b.refreshToken, clientId: b.clientId, clientSecret: b.clientSecret });
-      return json(200, { access_token: tokens.access_token, token_type: tokens.token_type, expires_in: tokens.expires_in, ...(tokens.scope ? { scope: tokens.scope } : {}) });
+      return json(200, { access_token: tokens.access_token, token_type: tokens.token_type, expires_in: tokens.expires_in, ...(tokens.refresh_token ? { refresh_token: tokens.refresh_token } : {}), ...(tokens.scope ? { scope: tokens.scope } : {}) });
     } catch (err) {
       return json(400, { error: (err as Error).message });
     }
+  }
+
+  /** Revoke an IdP token (access or refresh) — revoke-on-logout parity. */
+  private pkiIdpRevoke(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.token !== 'string' || !b.token) return json(400, { error: 'field "token" is required' });
+    return json(200, { revoked: this.pki.idpRevoke(b.token) });
   }
 
   private async pkiIdpRotate(req: GatewayRequest): Promise<GatewayResponse> {

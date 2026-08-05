@@ -328,12 +328,14 @@ describe('TANYA AI conversational product layer', () => {
       const auth = pki.idpAuthorize({ clientId: client.clientId, redirectUri: 'https://app.jataqi.local/cb', scope: 'openid profile', userId: 'ext-u' });
       const tokens = pki.idpToken({ code: auth.code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: 'https://app.jataqi.local/cb' });
 
-      // idpRefresh passthrough.
+      // idpRefresh passthrough (rotates the refresh token).
       const refreshed = tanya.idpRefresh({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
       assert.ok(refreshed?.access_token);
+      assert.ok(refreshed?.refresh_token, 'rotated refresh token returned');
 
-      // rotateSession passthrough — mints a platform session.
-      const rotated = await tanya.rotateSession({ refreshToken: tokens.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
+      // rotateSession passthrough — mints a platform session (uses the
+      // rotated refresh token; the original was revoked by the refresh).
+      const rotated = await tanya.rotateSession({ refreshToken: refreshed!.refresh_token!, clientId: client.clientId, clientSecret: client.clientSecret });
       assert.equal(rotated.ok, true);
       assert.equal(rotated.principal?.username, 'ext');
       assert.deepEqual(rotated.principal?.roles, ['analyst']);
