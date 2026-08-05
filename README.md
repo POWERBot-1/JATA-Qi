@@ -419,6 +419,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/ipam/blocks` · `/ipam/blocks/addresses` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announcements` · `/ipam/stats` | `ipam:read` | IPAM reads |
 | POST | `/tanya/chat` · `/tanya/conversation/delete` · `/tanya/persona` | `tanya:write` | TANYA chat + conversation/persona management |
 | GET | `/tanya/conversations` · `/tanya/conversation` · `/tanya/personas` · `/tanya/stats` · POST `/tanya/identify` | `tanya:read` | TANYA reads + identity |
+| POST | `/tanya/share` (by `recipientUserId` or IdP `email`) · `/tanya/unshare` | `tanya:write` | Multi-user sharing (ownership enforced) |
+| GET | `/tanya/shared` · `/tanya/shares?id=` | `tanya:read` | Shared-with-me inbox + owner grant list |
 | GET | `/tools` · `/tools/capability` · `/tool` · `/approvals?status=pending\|approved\|denied\|expired\|all` | `tool:read`/`approval:decide` | Tool registry + approval queue/history |
 | POST | `/tools` · `/tools/sync` | `tool:read` | Register tools / sync the agent surface into governance |
 | GET | `/tools/governance-stats` | `tool:read` | Aggregate governance posture (registry, approvals, invocations, decisions) |
@@ -533,7 +535,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **CDN Provider** (PRX — edge nodes, zones with origins + TTLs, origin shield, purge, hit-rate analytics)
 - ✅ **Email Provider** (PRX — MX/SPF/DKIM/DMARC domains, verified sending, mailboxes, inbound DMARC disposition)
 - ✅ **RIR Member — IPAM** (PRX — IPv4/IPv6 allocations from all five RIRs, ASN holdings, CIDR subnetting, anycast announcements, utilization analytics)
-- ✅ **TANYA AI — Conversational Product Layer** (Phase 6 — personas materialized as agents with dedicated system prompts, persistent chat with tool-call history + conversation context, PKI IdP identity bridge, per-user stats; gateway `/tanya/*`, CLI `tanya`; WebSocket streaming: `tanya.chat` → `tanya.chunk`… → `tanya.done` over `/ws` with AI-safety gate + `tanya.chat.completed` bus events)
+- ✅ **TANYA AI — Conversational Product Layer** (Phase 6 — personas materialized as agents with dedicated system prompts, persistent chat with tool-call history + conversation context, PKI IdP identity bridge, per-user stats; gateway `/tanya/*`, CLI `tanya`; WebSocket streaming: `tanya.chat` → `tanya.chunk`… → `tanya.done` over `/ws` with AI-safety gate + `tanya.chat.completed` bus events; **multi-user**: org-scoped conversations (`orgId` on chat/list), recipient-scoped sharing with ownership enforcement + expiry, and **sharing through the IdP identity bridge** — share by IdP email/sub resolved to the platform user)
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
 - ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)

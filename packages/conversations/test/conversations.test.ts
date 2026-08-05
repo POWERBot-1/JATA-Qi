@@ -194,4 +194,71 @@ describe('ConversationsModule', () => {
     assert.ok(events.includes('message'));
     assert.ok(events.includes('shared'));
   });
+
+  // --- multi-user: org scope + recipient sharing ---
+
+  it('creates org-scoped conversations and filters lists by orgId', async () => {
+    const orgA = await mod.create(userId, { title: 'Org A Chat', orgId: 'org-a' });
+    const orgB = await mod.create(userId, { title: 'Org B Chat', orgId: 'org-b' });
+    const plain = await mod.create(userId, { title: 'Personal Chat' });
+
+    assert.equal(orgA.orgId, 'org-a');
+    assert.equal(orgB.orgId, 'org-b');
+    assert.equal(plain.orgId, undefined, 'orgId optional (backward compatible)');
+
+    const a = await mod.list(userId, { orgId: 'org-a' });
+    assert.equal(a.total, 1);
+    assert.equal(a.conversations[0]!.id, orgA.id);
+
+    const b = await mod.list(userId, { orgId: 'org-b' });
+    assert.equal(b.total, 1);
+    assert.equal(b.conversations[0]!.id, orgB.id);
+
+    // No filter → all (backward compatible).
+    const all = await mod.list(userId);
+    assert.ok(all.total >= 3);
+  });
+
+  it('shares to a recipient, lists shared-with, and unshares', async () => {
+    const conv = await mod.create('owner-1', { title: 'Shared Chat' });
+
+    const share = await mod.shareTo(conv.id, 'recipient-1', { sharedBy: 'owner-1' });
+    assert.equal(share.conversationId, conv.id);
+    assert.equal(share.recipientUserId, 'recipient-1');
+
+    // Idempotent re-share refreshes the grant (no duplicate).
+    const again = await mod.shareTo(conv.id, 'recipient-1', { sharedBy: 'owner-1' });
+    assert.equal(again.id, share.id);
+    assert.equal((await mod.sharesFor(conv.id)).length, 1);
+
+    const shared = await mod.listSharedWith('recipient-1');
+    assert.equal(shared.length, 1);
+    assert.equal(shared[0]!.id, conv.id);
+
+    // Other users don't see it.
+    assert.equal((await mod.listSharedWith('someone-else')).length, 0);
+
+    // Expiring share disappears after expiry.
+    const exp = await mod.create('owner-2', { title: 'Expiring' });
+    await mod.shareTo(exp.id, 'recipient-2', { sharedBy: 'owner-2', expiresInDays: 0 }); // expires immediately
+    const expShares = (await mod.sharesFor(exp.id)).filter((s) => s.recipientUserId === 'recipient-2');
+    assert.equal(expShares.length, 1);
+    // listSharedWith filters expired grants: simulate by creating an expired grant directly.
+    const { randomUUID } = await import('node:crypto');
+    const expired = { id: randomUUID(), conversationId: exp.id, recipientUserId: 'recipient-3', createdAt: Date.now() - 1000, expiresAt: Date.now() - 500 };
+    const storage = kernel.getModule('storage') as unknown as { collection: <T extends { id: string }>(n: string) => Promise<{ put: (v: T) => Promise<void> }> };
+    const sharesCol = await storage.collection<{ id: string }>('conversations.shares');
+    await sharesCol.put(expired as never);
+    assert.equal((await mod.listSharedWith('recipient-3')).length, 0, 'expired grants hidden');
+
+    // Unshare removes the grant.
+    assert.equal(await mod.unshareFrom(conv.id, 'recipient-1'), true);
+    assert.equal((await mod.listSharedWith('recipient-1')).length, 0);
+    assert.equal(await mod.unshareFrom(conv.id, 'recipient-1'), false, 'second unshare is a no-op');
+  });
+
+  it('shareTo validates conversation + recipient', async () => {
+    await assert.rejects(mod.shareTo('nope', 'r'), /not found/);
+    await assert.rejects(mod.shareTo((await mod.create('u', { title: 'x' })).id, ''), /recipientUserId is required/);
+  });
 });

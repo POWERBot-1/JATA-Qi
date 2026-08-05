@@ -457,6 +457,7 @@ function renderView(view, data) {
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
         <select id="tanya-persona" style="max-width:200px"><option value="main">main</option></select>
         <select id="tanya-conv" style="flex:1;min-width:220px"><option value="">— new conversation —</option></select>
+        <input id="tanya-org" placeholder="org id (optional)" style="max-width:180px">
         <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
       </div>
       <div id="tanya-messages" class="chat-log">
@@ -465,6 +466,15 @@ function renderView(view, data) {
       <div style="display:flex;gap:8px;margin-top:12px">
         <input id="tanya-input" placeholder="Ask TANYA anything..." autofocus>
         <button class="btn-primary" onclick="sendTanya()">Send</button>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">SHARE CURRENT CONVERSATION (multi-user)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="tanya-share-email" placeholder="recipient email (IdP identity)" style="flex:1;min-width:200px">
+          <input id="tanya-share-user" placeholder="or platform userId" style="flex:1;min-width:200px">
+          <button class="btn-ghost" onclick="shareTanyaConversation()">Share</button>
+        </div>
+        <div id="tanya-shared" style="margin-top:10px"></div>
       </div>
     </div>`;
     // populate personas + conversations after render
@@ -477,6 +487,15 @@ function renderView(view, data) {
       (data.conversations || []).forEach((c) => {
         cSel.insertAdjacentHTML('beforeend', `<option value="${esc(c.id)}">${esc(c.title)} (${c.messageCount})</option>`);
       });
+      // Shared-with-me inbox.
+      api('GET', '/tanya/shared').then((r) => {
+        const box = $('#tanya-shared');
+        if (!box) return;
+        const convs = r.conversations || [];
+        box.innerHTML = convs.length === 0
+          ? '<p style="color:var(--text-dim);font-size:12px">No conversations shared with you yet.</p>'
+          : '<div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">SHARED WITH ME</div>' + convs.map((c) => `<div class="feed-item"><span>📥</span><div><div class="feed-type">${esc(c.title)}</div><div class="feed-dim">by ${esc(c.ownerId)}</div></div></div>`).join('');
+      }).catch(() => {});
     }, 0);
   } else if (view === 'dashboards') {
     const g = data.gstats || {};
@@ -776,14 +795,15 @@ function sendTanya() {
   input.value = '';
   const persona = $('#tanya-persona')?.value || 'main';
   const convId = $('#tanya-conv')?.value || undefined;
+  const orgId = $('#tanya-org')?.value.trim() || undefined;
   let ws;
-  try { ws = new WebSocket(tanyaWsUrl()); } catch { sendTanyaHttp(message, persona, convId); return; }
+  try { ws = new WebSocket(tanyaWsUrl()); } catch { sendTanyaHttp(message, persona, convId, orgId); return; }
   let finished = false;
-  const fallback = () => { if (!finished) sendTanyaHttp(message, persona, convId); };
+  const fallback = () => { if (!finished) sendTanyaHttp(message, persona, convId, orgId); };
   ws.onerror = fallback;
   ws.onclose = () => { if (!finished) fallback(); };
   ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'tanya.chat', message, persona, ...(convId ? { conversationId: convId } : {}) }));
+    ws.send(JSON.stringify({ type: 'tanya.chat', message, persona, ...(convId ? { conversationId: convId } : {}), ...(orgId ? { orgId } : {}) }));
   };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
@@ -810,9 +830,9 @@ function sendTanya() {
     }
   };
 }
-async function sendTanyaHttp(message, persona, convId) {
+async function sendTanyaHttp(message, persona, convId, orgId) {
   try {
-    const result = await api('POST', '/tanya/chat', { message, persona, ...(convId ? { conversationId: convId } : {}) });
+    const result = await api('POST', '/tanya/chat', { message, persona, ...(convId ? { conversationId: convId } : {}), ...(orgId ? { orgId } : {}) });
     appendChatMessage('assistant', result.reply, result.toolCalls);
     state.conv = result.conversationId;
     const cSel = $('#tanya-conv');
@@ -823,6 +843,20 @@ async function sendTanyaHttp(message, persona, convId) {
   } catch (e) {
     appendChatMessage('system', `Error: ${e.message}`);
   }
+}
+async function shareTanyaConversation() {
+  const convId = $('#tanya-conv')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  const email = $('#tanya-share-email')?.value.trim();
+  const userId = $('#tanya-share-user')?.value.trim();
+  if (!email && !userId) { alert('Enter a recipient email or platform userId.'); return; }
+  try {
+    const body = { conversationId: convId, ...(email ? { email } : {}), ...(userId ? { recipientUserId: userId } : {}) };
+    const r = await api('POST', '/tanya/share', body);
+    alert(`Shared: ${r.share.recipientUserId}${r.share.via ? ` (via ${r.share.via})` : ''}`);
+    $('#tanya-share-email').value = '';
+    $('#tanya-share-user').value = '';
+  } catch (e) { alert(e.message); }
 }
 async function loadTanyaConversation(id) {
   if (!id) {
@@ -1021,6 +1055,7 @@ window.autoArrange = autoArrange;
 window.doSearch = doSearch;
 window.syncTools = syncTools;
 window.decideApproval = decideApproval;
+window.shareTanyaConversation = shareTanyaConversation;
 window.runQiL = runQiL;
 $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });

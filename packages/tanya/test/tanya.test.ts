@@ -360,4 +360,90 @@ describe('TANYA AI conversational product layer', () => {
       await kernel.shutdown();
     }
   });
+
+  it('scopes conversations to an organization (create + continue + mismatch)', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const result = await tanya.chat({ userId: 'u1', message: 'org hello', orgId: 'org-acme' });
+      const conv = await tanya.getConversation(result.conversationId);
+      assert.equal(conv!.orgId, 'org-acme');
+
+      // Continuing within the same org works.
+      const cont = await tanya.chat({ userId: 'u1', conversationId: result.conversationId, message: 'more', orgId: 'org-acme' });
+      assert.equal(cont.conversationId, result.conversationId);
+
+      // Continuing with a mismatched org is rejected.
+      await assert.rejects(
+        tanya.chat({ userId: 'u1', conversationId: result.conversationId, message: 'x', orgId: 'org-other' }),
+        /does not belong to this organization/,
+      );
+
+      // Org filter in listConversations.
+      const listed = await tanya.listConversations('u1', { orgId: 'org-acme' });
+      assert.equal(listed.total, 1);
+      const other = await tanya.listConversations('u1', { orgId: 'org-other' });
+      assert.equal(other.total, 0);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('shares conversations with a platform user (ownership enforced)', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const result = await tanya.chat({ userId: 'owner', message: 'share me' });
+
+      const share = await tanya.shareWith(result.conversationId, 'owner', 'recipient');
+      assert.equal(share.recipientUserId, 'recipient');
+      assert.equal(share.conversationId, result.conversationId);
+
+      // Recipient sees it; others don't.
+      const inbox = await tanya.sharedWithMe('recipient');
+      assert.equal(inbox.length, 1);
+      assert.equal(inbox[0]!.id, result.conversationId);
+      assert.equal((await tanya.sharedWithMe('stranger')).length, 0);
+
+      // Ownership enforced: a non-owner cannot share.
+      await assert.rejects(tanya.shareWith(result.conversationId, 'hacker', 'x'), /does not belong to this user/);
+      await assert.rejects(tanya.shareWith('nope', 'owner', 'x'), /not found/);
+
+      // Owner view of grants + unshare.
+      const grants = await tanya.sharesFor(result.conversationId, 'owner');
+      assert.equal(grants.length, 1);
+      assert.equal(await tanya.unshareFrom(result.conversationId, 'owner', 'recipient'), true);
+      assert.equal((await tanya.sharedWithMe('recipient')).length, 0);
+      await assert.rejects(tanya.sharesFor(result.conversationId, 'stranger'), /not owned/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('shares through the IdP identity bridge (email resolution)', async () => {
+    const kernel = await bootTanya({ withPki: true });
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      // Recipient registers an IdP identity (console linking registers
+      // sub = platform userId + email/preferred_username).
+      assert.equal(tanya.registerIdentity({ sub: 'recipient-user-id', email: 'recipient@jataqi.local', preferred_username: 'recipient' }), true);
+
+      const result = await tanya.chat({ userId: 'owner', message: 'bridge share' });
+      const share = await tanya.shareWithIdpIdentity(result.conversationId, 'owner', { email: 'Recipient@Jataqi.Local' });
+      assert.equal(share.recipientUserId, 'recipient-user-id');
+      assert.equal(share.via, 'email');
+
+      // The resolved recipient can list it.
+      const inbox = await tanya.sharedWithMe('recipient-user-id');
+      assert.equal(inbox.length, 1);
+
+      // Unknown IdP identity → clear error.
+      await assert.rejects(tanya.shareWithIdpIdentity(result.conversationId, 'owner', { email: 'nobody@jataqi.local' }), /no platform user found/);
+
+      // Sub-based resolution also works (console flow uses sub = userId).
+      assert.deepEqual(tanya.resolveIdpIdentity({ sub: 'recipient-user-id' }), { userId: 'recipient-user-id', via: 'sub' });
+    } finally {
+      await kernel.shutdown();
+    }
+  });
 });

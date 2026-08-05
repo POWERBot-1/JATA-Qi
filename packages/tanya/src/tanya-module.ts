@@ -44,6 +44,8 @@ export interface TanyaChatInput {
   title?: string;
   /** How many prior turns to feed the agent as context (default 20). */
   maxHistory?: number;
+  /** Organization scope (multi-user TANYA): new conversations get orgId; continuing an existing conversation requires a matching orgId. */
+  orgId?: string;
   /**
    * Optional streaming callback: receives the assistant reply in word chunks
    * as it is produced (WebSocket clients render these progressively).
@@ -96,6 +98,8 @@ export class TanyaModule implements IModule {
   private agents?: AgentRuntimeModule;
   private pki?: PkiModule;
   private personas = new Map<string, TanyaPersona>([[DEFAULT_PERSONA.id, DEFAULT_PERSONA]]);
+  /** IdP identity bridge index: email/preferred_username → platform userId (sub). */
+  private idpIdentities = new Map<string, { userId: string; via: 'email' | 'sub' }>();
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -159,7 +163,28 @@ export class TanyaModule implements IModule {
       preferred_username: user.preferred_username,
       ...(Array.isArray(user.roles) ? { roles: user.roles } : {}),
     });
+    // Index IdP identities → platform userId for the sharing bridge.
+    if (user.email) this.idpIdentities.set(user.email.toLowerCase(), { userId: user.sub, via: 'email' });
+    if (user.preferred_username) this.idpIdentities.set(user.preferred_username.toLowerCase(), { userId: user.sub, via: 'email' });
     return true;
+  }
+
+  /** Resolve an IdP identity (email or sub) to a platform userId. */
+  resolveIdpIdentity(identity: { email?: string; sub?: string }): { userId: string; via: 'email' | 'sub' } | undefined {
+    if (identity.email) {
+      const hit = this.idpIdentities.get(identity.email.toLowerCase());
+      if (hit) return hit;
+    }
+    if (identity.sub) {
+      const hit = this.idpIdentities.get(identity.sub.toLowerCase());
+      if (hit) return hit;
+      // The IdP sub IS the platform userId in the console linking flow —
+      // accept it directly when it was registered through the IdP bridge.
+      for (const entry of this.idpIdentities.values()) {
+        if (entry.userId === identity.sub) return { userId: identity.sub, via: 'sub' };
+      }
+    }
+    return undefined;
   }
 
   /** OIDC refresh_token grant via the PKI IdP (deep IdP integration). */
@@ -207,11 +232,13 @@ export class TanyaModule implements IModule {
       conv = await this.conversations.get(input.conversationId);
       if (!conv) throw new Error(`conversation ${input.conversationId} not found`);
       if (conv.userId !== input.userId) throw new Error('conversation does not belong to this user');
+      if (input.orgId && conv.orgId !== input.orgId) throw new Error('conversation does not belong to this organization');
     } else {
       conv = await this.conversations.create(input.userId, {
         title: input.title ?? autoTitle(input.message),
         systemPrompt: persona.systemPrompt,
         tags: ['tanya', persona.id],
+        ...(input.orgId ? { orgId: input.orgId } : {}),
       });
     }
 
@@ -283,6 +310,56 @@ export class TanyaModule implements IModule {
   async deleteConversation(id: string): Promise<boolean> {
     if (!this.conversations) throw new Error('conversations module not registered on this kernel');
     return this.conversations.delete(id);
+  }
+
+  // ---- multi-user sharing (via the IdP identity bridge) ---------------------
+
+  /**
+   * Share a conversation with a platform user. The owner must own the
+   * conversation (ownership enforcement). Returns the share grant.
+   */
+  async shareWith(conversationId: string, ownerId: string, recipientUserId: string, opts: { expiresInDays?: number } = {}): Promise<{ id: string; conversationId: string; recipientUserId: string; expiresAt?: number }> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const conv = await this.conversations.get(conversationId);
+    if (!conv) throw new Error(`conversation ${conversationId} not found`);
+    if (conv.userId !== ownerId) throw new Error('conversation does not belong to this user');
+    const share = await this.conversations.shareTo(conversationId, recipientUserId, { ...opts, sharedBy: ownerId });
+    return { id: share.id, conversationId: share.conversationId, recipientUserId: share.recipientUserId!, ...(share.expiresAt ? { expiresAt: share.expiresAt } : {}) };
+  }
+
+  /**
+   * Share through the IdP identity bridge: the recipient is identified by
+   * their IdP identity (email or sub), which TANYA resolves to a platform
+   * userId via identities registered through the PKI IdP bridge.
+   */
+  async shareWithIdpIdentity(conversationId: string, ownerId: string, identity: { email?: string; sub?: string }, opts: { expiresInDays?: number } = {}): Promise<{ id: string; conversationId: string; recipientUserId: string; via: 'email' | 'sub'; expiresAt?: number }> {
+    const resolved = this.resolveIdpIdentity(identity);
+    if (!resolved) throw new Error('no platform user found for the given IdP identity');
+    const share = await this.shareWith(conversationId, ownerId, resolved.userId, opts);
+    return { ...share, via: resolved.via };
+  }
+
+  /** Conversations shared TO a user (multi-user inbox). */
+  async sharedWithMe(userId: string): Promise<Array<{ id: string; title: string; ownerId: string; updatedAt: number; sharedBy?: string }>> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const convs = await this.conversations.listSharedWith(userId);
+    return convs.map((c) => ({ id: c.id, title: c.title, ownerId: c.userId, updatedAt: c.updatedAt }));
+  }
+
+  /** All share grants of a conversation (owner view). */
+  async sharesFor(conversationId: string, ownerId: string): Promise<Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const conv = await this.conversations.get(conversationId);
+    if (!conv || conv.userId !== ownerId) throw new Error('conversation not found or not owned by this user');
+    return (await this.conversations.sharesFor(conversationId)).map((s) => ({ id: s.id, ...(s.recipientUserId ? { recipientUserId: s.recipientUserId } : {}), createdAt: s.createdAt, ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}) }));
+  }
+
+  /** Remove a recipient-scoped share (owner only). */
+  async unshareFrom(conversationId: string, ownerId: string, recipientUserId: string): Promise<boolean> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const conv = await this.conversations.get(conversationId);
+    if (!conv || conv.userId !== ownerId) throw new Error('conversation not found or not owned by this user');
+    return this.conversations.unshareFrom(conversationId, recipientUserId);
   }
 
   // ---- stats ---------------------------------------------------------------

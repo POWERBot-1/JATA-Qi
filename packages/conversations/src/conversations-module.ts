@@ -6,10 +6,11 @@ import { randomUUID } from 'node:crypto';
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { ICollection } from '@jataqi/storage';
 import { ConversationEvents } from './types.js';
-import type { Conversation, Folder, Message, MessageRole } from './types.js';
+import type { Conversation, ConversationShare, Folder, Message, MessageRole } from './types.js';
 
 const COL_CONVERSATIONS = 'conversations.all';
 const COL_FOLDERS = 'conversations.folders';
+const COL_SHARES = 'conversations.shares';
 
 export interface ListOptions {
   folderId?: string;
@@ -18,6 +19,8 @@ export interface ListOptions {
   search?: string;
   limit?: number;
   offset?: number;
+  /** Organization scope filter (multi-user TANYA). */
+  orgId?: string;
 }
 
 export class ConversationsModule implements IModule {
@@ -28,6 +31,7 @@ export class ConversationsModule implements IModule {
   private api!: KernelApi;
   private conversations!: ICollection<Conversation>;
   private folders!: ICollection<Folder>;
+  private shares!: ICollection<ConversationShare>;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -36,6 +40,7 @@ export class ConversationsModule implements IModule {
     };
     this.conversations = await storage.collection<Conversation>(COL_CONVERSATIONS);
     this.folders = await storage.collection<Folder>(COL_FOLDERS);
+    this.shares = await storage.collection<ConversationShare>(COL_SHARES);
     kernel.container.registerValue('conversations', this);
     kernel.logger.info('conversations module initialized');
   }
@@ -45,7 +50,7 @@ export class ConversationsModule implements IModule {
 
   // --- conversations --------------------------------------------------------
 
-  async create(userId: string, opts: { title?: string; systemPrompt?: string; modelPreference?: string; mode?: Conversation['mode']; folderId?: string; temporary?: boolean; tags?: string[] } = {}): Promise<Conversation> {
+  async create(userId: string, opts: { title?: string; systemPrompt?: string; modelPreference?: string; mode?: Conversation['mode']; folderId?: string; temporary?: boolean; tags?: string[]; orgId?: string } = {}): Promise<Conversation> {
     const now = Date.now();
     const conv: Conversation = {
       id: randomUUID(),
@@ -60,9 +65,10 @@ export class ConversationsModule implements IModule {
       ...(opts.mode ? { mode: opts.mode } : {}),
       ...(opts.temporary ? { temporary: true } : {}),
       ...(opts.tags ? { tags: opts.tags } : {}),
+      ...(opts.orgId ? { orgId: opts.orgId } : {}),
     };
     await this.conversations.put(conv);
-    await this.api.bus.emit(ConversationEvents.ConversationCreated, { id: conv.id, userId });
+    await this.api.bus.emit(ConversationEvents.ConversationCreated, { id: conv.id, userId, ...(opts.orgId ? { orgId: opts.orgId } : {}) });
     return conv;
   }
 
@@ -76,6 +82,7 @@ export class ConversationsModule implements IModule {
     const all = (await this.conversations.all()).filter((c) => c.userId === userId);
     let filtered = all;
     if (opts.folderId) filtered = filtered.filter((c) => c.folderId === opts.folderId);
+    if (opts.orgId) filtered = filtered.filter((c) => c.orgId === opts.orgId);
     if (opts.pinned !== undefined) filtered = filtered.filter((c) => (c.pinned ?? false) === opts.pinned);
     if (opts.archived !== undefined) filtered = filtered.filter((c) => (c.archived ?? false) === opts.archived);
     else filtered = filtered.filter((c) => !c.archived); // hide archived by default
@@ -240,6 +247,70 @@ export class ConversationsModule implements IModule {
     if (!conv) return;
     conv.sharedId = undefined;
     await this.conversations.put(conv);
+  }
+
+  // --- recipient-scoped sharing (multi-user) -------------------------------
+
+  /**
+   * Share a conversation with a specific recipient (multi-user TANYA). The
+   * share is a persistent grant the recipient can list via listSharedWith.
+   * Idempotent per recipient; returns the share record.
+   */
+  async shareTo(conversationId: string, recipientUserId: string, opts: { expiresInDays?: number; sharedBy?: string } = {}): Promise<ConversationShare> {
+    const conv = await this.conversations.get(conversationId);
+    if (!conv) throw new Error(`conversations: "${conversationId}" not found`);
+    if (!recipientUserId) throw new Error('conversations: recipientUserId is required');
+    const now = Date.now();
+    const all = await this.shares.all();
+    const existing = all.find((s) => s.conversationId === conversationId && s.recipientUserId === recipientUserId);
+    if (existing) {
+      // Refresh the grant (new expiry window).
+      existing.expiresAt = opts.expiresInDays ? now + opts.expiresInDays * 86_400_000 : undefined;
+      existing.sharedBy = opts.sharedBy ?? existing.sharedBy;
+      await this.shares.put(existing);
+      return existing;
+    }
+    const share: ConversationShare = {
+      id: randomUUID(),
+      conversationId,
+      recipientUserId,
+      createdAt: now,
+      ...(opts.expiresInDays ? { expiresAt: now + opts.expiresInDays * 86_400_000 } : {}),
+      ...(opts.sharedBy ? { sharedBy: opts.sharedBy } : {}),
+    };
+    await this.shares.put(share);
+    await this.api.bus.emit(ConversationEvents.ConversationSharedTo, { conversationId, recipientUserId, shareId: share.id });
+    return share;
+  }
+
+  /** Remove a recipient-scoped share grant. */
+  async unshareFrom(conversationId: string, recipientUserId: string): Promise<boolean> {
+    const all = await this.shares.all();
+    const share = all.find((s) => s.conversationId === conversationId && s.recipientUserId === recipientUserId);
+    if (!share) return false;
+    await this.shares.delete(share.id);
+    await this.api.bus.emit(ConversationEvents.ConversationUnsharedFrom, { conversationId, recipientUserId });
+    return true;
+  }
+
+  /** All share grants of a conversation (public + recipient-scoped). */
+  async sharesFor(conversationId: string): Promise<ConversationShare[]> {
+    const all = await this.shares.all();
+    return all.filter((s) => s.conversationId === conversationId);
+  }
+
+  /** Conversations shared TO a user (not expired, not archived). */
+  async listSharedWith(userId: string): Promise<Conversation[]> {
+    const now = Date.now();
+    const shares = (await this.shares.all()).filter((s) => s.recipientUserId === userId && (!s.expiresAt || s.expiresAt > now));
+    const convs = await this.conversations.all();
+    const out: Conversation[] = [];
+    for (const s of shares) {
+      const conv = convs.find((c) => c.id === s.conversationId);
+      if (conv && !conv.archived) out.push(conv);
+    }
+    out.sort((a, b) => b.updatedAt - a.updatedAt);
+    return out;
   }
 
   // --- export ---------------------------------------------------------------

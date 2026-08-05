@@ -126,6 +126,12 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // Multi-user TANYA (org scope + sharing).
+    assert.match(js, /\/tanya\/share/, 'share endpoint wired');
+    assert.match(js, /\/tanya\/shared/, 'shared-with-me endpoint wired');
+    assert.match(js, /shareTanyaConversation/, 'share action present');
+    assert.match(js, /tanya-org/, 'org scope input rendered');
+    assert.match(js, /recipient email \(IdP identity\)/, 'IdP-identity sharing UI present');
     // Deep IdP integration (refresh + rotation).
     assert.match(js, /\/pki\/idp\/rotate/, 'session rotation endpoint wired');
     assert.match(js, /\/pki\/idp\/token/, 'idp authorization-code exchange wired');

@@ -44,6 +44,8 @@ export interface Conversation {
   mode?: 'standard' | 'reasoning' | 'deep-research';
   /** Tags for search. */
   tags?: string[];
+  /** Organization scope (multi-user TANYA — conversations belong to an org). */
+  orgId?: string;
 }
 
 export interface Folder {
@@ -54,11 +56,16 @@ export interface Folder {
   createdAt: number;
 }
 
+/** A share grant: public (no recipientUserId) or recipient-scoped. */
 export interface ConversationShare {
   id: string;
   conversationId: string;
   createdAt: number;
   expiresAt?: number;
+  /** Recipient platform userId; absent = public link share. */
+  recipientUserId?: string;
+  /** Shared by this user (owner). */
+  sharedBy?: string;
 }
 
 export const ConversationEvents = Object.freeze({
@@ -66,5 +73,7 @@ export const ConversationEvents = Object.freeze({
   MessageAdded: 'conversation.message.added',
   ConversationDeleted: 'conversation.deleted',
   ConversationShared: 'conversation.shared',
+  ConversationSharedTo: 'conversation.shared_to',
+  ConversationUnsharedFrom: 'conversation.unshared_from',
   ConversationPinned: 'conversation.pinned',
 } as const);

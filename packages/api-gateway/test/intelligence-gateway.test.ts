@@ -1555,4 +1555,57 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const badRotate = await jsonRequest('POST', `${base}/pki/idp/rotate`, { refreshToken: 'nope', clientId: creds.clientId, clientSecret: creds.clientSecret });
     assert.equal(badRotate.status, 401);
   });
+
+  it('multi-user TANYA: org-scoped chat + sharing via the IdP identity bridge', async () => {
+    // Register a second user (recipient) + login.
+    await jsonRequest('POST', `${base}/auth/register`, { username: 'tanya-recipient', password: 'pw', roles: ['developer'] });
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const recToken = (recLogin.body as { token: string }).token;
+
+    // Owner links an IdP identity for the recipient (admin can upsert profiles).
+    // The console linking flow registers sub = platform userId.
+    const who = await jsonRequest('GET', `${base}/whoami`, undefined, recToken);
+    const recUserId = (who.body as { principal: { userId: string } }).principal.userId;
+    await jsonRequest('POST', `${base}/pki/idp/profile`, { sub: recUserId, preferred_username: 'tanya-recipient', email: 'tanya-recipient@jataqi.local', roles: ['developer'] }, token);
+    // TANYA learns the mapping via /tanya/identify? No — registerIdentity is module-side.
+    // Use the tanya module directly for the identity index (mirrors the UI flow).
+    const tanya = kernel.getModule<TanyaModule>('tanya');
+    tanya.registerIdentity({ sub: recUserId, email: 'tanya-recipient@jataqi.local', preferred_username: 'tanya-recipient' });
+
+    // Org-scoped chat.
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'org-scoped hello', orgId: 'org-x' }, token);
+    assert.equal(chat.status, 200);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+
+    // Org filter on the list.
+    const listed = await jsonRequest('GET', `${base}/tanya/conversations?orgId=org-x`, undefined, token);
+    assert.equal((listed.body as { total: number }).total, 1);
+
+    // Share with the recipient via IdP email.
+    const share = await jsonRequest('POST', `${base}/tanya/share`, { conversationId: convId, email: 'tanya-recipient@jataqi.local' }, token);
+    assert.equal(share.status, 201);
+    const shareBody = share.body as { share: { recipientUserId: string; via: string } };
+    assert.equal(shareBody.share.recipientUserId, recUserId);
+    assert.equal(shareBody.share.via, 'email');
+
+    // Recipient sees the shared conversation.
+    const inbox = await jsonRequest('GET', `${base}/tanya/shared`, undefined, recToken);
+    assert.equal((inbox.body as { count: number }).count, 1);
+
+    // Owner grant list.
+    const grants = await jsonRequest('GET', `${base}/tanya/shares?id=${convId}`, undefined, token);
+    assert.equal((grants.body as { count: number }).count, 1);
+
+    // Unshare → recipient loses access.
+    const unshare = await jsonRequest('POST', `${base}/tanya/unshare`, { conversationId: convId, recipientUserId: recUserId }, token);
+    assert.equal(unshare.status, 200);
+    assert.equal((unshare.body as { removed: boolean }).removed, true);
+    const inboxAfter = await jsonRequest('GET', `${base}/tanya/shared`, undefined, recToken);
+    assert.equal((inboxAfter.body as { count: number }).count, 0);
+
+    // Ownership enforced over HTTP.
+    const hack = await jsonRequest('POST', `${base}/tanya/share`, { conversationId: convId, recipientUserId: 'x' }, recToken);
+    assert.equal(hack.status, 400);
+    assert.match((hack.body as { error: string }).error, /does not belong to this user/);
+  });
 });
