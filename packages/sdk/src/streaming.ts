@@ -199,5 +199,35 @@ export class StreamingClient {
     return this.run({ type: 'chat', message, ...(conversationId ? { conversationId } : {}) }, 'chat.done', handlers);
   }
 
+  /**
+   * Subscribe to platform bus events broadcast over /ws (security, workflow,
+   * memory, tool governance, ...). Returns an unsubscribe function.
+   *
+   * Topics match by exact name or prefix — e.g. 'security' receives
+   * security.user.login, security.user.logout, security.auth.denied.
+   */
+  subscribe(topics: string | string[], handler: (event: { type: string; data: unknown; ts: number }) => void): () => void {
+    const list = Array.isArray(topics) ? topics : [topics];
+    const ws = new WebSocket(this.url());
+    let closed = false;
+    const send = (): void => {
+      try { ws.send(JSON.stringify({ op: 'subscribe', topics: list })); } catch { /* socket may be mid-close */ }
+    };
+    ws.onopen = send;
+    ws.onmessage = (ev) => {
+      let msg: { type?: string; data?: unknown; ts?: number };
+      try { msg = JSON.parse(String(ev.data)); } catch { return; }
+      if (!msg.type || msg.type === 'realtime.connected') return;
+      handler({ type: msg.type, data: msg.data, ts: msg.ts ?? Date.now() });
+    };
+    const unsubscribe = (): void => {
+      if (closed) return;
+      closed = true;
+      try { ws.send(JSON.stringify({ op: 'unsubscribe', topics: list })); } catch { /* ignore */ }
+      try { ws.close(); } catch { /* ignore */ }
+    };
+    return unsubscribe;
+  }
+
   close(): void { this.closed = true; }
 }

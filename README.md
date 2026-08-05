@@ -544,7 +544,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
 - ✅ **Adaptive Dashboard** (Phase 5 step 3 — widget framework, responsive layout engine, AI personalization)
 - ✅ **Admin Console Web UI** (Phase 5 step 4 — `/ui` SPA served by the gateway: TANYA chat with personas + conversation history streaming over `/ws` (word-by-word chunks, HTTP fallback), QiL console streaming plan steps live, adaptive dashboard layouts (create/AI-adapt/auto-arrange), federated search console, memory/learning/FX views, PRX engine views (cloud/CDN/email/IPAM), tool-governance console (sync + approvals), system health/readiness/identity views)
-- ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, bearer-token auth, reconnect with backoff, handshake watchdog; `examples/sdk-streaming.mjs`)
+- ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, `subscribe(topics)` for platform bus events, bearer-token auth, reconnect with backoff, handshake watchdog; `examples/sdk-streaming.mjs`)
 - ✅ **Auth polish** (`GET /auth/session` expiry introspection; web UI register-first flow (Sign In / Create Account), session validation on restore, live countdown + auto-logout on expiry, global 401 handling; SDK `auth.session()`)
 - ✅ **Universal Wallet** (Phase 2 — double-entry ledger consolidating finance/commerce/game-economy wallets; escrow, treasury, multi-currency)
 - ✅ **Payments** (Phase 3 — M-Pesa, Flutterwave, Pesapal, Airtel Money, PayPal, Stripe adapters)

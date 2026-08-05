@@ -120,4 +120,39 @@ describe('RealtimeModule', () => {
     await new Promise((r) => setTimeout(r, 50)); // close propagates
     assert.ok(mod.clientCount <= before + 1);
   });
+
+  it('default event set covers the platform bus (memory, tools, tanya)', async () => {
+    // Boot a second module WITHOUT an eventTypes override → DEFAULT_EVENTS.
+    const k2 = createTestKernel();
+    const mod2 = new RealtimeModule();
+    k2.register(mod2);
+    await k2.boot();
+    const server2 = http.createServer();
+    await new Promise<void>((r) => server2.listen(0, '127.0.0.1', r));
+    const port2 = (server2.address() as AddressInfo).port;
+    mod2.attach(server2, { authenticate: async (t) => (t === 'valid' ? { userId: 'u1', username: 'alice', roles: ['developer'] } as PrincipalLike : undefined) });
+
+    const c = await wsClient(port2, '/ws', 'valid');
+    await c.recv(); // connected
+    c.send(JSON.stringify({ op: 'subscribe', topics: ['memory', 'tool', 'tanya'] }));
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Emit platform bus events → they should broadcast automatically.
+    await k2.bus.emit('memory.recorded', { id: 'm1', category: 'feature_usage' });
+    await k2.bus.emit('tool.invoked', { toolId: 't1', status: 'success' });
+    await k2.bus.emit('tanya.chat.completed', { conversationId: 'c1', persona: 'main' });
+
+    const got: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const msg = JSON.parse(await c.recv()) as { type: string };
+      got.push(msg.type);
+    }
+    assert.ok(got.includes('memory.recorded'), 'memory.recorded broadcast');
+    assert.ok(got.includes('tool.invoked'), 'tool.invoked broadcast');
+    assert.ok(got.includes('tanya.chat.completed'), 'tanya.chat.completed broadcast');
+    c.close();
+    await k2.shutdown();
+    server2.closeAllConnections?.();
+    await new Promise<void>((r) => server2.close(() => r()));
+  });
 });

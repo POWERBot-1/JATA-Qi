@@ -24,8 +24,13 @@ export interface RealtimeConfig {
 interface Client { ws: WebSocket; principal?: PrincipalLike; topics: Set<string> }
 
 const DEFAULT_EVENTS = [
-  'security.user.login', 'security.user.logout', 'security.auth.denied',
-  'orchestrator.run', 'dr.backup.run', 'readiness.capability.updated',
+  'security.user.login', 'security.user.logout', 'security.user.registered', 'security.auth.denied',
+  'security.session.revoked', 'security.session.expired', 'security.audit.appended',
+  'orchestrator.run', 'orchestrator.execution.started', 'orchestrator.step.completed',
+  'dr.backup.run', 'readiness.capability.updated',
+  'memory.recorded', 'memory.expired', 'memory.purged',
+  'tool.registered', 'tool.invoked', 'tool.failed', 'tool.approval.requested', 'tool.approval.decided',
+  'tanya.chat.completed',
 ];
 
 export class RealtimeModule implements IModule {

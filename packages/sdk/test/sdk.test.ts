@@ -289,4 +289,45 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     // Re-login for the streaming tests below.
     await client.auth.login('sdk-user', 'pw123');
   });
+
+  it('subscribes to platform bus events over /ws (prefix topics)', async () => {
+    await client.auth.login('sdk-user', 'pw123');
+    const events: Array<{ type: string }> = [];
+    const unsub = client.streaming.subscribe(['security'], (ev) => events.push(ev));
+
+    // Login broadcasts security.user.login to subscribed clients.
+    await client.auth.logout();
+    await new Promise((r) => setTimeout(r, 300));
+    await client.auth.login('sdk-user', 'pw123');
+    await new Promise((r) => setTimeout(r, 500));
+
+    assert.ok(events.some((e) => e.type === 'security.user.login'), 'received security.user.login broadcast');
+    unsub();
+  });
+
+  it('unsubscribe stops receiving events', async () => {
+    await client.auth.login('sdk-user', 'pw123');
+    const events: Array<{ type: string }> = [];
+    const unsub = client.streaming.subscribe(['security'], (ev) => events.push(ev));
+    await new Promise((r) => setTimeout(r, 200));
+    unsub();
+    await client.auth.logout();
+    await new Promise((r) => setTimeout(r, 300));
+    await client.auth.login('sdk-user', 'pw123');
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(events.length, 0, 'no events after unsubscribe');
+  });
+
+  it('receives tanya.chat.completed broadcasts from the platform bus', async () => {
+    await client.auth.login('sdk-user', 'pw123');
+    const events: Array<{ type: string; data: { conversationId?: string } }> = [];
+    const unsub = client.streaming.subscribe(['tanya'], (ev) => events.push(ev as { type: string; data: { conversationId?: string } }));
+    await new Promise((r) => setTimeout(r, 200));
+    await client.streaming.tanyaChat('broadcast check');
+    await new Promise((r) => setTimeout(r, 400));
+    const completed = events.find((e) => e.type === 'tanya.chat.completed');
+    assert.ok(completed, 'received tanya.chat.completed');
+    assert.ok(completed!.data?.conversationId, 'carries the conversation id');
+    unsub();
+  });
 });
