@@ -240,4 +240,24 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(stats, /"invocations"/);
     assert.match(stats, /"decisions"/);
   });
+
+  it('org create + list + accept work', async () => {
+    const created = await jataqi('org', 'create', 'CLI Org', '--slug', 'cli-org');
+    assert.match(created, /created [0-9a-f-]{36} \(CLI Org\)/);
+    // Each invocation boots a fresh OS: list sees no memberships for 'cli'.
+    const list = await jataqi('org', 'list');
+    assert.match(list, /0 organization\(s\)/);
+    // Bogus token → clear error, no crash.
+    const accept = await jataqi('org', 'accept', 'bogus-token');
+    assert.match(accept, /invitation not found/);
+  });
+
+  it('tanya shared + share validation work', async () => {
+    // Fresh OS: nothing shared with 'cli' yet.
+    const shared = await jataqi('tanya', 'shared');
+    assert.match(shared, /0 shared conversation\(s\)/);
+    // Sharing a nonexistent conversation fails cleanly.
+    const share = await jataqi('tanya', 'share', 'nope', '--user', 'x');
+    assert.match(share, /not found/);
+  });
 });

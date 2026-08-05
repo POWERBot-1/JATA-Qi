@@ -425,4 +425,92 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const bad = await anon.pki.consoleLogin(creds.clientId, 'wrong');
     assert.equal(bad.ok, false);
   });
+
+  it('tanya namespace: chat, org scope, sharing, shared inbox', async () => {
+    await client.auth.login('admin', 'admin');
+
+    // Org-scoped chat.
+    const chat = await client.tanya.chat('SDK tanya org hello', { orgId: 'sdk-org' });
+    assert.ok(chat.conversationId);
+    assert.equal(chat.persona, 'main');
+    assert.ok(chat.reply.length > 0);
+
+    // Org-filtered list.
+    const listed = await client.tanya.listConversations({ orgId: 'sdk-org' });
+    assert.ok(listed.total >= 1);
+
+    // Create a recipient + share to them by userId.
+    await fetch(`http://127.0.0.1:${port}/auth/register`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sdk-recipient', password: 'pw', roles: ['developer'] }),
+    });
+    const recLogin = await (await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sdk-recipient', password: 'pw' }),
+    })).json() as { token: string; principal: { userId: string } };
+    const recUserId = recLogin.principal.userId;
+
+    const share = await client.tanya.share(chat.conversationId, { recipientUserId: recUserId });
+    assert.equal(share.share.recipientUserId, recUserId);
+
+    // Recipient's shared-with-me inbox via the SDK.
+    const rec = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    rec.setToken(recLogin.token);
+    const inbox = await rec.tanya.shared();
+    assert.equal(inbox.count, 1);
+    assert.equal(inbox.conversations[0]!.id, chat.conversationId);
+
+    // Owner grant list + unshare.
+    const grants = await client.tanya.shares(chat.conversationId);
+    assert.equal(grants.count, 1);
+    const removed = await client.tanya.unshare(chat.conversationId, recUserId);
+    assert.equal(removed.removed, true);
+    assert.equal((await rec.tanya.shared()).count, 0);
+
+    // Stats + personas.
+    const stats = await client.tanya.stats();
+    assert.ok(stats.conversations >= 1);
+    const personas = await client.tanya.personas();
+    assert.ok(personas.personas.some((p) => p.id === 'main'));
+  });
+
+  it('alerts namespace evaluates governance SLA rules', async () => {
+    await client.auth.login('admin', 'admin');
+    const { alerts } = await client.alerts.list();
+    const ids = alerts.map((a) => a.id);
+    assert.deepEqual(ids, ['approval-queue-age', 'deny-spike', 'r4-invocation-rate']);
+    for (const a of alerts) {
+      assert.ok(['firing', 'ok'].includes(a.state));
+      assert.ok(['warning', 'critical'].includes(a.severity));
+      assert.ok(a.checkedAt > 0);
+    }
+  });
+
+  it('org namespace: create, invite, accept, members', async () => {
+    await client.auth.login('admin', 'admin');
+    const org = await client.org.create('SDK Org', 'sdk-org');
+    const orgId = (org.organization as { id: string }).id;
+
+    const invitation = await client.org.invite(orgId, 'sdk-recipient@example.com');
+    const token = invitation.invitation.token;
+    assert.ok(token);
+
+    // Recipient accepts via the SDK.
+    const recLogin = await (await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sdk-recipient', password: 'pw' }),
+    })).json() as { token: string };
+    const rec = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    rec.setToken(recLogin.token);
+    await rec.org.acceptInvitation(token);
+
+    // Both see the org.
+    const adminOrgs = await client.org.mine();
+    assert.ok(adminOrgs.organizations.some((o) => o.id === orgId));
+    const recOrgs = await rec.org.mine();
+    assert.ok(recOrgs.organizations.some((o) => o.id === orgId), 'recipient joined the org');
+
+    const members = await client.org.members(orgId);
+    assert.ok(members.members.length >= 2);
+  });
 });

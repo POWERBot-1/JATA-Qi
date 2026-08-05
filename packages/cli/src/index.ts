@@ -35,6 +35,7 @@ import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
 import type { TanyaModule } from '@jataqi/tanya';
+import type { OrganizationsModule } from '@jataqi/organizations';
 import type { ToolIntelligenceModule } from '@jataqi/tool-intelligence';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
@@ -80,7 +81,8 @@ Commands:
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
-  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats.
+  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares.
+  org <sub>           Organizations: create|invite|accept|list|members.
   tools <sub>         Tool governance: sync|list|stats|invoke|approvals|approve.
   repl                Start an interactive REPL.
   help                Show this help.
@@ -121,6 +123,7 @@ async function main() {
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
   const tanya = kernel.getModule<TanyaModule>('tanya');
+  const orgs = kernel.getModule<OrganizationsModule>('organizations');
   const toolIntel = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
@@ -1836,6 +1839,68 @@ async function main() {
         }
         break;
       }
+      case 'org': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'create': {
+            const rest = args.slice(2);
+            const nameParts: string[] = [];
+            for (let i = 0; i < rest.length; i++) {
+              if (rest[i]!.startsWith('--')) { i++; continue; } // skip flag + value
+              nameParts.push(rest[i]!);
+            }
+            const name = nameParts.join(' ') || flag('name') || '';
+            if (!name) { console.error('Usage: jataqi org create "<name>" [--slug x]'); process.exit(1); }
+            const org = await orgs.createOrganization(name, 'cli', flag('slug'));
+            console.log(`created ${org.id} (${org.name})`);
+            break;
+          }
+          case 'list': {
+            const mine = await orgs.organizationsForUser('cli');
+            for (const o of mine) console.log(`- ${o.id} ${o.name} (${o.slug})`);
+            console.log(`${mine.length} organization(s)`);
+            break;
+          }
+          case 'invite': {
+            const orgId = args[2] ?? flag('org');
+            const target = args[3] ?? flag('target');
+            if (!orgId || !target) { console.error('Usage: jataqi org invite <orgId> <email|userId> [--role member]'); process.exit(1); }
+            try {
+              const invitation = await orgs.invite(orgId, target, (flag('role') as never) ?? 'member', 'cli');
+              console.log(`invitation created — token: ${invitation.token}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'accept': {
+            const token = args[2] ?? flag('token');
+            if (!token) { console.error('Usage: jataqi org accept <token>'); process.exit(1); }
+            try {
+              const membership = await orgs.acceptInvitation(token, 'cli');
+              console.log(`joined ${membership.orgId} as ${membership.role}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'members': {
+            const orgId = args[2] ?? flag('org');
+            if (!orgId) { console.error('Usage: jataqi org members <orgId>'); process.exit(1); }
+            const members = await orgs.listMembers(orgId);
+            for (const m of members) console.log(`- ${m.userId} [${m.role}]`);
+            console.log(`${members.length} member(s)`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi org create|list|invite|accept|members'); process.exit(1);
+        }
+        break;
+      }
       case 'tanya': {
         const sub = args[1];
         const flag = (name: string): string | undefined => {
@@ -1903,8 +1968,52 @@ async function main() {
             console.log(JSON.stringify(await tanya.stats('cli'), null, 2));
             break;
           }
+          case 'share': {
+            const convId = flag('conv') ?? args[2];
+            const email = flag('email');
+            const userId = flag('user');
+            if (!convId || (!email && !userId)) { console.error('Usage: jataqi tanya share <convId> --email <e> | --user <userId> [--days n]'); process.exit(1); }
+            try {
+              const share = email
+                ? await tanya.shareWithIdpIdentity(convId, 'cli', { email }, { ...(flag('days') ? { expiresInDays: Number(flag('days')) } : {}) })
+                : await tanya.shareWith(convId, 'cli', userId!, { ...(flag('days') ? { expiresInDays: Number(flag('days')) } : {}) });
+              console.log(`shared ${convId} with ${share.recipientUserId}${(share as { via?: string }).via ? ` (via ${(share as { via?: string }).via})` : ''}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'unshare': {
+            const convId = args[2];
+            const userId = args[3];
+            if (!convId || !userId) { console.error('Usage: jataqi tanya unshare <convId> <userId>'); process.exit(1); }
+            try {
+              console.log(`removed: ${await tanya.unshareFrom(convId, 'cli', userId)}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'shared': {
+            const inbox = await tanya.sharedWithMe('cli');
+            for (const c of inbox) console.log(`- ${c.id} ${c.title} (by ${c.ownerId})`);
+            console.log(`${inbox.length} shared conversation(s)`);
+            break;
+          }
+          case 'shares': {
+            const convId = args[2];
+            if (!convId) { console.error('Usage: jataqi tanya shares <convId>'); process.exit(1); }
+            try {
+              const grants = await tanya.sharesFor(convId, 'cli');
+              for (const g of grants) console.log(`- ${g.recipientUserId ?? 'public'} ${g.expiresAt ? `(expires ${new Date(g.expiresAt).toISOString()})` : ''}`);
+              console.log(`${grants.length} grant(s)`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
           default:
-            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats'); process.exit(1);
+            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares'); process.exit(1);
         }
         break;
       }
@@ -1917,7 +2026,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ') || line.startsWith('org ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

@@ -59,6 +59,8 @@ export class JataQiClient {
   readonly mfa: MFAClient;
   readonly pki: PkiClient;
   readonly audit: AuditClient;
+  readonly tanya: TanyaClient;
+  readonly alerts: AlertsClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -92,6 +94,8 @@ export class JataQiClient {
     this.mfa = new MFAClient(this);
     this.pki = new PkiClient(this);
     this.audit = new AuditClient(this);
+    this.tanya = new TanyaClient(this);
+    this.alerts = new AlertsClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -183,6 +187,72 @@ export class AuditClient {
     if (opts.result) q.result = opts.result;
     if (opts.limit) q.limit = String(opts.limit);
     return q;
+  }
+}
+
+// --- TANYA AI -------------------------------------------------------------------
+
+export class TanyaClient {
+  constructor(private c: JataQiClient) {}
+  /** Run a conversational turn (persona + optional conversation/org scope). */
+  async chat(message: string, opts: { persona?: string; conversationId?: string; orgId?: string; title?: string } = {}): Promise<{
+    conversationId: string; userId: string; persona: string; agent: string;
+    reply: string; toolCalls: Array<{ name: string; input: Record<string, unknown>; result?: unknown }>;
+    finishedReason: string; messageCount: number;
+  }> {
+    return this.c.request('POST', '/tanya/chat', { message, ...opts });
+  }
+  /** List conversations (org-scoped filter supported). */
+  async listConversations(opts: { orgId?: string; search?: string; limit?: number; offset?: number } = {}): Promise<{ conversations: Array<{ id: string; title: string; updatedAt: number; pinned: boolean; messageCount: number; persona?: string }>; total: number }> {
+    return this.c.request('GET', '/tanya/conversations', undefined, this.q(opts));
+  }
+  async getConversation(id: string): Promise<{ id: string; title: string; messages: Array<{ id: string; role: string; content: string; createdAt: number; toolCalls?: unknown[] }>; orgId?: string }> {
+    return this.c.request('GET', '/tanya/conversation', undefined, { id });
+  }
+  async deleteConversation(id: string): Promise<{ deleted: boolean }> {
+    return this.c.request('POST', '/tanya/conversation/delete', { id });
+  }
+  async personas(): Promise<{ personas: Array<{ id: string; name: string; description: string; agentName: string }> }> {
+    return this.c.request('GET', '/tanya/personas');
+  }
+  async createPersona(id: string, systemPrompt: string, opts: { name?: string; description?: string } = {}): Promise<{ persona: unknown }> {
+    return this.c.request('POST', '/tanya/persona', { id, systemPrompt, ...opts });
+  }
+  async identify(accessToken: string): Promise<{ identity: { sub: string; name?: string; email?: string } }> {
+    return this.c.request('POST', '/tanya/identify', { accessToken });
+  }
+  async stats(): Promise<{ conversations: number; messages: number; personas: number }> {
+    return this.c.request('GET', '/tanya/stats');
+  }
+  /** Share a conversation with a platform user (or by IdP email). */
+  async share(conversationId: string, opts: { recipientUserId?: string; email?: string; expiresInDays?: number } = {}): Promise<{ share: { id: string; conversationId: string; recipientUserId: string; via?: string; expiresAt?: number } }> {
+    return this.c.request('POST', '/tanya/share', { conversationId, ...opts });
+  }
+  async unshare(conversationId: string, recipientUserId: string): Promise<{ removed: boolean }> {
+    return this.c.request('POST', '/tanya/unshare', { conversationId, recipientUserId });
+  }
+  /** Conversations shared with me (multi-user inbox). */
+  async shared(): Promise<{ conversations: Array<{ id: string; title: string; ownerId: string; updatedAt: number }>; count: number }> {
+    return this.c.request('GET', '/tanya/shared');
+  }
+  /** Share grants of a conversation (owner view). */
+  async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
+    return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
+  }
+  private q(opts: Record<string, string | number | undefined>): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined) out[k] = String(v);
+    return out;
+  }
+}
+
+// --- Governance alerts ----------------------------------------------------------
+
+export class AlertsClient {
+  constructor(private c: JataQiClient) {}
+  /** Evaluate the governance SLA rules (approval queue / DENY spike / R4 rate). */
+  async list(): Promise<{ checkedAt: number; alerts: Array<{ id: string; severity: string; state: string; message: string; value: number; threshold: number; checkedAt: number }> }> {
+    return this.c.request('GET', '/governance/alerts');
   }
 }
 
@@ -414,6 +484,18 @@ export class OrgClient {
   }
   async action(input: Record<string, unknown>): Promise<unknown> { return this.c.request('POST', '/org', input); }
   async members(id: string): Promise<{ members: unknown[] }> { return this.c.request('GET', '/org/members', undefined, { id }); }
+  /** Invite a colleague (by email or userId) — returns the invitation token. */
+  async invite(orgId: string, target: string, role: 'member' | 'admin' | 'owner' = 'member'): Promise<{ invitation: { token: string; target: string; role: string } }> {
+    return this.c.request('POST', '/org', { id: orgId, action: 'invite', target, role });
+  }
+  /** Accept an invitation with its token. */
+  async acceptInvitation(token: string): Promise<{ membership: unknown }> {
+    return this.c.request('POST', '/org', { id: 'invite', action: 'accept', token });
+  }
+  /** Organizations the current user belongs to. */
+  async mine(): Promise<{ organizations: Array<{ id: string; name: string; slug: string; ownerId: string }> }> {
+    return this.c.request('GET', '/orgs');
+  }
 }
 
 export class NotificationsClient {
