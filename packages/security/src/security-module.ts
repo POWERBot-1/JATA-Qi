@@ -282,6 +282,34 @@ export class SecurityModule implements IModule {
     return undefined;
   }
 
+  /**
+   * Introspect a session token without creating one: returns expiry/role
+   * metadata for live sessions, or undefined for unknown, revoked, or
+   * expired tokens. Used by the gateway /auth/session endpoint so clients
+   * (web consoles, SDKs) can detect expiry before it bites.
+   */
+  async sessionInfo(tokenOrHeader: string | undefined | null): Promise<{ token: string; expiresAt: number; createdAt: number; roles: string[]; username: string; userId: string; revokedAt?: number } | undefined> {
+    const token = extractBearer(tokenOrHeader);
+    if (!token) return undefined;
+    const rec = await this.readSession(token);
+    if (!rec) return undefined;
+    if (rec.revokedAt) return undefined;
+    if (rec.expiresAt < Date.now()) {
+      await this.expireSession(token, rec.userId);
+      return undefined;
+    }
+    this.maybeFlushLastUsed(token);
+    return {
+      token: rec.token,
+      expiresAt: rec.expiresAt,
+      createdAt: rec.createdAt,
+      roles: [...rec.roles],
+      username: rec.username,
+      userId: rec.userId,
+      ...(rec.revokedAt ? { revokedAt: rec.revokedAt } : {}),
+    };
+  }
+
   // --- session lifecycle (persistence) ------------------------------------
 
   /** Build a SessionRecord from a session + role snapshot. */

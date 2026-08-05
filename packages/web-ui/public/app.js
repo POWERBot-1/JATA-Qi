@@ -4,7 +4,7 @@
 // TANYA conversational AI, digital memory, learning, search, FX, and the PRX
 // engine views (cloud / CDN / email / IPAM).
 
-const state = { token: null, principal: null, view: 'dashboard', data: {}, conv: null, personas: [] };
+const state = { token: null, principal: null, view: 'dashboard', data: {}, conv: null, personas: [], expiresAt: null, authNotice: '' };
 const $ = (s) => document.querySelector(s);
 const app = $('#app');
 
@@ -15,7 +15,16 @@ async function api(method, path, body) {
   const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const text = await res.text();
   const json = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    // Expired / revoked session — drop auth and return to the login screen.
+    if (res.status === 401 && state.token && !path.startsWith('/auth/')) {
+      state.token = null; state.principal = null; state.expiresAt = null;
+      localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
+      state.authNotice = 'Your session expired — please sign in again.';
+      render();
+    }
+    throw new Error(json?.error || `HTTP ${res.status}`);
+  }
   return json;
 }
 // Like api() but returns { status, body } instead of throwing (for flows that
@@ -35,21 +44,67 @@ async function login(username, password) {
   const r = await api('POST', '/auth/login', { username, password });
   state.token = r.token;
   state.principal = r.principal;
+  state.expiresAt = r.expiresAt ?? Date.now() + 3600_000;
   localStorage.setItem('jq_token', r.token);
   localStorage.setItem('jq_principal', JSON.stringify(r.principal));
+  localStorage.setItem('jq_expires', String(state.expiresAt));
+  state.authNotice = '';
   render();
+}
+async function registerAndLogin(username, password) {
+  await api('POST', '/auth/register', { username, password, roles: ['developer'] });
+  await login(username, password);
 }
 function logout() {
   api('POST', '/auth/logout').catch(() => {});
-  state.token = null; state.principal = null;
-  localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal');
+  state.token = null; state.principal = null; state.expiresAt = null;
+  localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
   render();
 }
-function checkStoredAuth() {
+/** Restore a stored session only when the token is still live (expiry-aware). */
+async function checkStoredAuth() {
   const t = localStorage.getItem('jq_token');
   const p = localStorage.getItem('jq_principal');
-  if (t && p) { state.token = t; state.principal = JSON.parse(p); return true; }
-  return false;
+  const exp = Number(localStorage.getItem('jq_expires') ?? 0);
+  if (!t || !p) return false;
+  if (exp && exp < Date.now()) {
+    localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
+    state.authNotice = 'Your session expired — please sign in again.';
+    return false;
+  }
+  try {
+    const s = await api('GET', '/auth/session');
+    if (!s?.ok) throw new Error('session invalid');
+    state.token = t; state.principal = JSON.parse(p); state.expiresAt = s.expiresAt;
+    localStorage.setItem('jq_expires', String(s.expiresAt));
+    return true;
+  } catch {
+    localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
+    return false;
+  }
+}
+/** Countdown + auto-logout when the session expires. */
+function startSessionTimer() {
+  if (state._sessionTimer) clearInterval(state._sessionTimer);
+  state._sessionTimer = setInterval(() => {
+    if (!state.token || !state.expiresAt) return;
+    const el = $('#session-countdown');
+    const remaining = state.expiresAt - Date.now();
+    if (el) {
+      if (remaining <= 0) el.textContent = 'expired';
+      else {
+        const s = Math.floor(remaining / 1000);
+        el.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+      }
+    }
+    if (remaining <= 0) {
+      clearInterval(state._sessionTimer);
+      state.token = null; state.principal = null; state.expiresAt = null;
+      localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
+      state.authNotice = 'Your session expired — please sign in again.';
+      render();
+    }
+  }, 1000);
 }
 
 // --- Navigation ---
@@ -713,12 +768,20 @@ function runQiL(mode) {
 // --- Render ---
 function render() {
   if (!state.token) {
+    const notice = state.authNotice ? `<div class="auth-notice">${esc(state.authNotice)}</div>` : '';
     app.innerHTML = `<div class="auth-overlay"><div class="auth-box">
       <h2>🧠 JATA Qi</h2>
+      <div class="auth-tabs">
+        <button id="tab-signin" class="auth-tab active" onclick="setAuthTab('signin')">Sign In</button>
+        <button id="tab-register" class="auth-tab" onclick="setAuthTab('register')">Create Account</button>
+      </div>
+      ${notice}
       <div class="form-group"><label>Username</label><input id="login-user" placeholder="admin" autofocus></div>
-      <div class="form-group"><label>Password</label><input id="login-pass" type="password" placeholder="admin"></div>
+      <div class="form-group"><label>Password</label><input id="login-pass" type="password" placeholder="••••••••"></div>
+      <div class="form-group" id="login-roles-group" style="display:none"><label>Roles</label>
+        <select id="login-roles"><option value="developer" selected>developer</option><option value="analyst">analyst</option></select></div>
       <div class="auth-error" id="login-err">Invalid credentials</div>
-      <button class="btn-primary" style="width:100%" onclick="doLogin()">Sign In</button>
+      <button class="btn-primary" style="width:100%" id="login-submit" onclick="doLogin()">Sign In</button>
     </div></div>`;
     $('#login-pass')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
     return;
@@ -728,18 +791,34 @@ function render() {
       <div class="sidebar-brand">🧠 JATA<span>Qi</span></div>
       ${NAV.map((n) => `<div class="nav-item ${state.view === n.id ? 'active' : ''}" onclick="loadView('${n.id}')">${n.icon} <span>${n.label}</span></div>`).join('')}
       <div style="padding:16px 20px;border-top:1px solid var(--border);margin-top:auto">
-        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">${esc(state.principal?.username)}</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">${esc(state.principal?.username)}</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">session <span id="session-countdown">--:--</span></div>
         <button class="btn-ghost" style="width:100%" onclick="logout()">Sign Out</button>
       </div>
     </div>
     <div class="main main-content"></div>
   </div>`;
   loadView(state.view);
+  startSessionTimer();
 }
 
+let authMode = 'signin';
+window.setAuthTab = (mode) => {
+  authMode = mode;
+  $('#tab-signin').classList.toggle('active', mode === 'signin');
+  $('#tab-register').classList.toggle('active', mode === 'register');
+  $('#login-roles-group').style.display = mode === 'register' ? '' : 'none';
+  $('#login-submit').textContent = mode === 'register' ? 'Create Account' : 'Sign In';
+};
 window.doLogin = () => {
   const u = $('#login-user').value, p = $('#login-pass').value;
-  login(u, p).catch(() => { $('#login-err').style.display = 'block'; });
+  const submit = () => authMode === 'register' ? registerAndLogin(u, p) : login(u, p);
+  submit().catch(() => {
+    $('#login-err').textContent = authMode === 'register'
+      ? 'Registration failed (username may already exist)'
+      : 'Invalid credentials';
+    $('#login-err').style.display = 'block';
+  });
 };
 window.loadView = loadView;
 window.logout = logout;
@@ -756,4 +835,7 @@ $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') s
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 
 // Init.
-render();
+(async () => {
+  if (await checkStoredAuth()) { render(); startSessionTimer(); }
+  else render();
+})();

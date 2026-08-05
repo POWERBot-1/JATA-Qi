@@ -1374,4 +1374,24 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal(after.invocations.total, before.invocations.total + 1);
     assert.equal(after.invocations.byStatus.pending_approval, (before.invocations.byStatus.pending_approval ?? 0) + 1);
   });
+
+  it('GET /auth/session introspects the live session with expiry', async () => {
+    // Valid session (admin token from the shared boot).
+    const ok = await jsonRequest('GET', `${base}/auth/session`, undefined, token);
+    assert.equal(ok.status, 200);
+    const s = ok.body as { ok: boolean; expiresAt: number; remainingMs: number; username: string; roles: string[] };
+    assert.equal(s.ok, true);
+    assert.ok(s.expiresAt > Date.now());
+    assert.ok(s.remainingMs > 0 && s.remainingMs <= 3_600_000, 'within default TTL');
+    assert.equal(s.username, 'admin');
+    assert.ok(s.roles.includes('admin'));
+
+    // Expired/unknown token → 401.
+    const bad = await jsonRequest('GET', `${base}/auth/session`, undefined, 'deadbeef');
+    assert.equal(bad.status, 401);
+
+    // No token → 401.
+    const anon = await jsonRequest('GET', `${base}/auth/session`);
+    assert.equal(anon.status, 401);
+  });
 });

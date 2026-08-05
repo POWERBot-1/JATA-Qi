@@ -145,6 +145,15 @@ export class AuthClient {
   }
   async logout(): Promise<void> { await this.c.request('POST', '/auth/logout'); this.c.clearToken(); }
   async whoami(): Promise<{ principal: { userId: string; username: string; roles: string[] } }> { return this.c.request('GET', '/whoami'); }
+  /** Session introspection — expiresAt/remainingMs for the current token (undefined when unauthenticated). */
+  async session(): Promise<{ ok: boolean; expiresAt: number; remainingMs: number; username: string; userId: string; roles: string[] } | undefined> {
+    if (!this.c.getToken()) return undefined;
+    try {
+      return await this.c.request('GET', '/auth/session');
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 // --- Health / Identity / Readiness --------------------------------------------

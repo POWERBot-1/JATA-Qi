@@ -431,6 +431,7 @@ export class ApiGatewayModule implements IModule {
 
     // Authenticated.
     route('POST', '/auth/logout', auth(null, (req) => this.logout(req)));
+    route('GET', '/auth/session', auth(null, (req) => this.sessionInfo(req)));
     route('POST', '/auth/apikey', auth(null, (req) => this.createApiKey(req)));
     route('POST', '/qil', auth('qil:run', (req) => this.runQiL(req)));
     route('POST', '/objective', auth('qil:run', (req) => this.runObjective(req)));
@@ -1279,6 +1280,20 @@ export class ApiGatewayModule implements IModule {
     const token = this.bearer(req);
     if (token) await this.sec.logout(token);
     return json(200, { ok: true });
+  }
+
+  /** Session introspection for clients (web consoles, SDKs) — expiry-aware. */
+  private async sessionInfo(req: GatewayRequest): Promise<GatewayResponse> {
+    const info = await this.sec.sessionInfo(this.bearer(req));
+    if (!info) return json(401, { error: 'no active session' });
+    return json(200, {
+      ok: true,
+      expiresAt: info.expiresAt,
+      remainingMs: Math.max(0, info.expiresAt - Date.now()),
+      username: info.username,
+      userId: info.userId,
+      roles: info.roles,
+    });
   }
 
   private async createApiKey(req: GatewayRequest): Promise<GatewayResponse> {

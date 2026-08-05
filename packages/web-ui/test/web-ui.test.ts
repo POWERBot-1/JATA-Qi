@@ -122,6 +122,13 @@ describe('WebUIModule', () => {
     // Tool governance observability.
     assert.match(js, /\/tools\/governance-stats/, 'governance stats endpoint wired');
     assert.match(js, /Decisions ALLOW/, 'decision stat cards rendered');
+    // Auth polish: session introspection + register-first + countdown.
+    assert.match(js, /\/auth\/session/, 'session introspection wired');
+    assert.match(js, /registerAndLogin/, 'register-first flow present');
+    assert.match(js, /setAuthTab/, 'sign-in / create-account tabs present');
+    assert.match(js, /session-countdown/, 'session countdown rendered');
+    assert.match(js, /startSessionTimer/, 'expiry auto-logout wired');
+    assert.match(js, /res.status === 401/, 'global 401 handling clears auth');
     // QiL live console.
     assert.match(js, /qil: async/, 'qil view present');
     assert.match(js, /runQiL/, 'qil run action present');

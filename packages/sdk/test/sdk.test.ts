@@ -269,4 +269,24 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
       /safety filter/,
     );
   });
+
+  it('introspects the session with expiry via auth.session()', async () => {
+    await client.auth.login('sdk-user', 'pw123');
+    const s = await client.auth.session();
+    assert.ok(s, 'session info present after login');
+    assert.equal(s!.ok, true);
+    assert.ok(s!.expiresAt > Date.now());
+    assert.ok(s!.remainingMs > 0);
+    assert.equal(s!.username, 'sdk-user');
+
+    // Unauthenticated client → undefined (no throw).
+    const anon = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    assert.equal(await anon.auth.session(), undefined);
+
+    // After logout the session is gone.
+    await client.auth.logout();
+    assert.equal(await client.auth.session(), undefined);
+    // Re-login for the streaming tests below.
+    await client.auth.login('sdk-user', 'pw123');
+  });
 });

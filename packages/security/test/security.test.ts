@@ -151,4 +151,30 @@ describe('SecurityModule (kernel integration)', () => {
     assert.ok(records.length >= 2);
     assert.ok(records[0]!.ts >= records[1]!.ts);
   });
+
+  it('sessionInfo introspects live sessions and hides revoked/expired ones', async () => {
+    await sec.registerUser('session-probe', 'pw', ['developer']);
+    const res = await sec.login('session-probe', 'pw');
+    const token = res.session!.token;
+
+    const info = await sec.sessionInfo(token);
+    assert.ok(info, 'live session introspected');
+    assert.equal(info!.username, 'session-probe');
+    assert.equal(info!.userId, res.principal!.userId);
+    assert.ok(info!.expiresAt > Date.now());
+    assert.ok(info!.createdAt > 0);
+    assert.deepEqual(info!.roles, ['developer']);
+
+    // Bearer-header form works too.
+    const viaHeader = await sec.sessionInfo(`Bearer ${token}`);
+    assert.ok(viaHeader);
+
+    // Revoked session → undefined.
+    await sec.logout(token);
+    assert.equal(await sec.sessionInfo(token), undefined);
+
+    // Unknown / empty tokens → undefined.
+    assert.equal(await sec.sessionInfo('nope'), undefined);
+    assert.equal(await sec.sessionInfo(undefined), undefined);
+  });
 });

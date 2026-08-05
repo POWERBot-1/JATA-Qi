@@ -51,6 +51,10 @@ tr:hover { background: var(--surface2); }
 
 /* Auth */
 .auth-overlay { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.auth-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+.auth-tab { flex: 1; background: var(--surface2); color: var(--text-dim); padding: 8px; border-radius: var(--radius); }
+.auth-tab.active { background: var(--primary); color: #fff; }
+.auth-notice { background: rgba(245,158,11,.12); color: var(--yellow); border: 1px solid rgba(245,158,11,.3); border-radius: var(--radius); padding: 8px 12px; font-size: 13px; margin-bottom: 16px; }
 .auth-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; width: 360px; }
 .auth-box h2 { margin-bottom: 24px; text-align: center; }
 .auth-box .form-group { margin-bottom: 16px; }
