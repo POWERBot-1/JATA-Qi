@@ -368,15 +368,16 @@ const VIEWS = {
     };
   },
   dashboards: async () => {
-    const [layouts, widgets, analytics, gstats] = await Promise.allSettled([
+    const [layouts, widgets, analytics, gstats, rt] = await Promise.allSettled([
       api('GET', '/dashboard/layouts'), api('GET', '/dashboard/widgets'), api('GET', '/dashboard/analytics'),
-      api('GET', '/tools/governance-stats'),
+      api('GET', '/tools/governance-stats'), api('GET', '/realtime/stats'),
     ]);
     return {
       layouts: layouts.status === 'fulfilled' ? layouts.value.layouts : [],
       widgets: widgets.status === 'fulfilled' ? widgets.value.widgets : [],
       analytics: analytics.status === 'fulfilled' ? analytics.value.analytics : null,
       gstats: gstats.status === 'fulfilled' ? gstats.value : null,
+      rt: rt.status === 'fulfilled' ? rt.value : null,
     };
   },
   search: async (q) => {
@@ -611,6 +612,9 @@ function renderView(view, data) {
       ${statCard('Widget Types', data.widgets?.length ?? 0)}
       ${statCard('Adaptations', data.analytics?.adaptations ?? null)}
       ${statCard('Users', data.analytics?.users ?? null)}
+      ${statCard('WS Clients', data.rt?.clients ?? null, (data.rt?.clients ?? 0) > 0 ? 'green' : null)}
+      ${statCard('WS Total', data.rt?.totalConnections ?? null)}
+      ${statCard('WS Uptime', data.rt?.uptimeMs != null ? Math.round(data.rt.uptimeMs / 1000) + 's' : null)}
     </div>
     <div class="card"><div class="card-title">Create Layout</div>
       <div style="display:flex;gap:8px"><input id="layout-name" placeholder="Layout name">

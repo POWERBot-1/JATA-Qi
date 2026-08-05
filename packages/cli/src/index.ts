@@ -81,6 +81,7 @@ Commands:
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
+  realtime <sub>      Realtime: stats.
   tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export.
   org <sub>           Organizations: create|invite|accept|list|members.
   tools <sub>         Tool governance: sync|list|stats|alerts|invoke|approvals|approve.
@@ -124,6 +125,7 @@ async function main() {
   const ipam = kernel.getModule<IpamModule>('ipam');
   const tanya = kernel.getModule<TanyaModule>('tanya');
   const orgs = kernel.getModule<OrganizationsModule>('organizations');
+  const realtime = kernel.getModule('realtime') as unknown as { stats: () => { clients: number; totalConnections: number; uptimeMs: number; path: string; pingIntervalMs: number } } | undefined;
   const toolIntel = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
@@ -1847,6 +1849,20 @@ async function main() {
         }
         break;
       }
+      case 'realtime': {
+        const sub = args[1];
+        switch (sub) {
+          case 'stats': {
+            if (!realtime) { console.log('realtime module not registered'); break; }
+            const s = realtime.stats();
+            console.log(JSON.stringify({ ...s, uptimeSec: Math.round(s.uptimeMs / 1000) }, null, 2));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi realtime stats'); process.exit(1);
+        }
+        break;
+      }
       case 'org': {
         const sub = args[1];
         const flag = (name: string): string | undefined => {
@@ -2054,7 +2070,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ') || line.startsWith('org ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ') || line.startsWith('org ') || line.startsWith('realtime ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

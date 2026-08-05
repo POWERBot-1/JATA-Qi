@@ -275,4 +275,12 @@ describe('jataqi CLI — intelligence commands', () => {
     const missing = await jataqi('tanya', 'export', 'nope', '--format', 'json');
     assert.match(missing, /not found/);
   });
+
+  it('realtime stats reports connection metrics', async () => {
+    const out = await jataqi('realtime', 'stats');
+    assert.match(out, /"clients": 0/);
+    assert.match(out, /"path": "\/ws"/);
+    assert.match(out, /"pingIntervalMs": 30000/);
+    assert.match(out, /"uptimeSec": 0/);
+  });
 });

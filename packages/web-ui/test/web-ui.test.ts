@@ -215,6 +215,9 @@ describe('WebUIModule', () => {
     assert.match(js, /\/approvals\?status=all/, 'history fetch wired');
     assert.match(js, /Approval Queue/, 'queue rendered');
     assert.match(js, /decideApproval\(/i, 'approve/deny actions wired');
+    // Realtime dashboard card.
+    assert.match(js, /WS Clients/, 'realtime clients stat card');
+    assert.match(js, /data\.rt\?\..*clients/, 'realtime stats wired into dashboards view');
     // Realtime observability badge.
     assert.match(js, /\/realtime\/stats/, 'realtime stats endpoint wired');
     assert.match(js, /refreshRealtimeCount/, 'client-count refresh helper present');
