@@ -73,6 +73,7 @@ import type { CloudModule } from '@jataqi/cloud';
 import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
+import type { TanyaModule } from '@jataqi/tanya';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -154,6 +155,7 @@ export class ApiGatewayModule implements IModule {
   private cdn?: CdnModule;
   private email?: EmailModule;
   private ipam?: IpamModule;
+  private tanya?: TanyaModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -242,6 +244,7 @@ export class ApiGatewayModule implements IModule {
     this.cdn = this.tryModule<CdnModule>('cdn');
     this.email = this.tryModule<EmailModule>('email');
     this.ipam = this.tryModule<IpamModule>('ipam');
+    this.tanya = this.tryModule<TanyaModule>('tanya');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -512,6 +515,15 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/chat/folders', auth('agent:run', (req) => this.chatFolders(req)));
     route('GET', '/chat/export', auth('agent:run', (req) => this.chatExport(req)));
     route('GET', '/chat/search', auth('agent:run', (req) => this.chatSearch(req)));
+    // TANYA AI — conversational product layer (personas + persistent chat + identity).
+    route('POST', '/tanya/chat', auth('tanya:write', (req) => this.tanyaChat(req)));
+    route('GET', '/tanya/conversations', auth('tanya:read', (req) => this.tanyaConversations(req)));
+    route('GET', '/tanya/conversation', auth('tanya:read', (req) => this.tanyaConversation(req)));
+    route('POST', '/tanya/conversation/delete', auth('tanya:write', (req) => this.tanyaConversationDelete(req)));
+    route('GET', '/tanya/personas', auth('tanya:read', () => this.tanyaPersonas()));
+    route('POST', '/tanya/persona', auth('tanya:write', (req) => this.tanyaPersonaCreate(req)));
+    route('POST', '/tanya/identify', auth('tanya:read', (req) => this.tanyaIdentify(req)));
+    route('GET', '/tanya/stats', auth('tanya:read', (req) => this.tanyaStats(req)));
     route('POST', '/session/revoke', auth(null, (req) => this.sessionRevoke(req)));
     // Notifications.
     route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
@@ -1225,7 +1237,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -5742,6 +5754,109 @@ export class ApiGatewayModule implements IModule {
 
       ws.send(JSON.stringify({ type: 'chat.done', ...(convId ? { conversationId: convId } : {}), full: answer }));
     }
+  }
+
+  // --- TANYA AI conversational product layer --------------------------------
+
+  private async tanyaChat(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.message !== 'string' || !b.message.trim()) return json(400, { error: 'field "message" is required' });
+    try {
+      const result = await this.tanya.chat({
+        userId: req.principal!.userId,
+        message: b.message,
+        ...(typeof b.conversationId === 'string' ? { conversationId: b.conversationId } : {}),
+        ...(typeof b.persona === 'string' ? { persona: b.persona } : {}),
+        ...(typeof b.title === 'string' ? { title: b.title } : {}),
+      });
+      return json(200, result);
+    } catch (e) {
+      return json(400, { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  private async tanyaConversations(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const q = req.query ?? {};
+    const result = await this.tanya.listConversations(req.principal!.userId, {
+      ...(typeof q.search === 'string' ? { search: q.search } : {}),
+      ...(q.limit ? { limit: Number(q.limit) } : {}),
+      ...(q.offset ? { offset: Number(q.offset) } : {}),
+    });
+    return json(200, {
+      conversations: result.conversations.map((c) => ({
+        id: c.id, title: c.title, updatedAt: c.updatedAt, pinned: c.pinned ?? false,
+        messageCount: c.messages.length,
+        persona: (c.tags ?? []).find((t) => t !== 'tanya'),
+      })),
+      total: result.total,
+    });
+  }
+
+  private async tanyaConversation(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const id = req.query.id;
+    if (!id) return json(400, { error: 'query "id" is required' });
+    const conv = await this.tanya.getConversation(id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    return json(200, {
+      id: conv.id, title: conv.title, userId: conv.userId, systemPrompt: conv.systemPrompt,
+      pinned: conv.pinned ?? false, createdAt: conv.createdAt, updatedAt: conv.updatedAt,
+      tags: conv.tags ?? [], messages: conv.messages,
+    });
+  }
+
+  private async tanyaConversationDelete(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const b = this.asObject(req.body);
+    const id = typeof b.id === 'string' ? b.id : undefined;
+    if (!id) return json(400, { error: 'field "id" is required' });
+    const conv = await this.tanya.getConversation(id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    const removed = await this.tanya.deleteConversation(id);
+    return json(200, { deleted: removed });
+  }
+
+  private tanyaPersonas(): GatewayResponse {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    return json(200, {
+      personas: this.tanya.listPersonas().map((p) => ({
+        id: p.id, name: p.name, description: p.description, agentName: p.agentName,
+      })),
+    });
+  }
+
+  private tanyaPersonaCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.systemPrompt !== 'string')
+      return json(400, { error: 'fields "id" and "systemPrompt" are required' });
+    try {
+      const persona = this.tanya.registerPersona({
+        id: b.id, systemPrompt: b.systemPrompt,
+        ...(typeof b.name === 'string' ? { name: b.name } : {}),
+        ...(typeof b.description === 'string' ? { description: b.description } : {}),
+      });
+      return json(201, { persona });
+    } catch (e) {
+      return json(400, { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  private tanyaIdentify(req: GatewayRequest): GatewayResponse {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accessToken !== 'string') return json(400, { error: 'field "accessToken" is required' });
+    const identity = this.tanya.identify(b.accessToken);
+    if (!identity) return json(404, { error: 'no identity for the given access token' });
+    return json(200, { identity });
+  }
+
+  private async tanyaStats(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const stats = await this.tanya.stats(req.principal!.userId);
+    return json(200, stats);
   }
 
   // --- helpers -------------------------------------------------------------

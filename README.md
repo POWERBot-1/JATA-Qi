@@ -66,6 +66,7 @@ structured response → produce an auditable execution record.
 | `@jataqi/cdn` | **PRX CDN** — Content delivery: edge nodes, cached zones with origins + TTLs, origin shield, purge, edge analytics |
 | `@jataqi/email` | **PRX Email Provider** — domains with MX/SPF/DKIM/DMARC, verified sending, mailboxes, inbound with DMARC disposition |
 | `@jataqi/ipam` | **PRX RIR Member** — IP Address Management: IPv4/IPv6 allocations from AFRINIC/APNIC/ARIN/RIPE/LACNIC, ASN holdings, CIDR subnetting, anycast announcements |
+| `@jataqi/tanya` | **TANYA AI (Phase 6)** — conversational product layer: named personas materialized as agents, persistent chat with tool-call history, PKI IdP identity bridge |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -225,6 +226,10 @@ node packages/cli/dist/src/index.js mail send alice@acme.co.ke bob@partner.io "H
 node packages/cli/dist/src/index.js ipam block 196.201.0.0/16 AFRINIC --purpose anycast
 node packages/cli/dist/src/index.js ipam asn 327780 AFRINIC --anycast
 node packages/cli/dist/src/index.js ipam announce <blockId> <asnId>
+node packages/cli/dist/src/index.js tanya chat "Hello TANYA"
+node packages/cli/dist/src/index.js tanya persona support --prompt "You are a support specialist"
+node packages/cli/dist/src/index.js tanya conversations
+node packages/cli/dist/src/index.js tanya stats
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -397,6 +402,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/email/domains` · `/email/domains/dns` · `/email/mailboxes` · `/email/messages` · `/email/inbox` · `/email/stats` | `email:read` | Email reads |
 | POST | `/ipam/blocks` · `/ipam/blocks/split` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announce` | `ipam:write` | IPAM operations |
 | GET | `/ipam/blocks` · `/ipam/blocks/addresses` · `/ipam/addresses` · `/ipam/asns` · `/ipam/announcements` · `/ipam/stats` | `ipam:read` | IPAM reads |
+| POST | `/tanya/chat` · `/tanya/conversation/delete` · `/tanya/persona` | `tanya:write` | TANYA chat + conversation/persona management |
+| GET | `/tanya/conversations` · `/tanya/conversation` · `/tanya/personas` · `/tanya/stats` · POST `/tanya/identify` | `tanya:read` | TANYA reads + identity |
 
 ### Security model
 
@@ -447,7 +454,7 @@ await kernel.boot();
 
 ## Testing
 
-The full suite (200+ unit + integration tests across all packages):
+The full suite (1770+ unit + integration tests across all packages):
 
 ```bash
 npm test
@@ -475,7 +482,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ Knowledge Service (ingestion, chunking, retrieval, metadata filters, context expansion)
 - ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
-- ✅ **Agent Intelligence Tools** (20 tools over the Phase 6/7 engines — `fx.*`, `mobility.*`, `logistics.*`, `agriculture.*`, `circular.*`, `energy.*`, `border.*`, `restaurants.*`, `marketplace.*`, `platform.search`, `wallet.balance`, `crypto.balance`; graceful degradation on partial kernels)
+- ✅ **Agent Intelligence Tools** (32 tools over the Phase 6/7 + PRX engines — `fx.*`, `mobility.*`, `logistics.*`, `agriculture.*`, `circular.*`, `energy.*`, `border.*`, `restaurants.*`, `marketplace.*`, `platform.search`, `wallet.balance`, `crypto.balance`, `cloud.*`, `cdn.*`, `email.*`, `ipam.*`; 37 default agent tools total; graceful degradation on partial kernels)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
 - ✅ **QiL Tooling** (idempotent formatter, semantic linter, CLI `qil parse|compile|format|lint|run` with auto-provisioned agents)
 - ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit, durable history)
@@ -502,6 +509,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **CDN Provider** (PRX — edge nodes, zones with origins + TTLs, origin shield, purge, hit-rate analytics)
 - ✅ **Email Provider** (PRX — MX/SPF/DKIM/DMARC domains, verified sending, mailboxes, inbound DMARC disposition)
 - ✅ **RIR Member — IPAM** (PRX — IPv4/IPv6 allocations from all five RIRs, ASN holdings, CIDR subnetting, anycast announcements, utilization analytics)
+- ✅ **TANYA AI — Conversational Product Layer** (Phase 6 — personas materialized as agents with dedicated system prompts, persistent chat with tool-call history + conversation context, PKI IdP identity bridge, per-user stats; gateway `/tanya/*`, CLI `tanya`)
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
 - ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)

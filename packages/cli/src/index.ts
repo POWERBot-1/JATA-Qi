@@ -34,6 +34,7 @@ import type { CloudModule } from '@jataqi/cloud';
 import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
+import type { TanyaModule } from '@jataqi/tanya';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -78,6 +79,7 @@ Commands:
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
+  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -116,6 +118,7 @@ async function main() {
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
+  const tanya = kernel.getModule<TanyaModule>('tanya');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1769,6 +1772,78 @@ async function main() {
         }
         break;
       }
+      case 'tanya': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'chat': {
+            const message = args.slice(2).join(' ').trim() || flag('message') || '';
+            if (!message) { console.error('Usage: jataqi tanya chat "<message>" [--conv <id>] [--persona <id>]'); process.exit(1); }
+            try {
+              const result = await tanya.chat({
+                userId: 'cli',
+                message,
+                ...(flag('conv') ? { conversationId: flag('conv')! } : {}),
+                ...(flag('persona') ? { persona: flag('persona')! } : {}),
+              });
+              console.log(`[${result.persona}@${result.agent}] ${result.reply}`);
+              console.log(`conversation ${result.conversationId} (${result.messageCount} messages)`);
+              for (const tc of result.toolCalls) console.log(`  tool: ${tc.name}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'conversations': {
+            const listed = await tanya.listConversations('cli', { ...(flag('search') ? { search: flag('search') } : {}) });
+            for (const c of listed.conversations) console.log(`- ${c.id} ${c.title} (${c.messages.length} msgs)`);
+            console.log(`${listed.total} conversation(s)`);
+            break;
+          }
+          case 'conversation': {
+            const id = args[2] ?? flag('id');
+            if (!id) { console.error('Usage: jataqi tanya conversation <id>'); process.exit(1); }
+            const conv = await tanya.getConversation(id);
+            if (!conv) { console.log('not found'); break; }
+            for (const m of conv.messages) console.log(`[${m.role}] ${m.content}`);
+            break;
+          }
+          case 'personas': {
+            for (const p of tanya.listPersonas()) console.log(`- ${p.id} (${p.name}, agent ${p.agentName}): ${p.description}`);
+            break;
+          }
+          case 'persona': {
+            const id = args[2] ?? flag('id');
+            const prompt = flag('prompt');
+            if (!id || !prompt) { console.error('Usage: jataqi tanya persona <id> --prompt "system prompt" [--name N] [--description D]'); process.exit(1); }
+            try {
+              const persona = tanya.registerPersona({ id, systemPrompt: prompt, ...(flag('name') ? { name: flag('name')! } : {}), ...(flag('description') ? { description: flag('description')! } : {}) });
+              console.log(`registered persona ${persona.id} -> agent ${persona.agentName}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'identify': {
+            const token = flag('token') ?? args[2];
+            if (!token) { console.error('Usage: jataqi tanya identify --token <accessToken>'); process.exit(1); }
+            const identity = tanya.identify(token);
+            if (!identity) { console.log('no identity for token'); break; }
+            console.log(JSON.stringify(identity, null, 2));
+            break;
+          }
+          case 'stats': {
+            console.log(JSON.stringify(await tanya.stats('cli'), null, 2));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1778,7 +1853,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

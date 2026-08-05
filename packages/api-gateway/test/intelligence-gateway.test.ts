@@ -42,6 +42,7 @@ import { CloudModule } from '@jataqi/cloud';
 import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
 import { IpamModule } from '@jataqi/ipam';
+import { TanyaModule } from '@jataqi/tanya';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -114,6 +115,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new CdnModule());
     kernel.register(new EmailModule());
     kernel.register(new IpamModule());
+    kernel.register(new TanyaModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -1224,5 +1226,41 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
   it('intelligence routes reject unauthenticated requests', async () => {
     const res = await jsonRequest('GET', `${base}/memory`, undefined);
     assert.equal(res.status, 401);
+  });
+
+  // --- TANYA AI ------------------------------------------------------------
+
+  it('POST /tanya/chat runs a persona turn; conversations/personas/stats routes work; guest is denied', async () => {
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'Hello TANYA' }, token);
+    assert.equal(chat.status, 200);
+    const result = chat.body as { conversationId: string; reply: string; messageCount: number; persona: string };
+    assert.ok(result.conversationId);
+    assert.match(result.reply, /Hello TANYA/);
+    assert.equal(result.persona, 'main');
+    assert.equal(result.messageCount, 2);
+
+    const listed = await jsonRequest('GET', `${base}/tanya/conversations`, undefined, token);
+    assert.equal(listed.status, 200);
+    const listBody = listed.body as { conversations: unknown[]; total: number };
+    assert.ok(listBody.total >= 1);
+
+    const conv = await jsonRequest('GET', `${base}/tanya/conversation?id=${result.conversationId}`, undefined, token);
+    assert.equal(conv.status, 200);
+    assert.equal((conv.body as { messages: unknown[] }).messages.length, 2);
+
+    const personas = await jsonRequest('GET', `${base}/tanya/personas`, undefined, token);
+    assert.equal(personas.status, 200);
+    assert.equal((personas.body as { personas: { id: string }[] }).personas.some((p) => p.id === 'main'), true);
+
+    const stats = await jsonRequest('GET', `${base}/tanya/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { conversations: number }).conversations, listBody.total);
+
+    // RBAC: a guest without tanya:write is denied.
+    await jsonRequest('POST', `${base}/auth/register`, { username: 'tanya-guest', password: 'pw', roles: ['guest'] }, undefined);
+    const guestLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-guest', password: 'pw' });
+    const guestToken = (guestLogin.body as { token: string }).token;
+    const denied = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'hi' }, guestToken);
+    assert.equal(denied.status, 403);
   });
 });

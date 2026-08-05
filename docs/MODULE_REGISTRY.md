@@ -1,6 +1,6 @@
 # JATA Qi Module Registry
 
-89 packages, 1500+ tests. Every package is a kernel module (`IModule`) registered
+90 packages, 1770+ tests. Every package is a kernel module (`IModule`) registered
 through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 
 | Package | id | Depends on | Purpose |
@@ -10,7 +10,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/vector-search` | `vector-search` | storage | embeddings + flat index |
 | `@jataqi/knowledge-service` | `knowledge` | storage, vector | ingest / chunk / retrieve |
 | `@jataqi/knowledge-graph` | `knowledge-graph` | storage | entities, triples, graph-RAG |
-| `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector, fx, mobility, logistics, agriculture, circular, energy, border, restaurants, marketplace, search, universal-wallet, crypto | ReAct agents + 25 default tools (knowledge/graph/vector + all intelligence engines) + LLMs |
+| `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector, fx, mobility, logistics, agriculture, circular, energy, border, restaurants, marketplace, search, universal-wallet, crypto, cloud, cdn, email, ipam | ReAct agents + 37 default tools (knowledge/graph/vector + 32 intelligence tools) + LLMs |
 | `@jataqi/qil` | `qil` | – | QiL language → execution plan; idempotent formatter + semantic linter |
 | `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history |
 | `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger |
@@ -45,6 +45,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/cdn` | `cdn` | memory | PRX CDN — edge nodes, zones, caching + origin shield, purge |
 | `@jataqi/email` | `email` | memory | PRX Email Provider — MX/SPF/DKIM/DMARC, mailboxes, delivery |
 | `@jataqi/ipam` | `ipam` | memory | PRX RIR Member — IP allocations, ASNs, subnetting, anycast |
+| `@jataqi/tanya` | `tanya` | conversations, agent-runtime, pki | TANYA AI — personas, persistent chat with tool-call history, IdP identity bridge |
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
 | `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |

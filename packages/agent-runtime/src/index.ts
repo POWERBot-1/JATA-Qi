@@ -26,6 +26,10 @@ export {
   restaurantsMenuTool, restaurantsOrdersTool,
   marketplaceListingsTool, platformSearchTool,
   walletBalanceTool, cryptoBalanceTool,
+  cloudInstancesTool, cloudProvisionTool, cloudAutoscaleTool,
+  cdnZonesTool, cdnLookupTool, cdnPurgeTool,
+  emailDomainsTool, emailSendTool, emailInboxTool,
+  ipamBlocksTool, ipamAnnouncementsTool, ipamStatsTool,
   allIntelligenceTools,
 } from './intelligence-tools.js';
 export { ConversationManager, InMemorySessionMemory } from './memory.js';

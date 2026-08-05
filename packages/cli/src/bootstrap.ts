@@ -95,6 +95,8 @@ import { CloudModule } from '@jataqi/cloud';
 import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
 import { IpamModule } from '@jataqi/ipam';
+import { TanyaModule } from '@jataqi/tanya';
+import { ConversationsModule } from '@jataqi/conversations';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
 
@@ -298,6 +300,10 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new EmailModule());
   // PRX — RIR Member: IP address management + ASN holdings.
   kernel.register(new IpamModule());
+  // Persistent conversations (TANYA + unified chat API).
+  kernel.register(new ConversationsModule());
+  // TANYA AI — conversational product layer (personas + identity bridge).
+  kernel.register(new TanyaModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

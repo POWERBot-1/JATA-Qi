@@ -9,6 +9,8 @@ export interface AgentRunOptions {
   message: string;
   /** System prompt override. */
   systemPrompt?: string;
+  /** Prior conversation turns to give the model context (optional, e.g. from a chat product layer). */
+  history?: ChatMessage[];
   /** Maximum tool-call iterations before the loop is forced to produce a final answer (default 8). */
   maxIterations?: number;
   /** Abort signal for cancellation. */
@@ -76,6 +78,9 @@ export class Agent {
     };
 
     const messages: ChatMessage[] = [{ role: 'system', content: opts.systemPrompt ?? this.systemPrompt }];
+    // Prior conversation turns (product layers like TANYA pass history here);
+    // system turns are skipped since the system prompt is already injected.
+    if (opts.history?.length) messages.push(...opts.history.filter((m) => m.role !== 'system'));
     messages.push({ role: 'user', content: opts.message });
 
     const toolCalls: ToolCallResult[] = [];

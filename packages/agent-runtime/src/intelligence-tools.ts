@@ -16,6 +16,10 @@
 //   platform.search    — federated search across all sources
 //   wallet.*           — universal wallet balances
 //   crypto.*           — KRT asset balances
+//   cloud.*            — PRX Part E instances + autoscaling
+//   cdn.*              — PRX CDN zones, lookups, purges
+//   email.*            — PRX Email domains, send, inbox
+//   ipam.*             — PRX RIR Member blocks, announcements, stats
 
 import type { Tool, ToolContext } from './tools.js';
 import type { FxModule } from '@jataqi/fx';
@@ -30,6 +34,10 @@ import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { SearchModule } from '@jataqi/search';
 import type { UniversalWalletModule } from '@jataqi/universal-wallet';
 import type { CryptoModule } from '@jataqi/crypto';
+import type { CloudModule } from '@jataqi/cloud';
+import type { CdnModule } from '@jataqi/cdn';
+import type { EmailModule } from '@jataqi/email';
+import type { IpamModule } from '@jataqi/ipam';
 
 /** Flattened geo input fields (the tool schema supports flat scalars only). */
 const GEO_FIELDS = {
@@ -599,6 +607,380 @@ export function cryptoBalanceTool(getModule: () => CryptoModule | undefined): To
   };
 }
 
+// ---------------------------------------------------------------------------
+// Cloud (PRX Part E)
+// ---------------------------------------------------------------------------
+
+/** cloud.instances — list cloud compute instances. */
+export function cloudInstancesTool(getModule: () => CloudModule | undefined): Tool {
+  return {
+    name: 'cloud.instances',
+    description: 'List cloud compute instances, optionally filtered by region or status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        regionId: { type: 'string', description: 'Optional region id to filter by.' },
+        status: { type: 'string', description: 'Optional status filter: provisioning | running | stopped | terminated | failed.' },
+      },
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('cloud');
+      const instances = mod.listInstances({
+        ...(input.regionId ? { regionId: String(input.regionId) } : {}),
+        ...(input.status ? { status: String(input.status) as any } : {}),
+      });
+      ctx.logger.info(`cloud.instances -> ${instances.length} instance(s)`);
+      return {
+        instances: instances.map((i) => ({
+          id: i.id, name: i.name, status: i.status, regionId: i.regionId, zone: i.zone,
+          flavorId: i.flavorId, imageId: i.imageId, publicIp: i.publicIp, privateIp: i.privateIp,
+          vpcId: i.vpcId, hostingPlanId: i.hostingPlanId, autoscalingGroupId: i.autoscalingGroupId,
+        })),
+      };
+    },
+  };
+}
+
+/** cloud.provision — provision a new compute instance. */
+export function cloudProvisionTool(getModule: () => CloudModule | undefined): Tool {
+  return {
+    name: 'cloud.provision',
+    description: 'Provision a cloud compute instance in a region from a flavor and image.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Instance name.' },
+        regionId: { type: 'string', description: 'Region id with available capacity.' },
+        zone: { type: 'string', description: 'Optional availability zone within the region.' },
+        flavorId: { type: 'string', description: 'Flavor (compute sizing) id.' },
+        imageId: { type: 'string', description: 'OS image id.' },
+        vpcId: { type: 'string', description: 'Optional VPC to attach the instance to.' },
+        hostingPlanId: { type: 'string', description: 'Optional hosting plan id.' },
+      },
+      required: ['name', 'regionId', 'flavorId', 'imageId'],
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('cloud');
+      try {
+        const instance = await mod.provisionInstance({
+          name: String(input.name),
+          regionId: String(input.regionId),
+          ...(input.zone ? { zone: String(input.zone) } : {}),
+          flavorId: String(input.flavorId),
+          imageId: String(input.imageId),
+          ...(input.vpcId ? { vpcId: String(input.vpcId) } : {}),
+          ...(input.hostingPlanId ? { hostingPlanId: String(input.hostingPlanId) } : {}),
+        });
+        ctx.logger.info(`cloud.provision ${instance.id} (${instance.name}) in ${instance.regionId}`);
+        return {
+          instance: {
+            id: instance.id, name: instance.name, status: instance.status, regionId: instance.regionId,
+            zone: instance.zone, flavorId: instance.flavorId, imageId: instance.imageId,
+            publicIp: instance.publicIp, privateIp: instance.privateIp,
+          },
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  };
+}
+
+/** cloud.autoscale — evaluate an autoscaling group against current load. */
+export function cloudAutoscaleTool(getModule: () => CloudModule | undefined): Tool {
+  return {
+    name: 'cloud.autoscale',
+    description: 'Evaluate an autoscaling group against the current load (0..1 CPU utilization) and return the recommended action.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        groupId: { type: 'string', description: 'Autoscaling group id.' },
+        load: { type: 'number', description: 'Current load as CPU utilization 0..1.' },
+      },
+      required: ['groupId', 'load'],
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('cloud');
+      try {
+        const result = mod.evaluateAutoscaling(String(input.groupId), Number(input.load));
+        ctx.logger.info(`cloud.autoscale ${input.groupId} load=${input.load} -> ${result.action}`);
+        return result;
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CDN (PRX CDN Provider)
+// ---------------------------------------------------------------------------
+
+/** cdn.zones — list CDN zones. */
+export function cdnZonesTool(getModule: () => CdnModule | undefined): Tool {
+  return {
+    name: 'cdn.zones',
+    description: 'List CDN zones (domains with origins, TLS, and TTL settings).',
+    inputSchema: { type: 'object', properties: {} },
+    async execute(_input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('cdn');
+      const zones = mod.listZones();
+      ctx.logger.info(`cdn.zones -> ${zones.length} zone(s)`);
+      return {
+        zones: zones.map((z) => ({
+          id: z.id, domain: z.domain, origin: z.origin, status: z.status,
+          originShield: z.originShield, tlsEnabled: z.tlsEnabled, defaultTtlSec: z.defaultTtlSec,
+        })),
+      };
+    },
+  };
+}
+
+/** cdn.lookup — look up a cached asset on a zone. */
+export function cdnLookupTool(getModule: () => CdnModule | undefined): Tool {
+  return {
+    name: 'cdn.lookup',
+    description: 'Look up a path on a CDN zone; returns the cache outcome (hit | miss | stale | shield_hit) and asset details when cached.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        zoneId: { type: 'string', description: 'CDN zone id.' },
+        path: { type: 'string', description: 'Cache key path, e.g. /assets/logo.png.' },
+      },
+      required: ['zoneId', 'path'],
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('cdn');
+      const zone = mod.getZone(String(input.zoneId));
+      if (!zone) return { error: `zone ${input.zoneId} not found` };
+      const result = mod.lookup(zone.id, String(input.path));
+      ctx.logger.info(`cdn.lookup ${zone.domain}${input.path} -> ${result.outcome}`);
+      return {
+        outcome: result.outcome,
+        asset: result.asset
+          ? {
+              path: result.asset.path, contentType: result.asset.contentType, sizeBytes: result.asset.sizeBytes,
+              cachedAt: result.asset.cachedAt, expiresAt: result.asset.expiresAt, hits: result.asset.hits,
+              shieldServed: result.asset.shieldServed,
+            }
+          : undefined,
+      };
+    },
+  };
+}
+
+/** cdn.purge — purge cached assets from a zone. */
+export function cdnPurgeTool(getModule: () => CdnModule | undefined): Tool {
+  return {
+    name: 'cdn.purge',
+    description: 'Purge cached assets from a CDN zone by exact path, by prefix, or the whole zone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        zoneId: { type: 'string', description: 'CDN zone id.' },
+        path: { type: 'string', description: 'Exact path to purge (optional).' },
+        prefix: { type: 'string', description: 'Prefix to purge, e.g. /assets (optional).' },
+        all: { type: 'boolean', description: 'Purge the entire zone (optional).' },
+      },
+      required: ['zoneId'],
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('cdn');
+      const zone = mod.getZone(String(input.zoneId));
+      if (!zone) return { error: `zone ${input.zoneId} not found` };
+      const result = await mod.purge(zone.id, {
+        ...(input.path ? { path: String(input.path) } : {}),
+        ...(input.prefix ? { prefix: String(input.prefix) } : {}),
+        ...(input.all ? { all: true } : {}),
+      });
+      ctx.logger.info(`cdn.purge ${zone.domain} -> ${result.purged} asset(s)`);
+      return { purged: result.purged };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Email (PRX Email Provider)
+// ---------------------------------------------------------------------------
+
+/** email.domains — list email domains with verification state. */
+export function emailDomainsTool(getModule: () => EmailModule | undefined): Tool {
+  return {
+    name: 'email.domains',
+    description: 'List email domains with their MX/SPF/DKIM/DMARC records and verification state.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        verifiedOnly: { type: 'boolean', description: 'Only list verified domains (optional).' },
+      },
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('email');
+      const domains = mod.listDomains(input.verifiedOnly ? true : undefined);
+      ctx.logger.info(`email.domains -> ${domains.length} domain(s)`);
+      return {
+        domains: domains.map((d) => ({
+          id: d.id, domain: d.domain, verified: d.verified, dmarcPolicy: d.dmarcPolicy,
+          dkimSelector: d.dkimSelector, mxHosts: d.mxHosts, spfRecord: d.spfRecord,
+        })),
+      };
+    },
+  };
+}
+
+/** email.send — send an outbound email. */
+export function emailSendTool(getModule: () => EmailModule | undefined): Tool {
+  return {
+    name: 'email.send',
+    description: 'Send an email from a verified domain. Fails when the sending domain is not verified.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Sender address on a verified domain, e.g. no-reply@example.com.' },
+        to: { type: 'string', description: 'Recipient address, or comma-separated list of addresses.' },
+        subject: { type: 'string' },
+        body: { type: 'string' },
+      },
+      required: ['from', 'to', 'subject', 'body'],
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('email');
+      try {
+        const to = Array.isArray(input.to)
+          ? input.to.map((t: unknown) => String(t))
+          : String(input.to ?? '').split(',').map((t: string) => t.trim()).filter(Boolean);
+        const message = await mod.send({
+          from: String(input.from),
+          to,
+          subject: String(input.subject),
+          body: String(input.body),
+        });
+        ctx.logger.info(`email.send ${message.id} ${message.from} -> ${to.length} recipient(s) [${message.status}]`);
+        return {
+          message: {
+            id: message.id, from: message.from, to: message.to, subject: message.subject,
+            status: message.status, dkimSigned: message.dkimSigned, spfChecked: message.spfChecked,
+            dmarcEvaluated: message.dmarcEvaluated, sentAt: message.sentAt, error: message.error,
+          },
+        };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  };
+}
+
+/** email.inbox — list received inbound messages. */
+export function emailInboxTool(getModule: () => EmailModule | undefined): Tool {
+  return {
+    name: 'email.inbox',
+    description: 'List inbound email messages received by the mail system, optionally filtered by status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', description: 'Optional status filter: received | spam | quarantined | read | archived.' },
+      },
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('email');
+      const messages = mod.listInbound(undefined, input.status ? String(input.status) as any : undefined);
+      ctx.logger.info(`email.inbox -> ${messages.length} message(s)`);
+      return {
+        messages: messages.map((m) => ({
+          id: m.id, mailboxId: m.mailboxId, from: m.from, subject: m.subject, status: m.status,
+          dmarcDisposition: m.dmarcDisposition, receivedAt: m.receivedAt,
+        })),
+      };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// IPAM (PRX RIR Member)
+// ---------------------------------------------------------------------------
+
+/** ipam.blocks — list IP address blocks. */
+export function ipamBlocksTool(getModule: () => IpamModule | undefined): Tool {
+  return {
+    name: 'ipam.blocks',
+    description: 'List IP address blocks held from Regional Internet Registries (AFRINIC/APNIC/ARIN/RIPE/LACNIC).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        family: { type: 'string', description: 'Optional address family: ipv4 | ipv6.' },
+        rir: { type: 'string', description: 'Optional RIR: AFRINIC | APNIC | ARIN | RIPE | LACNIC.' },
+        status: { type: 'string', description: 'Optional status: allocated | assigned | available | returned.' },
+      },
+    },
+    async execute(input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('ipam');
+      const blocks = mod.listBlocks({
+        ...(input.family ? { family: String(input.family) as any } : {}),
+        ...(input.rir ? { rir: String(input.rir) as any } : {}),
+        ...(input.status ? { status: String(input.status) as any } : {}),
+      });
+      ctx.logger.info(`ipam.blocks -> ${blocks.length} block(s)`);
+      return {
+        blocks: blocks.map((b) => ({
+          id: b.id, cidr: b.cidr, family: b.family, rir: b.rir, status: b.status,
+          parentId: b.parentId, purpose: b.purpose,
+        })),
+      };
+    },
+  };
+}
+
+/** ipam.announcements — list BGP announcements. */
+export function ipamAnnouncementsTool(getModule: () => IpamModule | undefined): Tool {
+  return {
+    name: 'ipam.announcements',
+    description: 'List active BGP announcements linking IP blocks to autonomous system numbers (ASNs).',
+    inputSchema: { type: 'object', properties: {} },
+    async execute(_input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('ipam');
+      const announcements = mod.listAnnouncements();
+      ctx.logger.info(`ipam.announcements -> ${announcements.length} announcement(s)`);
+      return { announcements: announcements.map((a) => ({ blockId: a.blockId, asnId: a.asnId, since: a.since })) };
+    },
+  };
+}
+
+/** ipam.stats — IPAM utilization analytics. */
+export function ipamStatsTool(getModule: () => IpamModule | undefined): Tool {
+  return {
+    name: 'ipam.stats',
+    description: 'IP address management utilization analytics (blocks, addresses, ASNs).',
+    inputSchema: { type: 'object', properties: {} },
+    async execute(_input: any, ctx: ToolContext) {
+      const mod = getModule();
+      if (!mod) return missing('ipam');
+      const stats = mod.stats();
+      ctx.logger.info(`ipam.stats blocks=${stats.blocks} utilization=${stats.utilizationPct}%`);
+      return {
+        blocks: stats.blocks,
+        allocatedBlocks: stats.allocatedBlocks,
+        totalAddresses: stats.totalAddresses.toString(),
+        allocatedAddresses: stats.allocatedAddresses.toString(),
+        utilizationPct: stats.utilizationPct,
+        asns: stats.asns,
+        activeAsns: stats.activeAsns,
+        addressEntries: stats.addressEntries,
+      };
+    },
+  };
+}
+
 /** All intelligence tools with a getter resolver keyed by module id. */
 export function allIntelligenceTools(resolve: (id: string) => unknown): Tool[] {
   const get = <T>(id: string): T | undefined => resolve(id) as T | undefined;
@@ -623,5 +1005,17 @@ export function allIntelligenceTools(resolve: (id: string) => unknown): Tool[] {
     platformSearchTool(() => get<SearchModule>('search')),
     walletBalanceTool(() => get<UniversalWalletModule>('universal-wallet')),
     cryptoBalanceTool(() => get<CryptoModule>('crypto')),
+    cloudInstancesTool(() => get<CloudModule>('cloud')),
+    cloudProvisionTool(() => get<CloudModule>('cloud')),
+    cloudAutoscaleTool(() => get<CloudModule>('cloud')),
+    cdnZonesTool(() => get<CdnModule>('cdn')),
+    cdnLookupTool(() => get<CdnModule>('cdn')),
+    cdnPurgeTool(() => get<CdnModule>('cdn')),
+    emailDomainsTool(() => get<EmailModule>('email')),
+    emailSendTool(() => get<EmailModule>('email')),
+    emailInboxTool(() => get<EmailModule>('email')),
+    ipamBlocksTool(() => get<IpamModule>('ipam')),
+    ipamAnnouncementsTool(() => get<IpamModule>('ipam')),
+    ipamStatsTool(() => get<IpamModule>('ipam')),
   ];
 }

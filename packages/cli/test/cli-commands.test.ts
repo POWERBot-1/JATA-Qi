@@ -209,4 +209,15 @@ describe('jataqi CLI — intelligence commands', () => {
     const stats = await jataqi('automation', 'stats');
     assert.match(stats, /"total": 0/);
   });
+
+  it('tanya personas + chat + stats work', async () => {
+    const personas = await jataqi('tanya', 'personas');
+    assert.match(personas, /- main \(TANYA/);
+    const chat = await jataqi('tanya', 'chat', 'Hello TANYA');
+    assert.match(chat, /conversation [0-9a-f-]{36}/);
+    assert.match(chat, /2 messages/);
+    // Each invocation boots a fresh in-memory OS (see automation test).
+    const stats = await jataqi('tanya', 'stats');
+    assert.match(stats, /"conversations": 0/);
+  });
 });

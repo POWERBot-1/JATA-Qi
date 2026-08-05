@@ -22,6 +22,10 @@ import { MarketplaceModule } from '@jataqi/marketplace';
 import { SearchModule } from '@jataqi/search';
 import { UniversalWalletModule } from '@jataqi/universal-wallet';
 import { CryptoModule } from '@jataqi/crypto';
+import { CloudModule } from '@jataqi/cloud';
+import { CdnModule } from '@jataqi/cdn';
+import { EmailModule } from '@jataqi/email';
+import { IpamModule } from '@jataqi/ipam';
 
 /** Boot a kernel with the core stack + all intelligence modules. */
 async function bootFull() {
@@ -42,6 +46,10 @@ async function bootFull() {
   kernel.register(new SearchModule());
   kernel.register(new UniversalWalletModule());
   kernel.register(new CryptoModule());
+  kernel.register(new CloudModule());
+  kernel.register(new CdnModule());
+  kernel.register(new EmailModule());
+  kernel.register(new IpamModule());
   kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
   await kernel.boot();
   return kernel;
@@ -64,7 +72,7 @@ async function callTool(kernel: Awaited<ReturnType<typeof bootFull>>, name: stri
 }
 
 describe('Agent intelligence tools (Phase 6/7 engines)', () => {
-  it('registers all 20 intelligence tools on the default agent', async () => {
+  it('registers all 32 intelligence tools on the default agent', async () => {
     const kernel = await bootFull();
     try {
       const names = kernel.getModule<AgentRuntimeModule>('agent-runtime').getAgent('main').getTools().map((t) => t.name);
@@ -74,6 +82,10 @@ describe('Agent intelligence tools (Phase 6/7 engines)', () => {
         'circular.stats', 'circular.collections', 'energy.stats', 'energy.readings',
         'border.screen', 'border.crossings', 'restaurants.menu', 'restaurants.orders',
         'marketplace.listings', 'platform.search', 'wallet.balance', 'crypto.balance',
+        'cloud.instances', 'cloud.provision', 'cloud.autoscale',
+        'cdn.zones', 'cdn.lookup', 'cdn.purge',
+        'email.domains', 'email.send', 'email.inbox',
+        'ipam.blocks', 'ipam.announcements', 'ipam.stats',
       ]) {
         assert.ok(names.includes(expected), `expected tool ${expected} registered`);
       }
@@ -274,6 +286,123 @@ describe('Agent intelligence tools (Phase 6/7 engines)', () => {
       assert.equal(result.toolCalls.length, 1);
       assert.equal(result.toolCalls[0]!.tool, 'fx.rate');
       assert.match(JSON.stringify(result.toolCalls[0]!.output), /128\.5/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('cloud.instances, cloud.provision, and cloud.autoscale operate the cloud engine', async () => {
+    const kernel = await bootFull();
+    try {
+      const cloud = kernel.getModule<CloudModule>('cloud');
+      const region = cloud.registerRegion({ name: 'Nairobi', code: 'NBO', country: 'KE', zones: ['nbo-1'], capacitySlots: 10 });
+      const vps = cloud.registerFlavor({ name: 'vps-2', tier: 'vps', vcpu: 2, ramGb: 4, diskGb: 80, pricePerHourMinor: 500 });
+      const ubuntu = cloud.registerImage({ name: 'Ubuntu 24.04', os: 'ubuntu', version: '24.04' });
+
+      const provisioned = await callTool(kernel, 'cloud.provision', {
+        name: 'web-1', regionId: region.id, flavorId: vps.id, imageId: ubuntu.id,
+      }) as { instance: { id: string; status: string } };
+      assert.ok(provisioned.instance.id);
+      assert.equal(provisioned.instance.status, 'provisioning');
+
+      const listed = await callTool(kernel, 'cloud.instances', { regionId: region.id }) as { instances: unknown[] };
+      assert.equal(listed.instances.length, 1);
+
+      const template = await cloud.provisionInstance({ name: 'api-tpl', regionId: region.id, flavorId: vps.id, imageId: ubuntu.id });
+      const group = cloud.createAutoscalingGroup({ name: 'api', regionId: region.id, templateInstanceId: template.id, min: 1, max: 3 });
+      const out = await callTool(kernel, 'cloud.autoscale', { groupId: group.id, load: 0.9 }) as { action: string; count: number };
+      assert.equal(out.action, 'scale_out');
+
+      const err = await callTool(kernel, 'cloud.autoscale', { groupId: 'nope', load: 0.9 }) as { error: string };
+      assert.match(err.error, /group/i);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('cdn.zones, cdn.lookup, and cdn.purge operate the CDN engine', async () => {
+    const kernel = await bootFull();
+    try {
+      const cdn = kernel.getModule<CdnModule>('cdn');
+      const zone = cdn.createZone({ domain: 'assets.example.com', origin: 'https://origin.example.com', defaultTtlSec: 600 });
+      await cdn.storeAsset({ zoneId: zone.id, path: '/img/logo.png', contentType: 'image/png', sizeBytes: 10_000 });
+
+      const zones = await callTool(kernel, 'cdn.zones', {}) as { zones: { domain: string }[] };
+      assert.equal(zones.zones.length, 1);
+      assert.equal(zones.zones[0]!.domain, 'assets.example.com');
+
+      const hit = await callTool(kernel, 'cdn.lookup', { zoneId: zone.id, path: '/img/logo.png' }) as { outcome: string; asset: { path: string } };
+      assert.equal(hit.outcome, 'hit');
+      assert.equal(hit.asset.path, '/img/logo.png');
+
+      const miss = await callTool(kernel, 'cdn.lookup', { zoneId: zone.id, path: '/nope.txt' }) as { outcome: string };
+      assert.equal(miss.outcome, 'miss');
+
+      const purged = await callTool(kernel, 'cdn.purge', { zoneId: zone.id, all: true }) as { purged: number };
+      assert.equal(purged.purged, 1);
+
+      const gone = await callTool(kernel, 'cdn.lookup', { zoneId: zone.id, path: '/img/logo.png' }) as { outcome: string };
+      assert.equal(gone.outcome, 'miss');
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('email.domains, email.send, and email.inbox operate the email engine', async () => {
+    const kernel = await bootFull();
+    try {
+      const email = kernel.getModule<EmailModule>('email');
+      const domain = email.registerDomain({ domain: 'acme.co.ke', dmarcPolicy: 'none' });
+      email.verifyDomain(domain.id);
+      email.createMailbox({ domainId: domain.id, address: 'alice', displayName: 'Alice' });
+      email.registerDomain({ domain: 'unverified.test' }); // registered but not verified
+
+      const domains = await callTool(kernel, 'email.domains', {}) as { domains: { domain: string; verified: boolean }[] };
+      assert.equal(domains.domains.length, 2);
+      assert.equal(domains.domains.find((d) => d.domain === 'acme.co.ke')!.verified, true);
+      assert.equal(domains.domains.find((d) => d.domain === 'unverified.test')!.verified, false);
+
+      const sent = await callTool(kernel, 'email.send', {
+        from: 'alice@acme.co.ke', to: 'bob@partner.io,carol@other.io', subject: 'Hello', body: 'World',
+      }) as { message: { status: string; to: string[]; dkimSigned: boolean } };
+      assert.equal(sent.message.status, 'sent');
+      assert.equal(sent.message.to.length, 2);
+      assert.equal(sent.message.dkimSigned, true);
+
+      // Unverified sender domain fails with a clear error.
+      const failed = await callTool(kernel, 'email.send', {
+        from: 'x@unverified.test', to: 'bob@partner.io', subject: 'Hi', body: 'yo',
+      }) as { error: string };
+      assert.match(failed.error, /not verified/);
+
+      await email.receive({ to: 'alice@acme.co.ke', from: 'x@y.io', subject: 'in', body: 'hi' });
+      const inbox = await callTool(kernel, 'email.inbox', {}) as { messages: { subject: string }[] };
+      assert.equal(inbox.messages.length, 1);
+      assert.equal(inbox.messages[0]!.subject, 'in');
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('ipam.blocks, ipam.announcements, and ipam.stats operate the RIR engine', async () => {
+    const kernel = await bootFull();
+    try {
+      const ipam = kernel.getModule<IpamModule>('ipam');
+      const block = await ipam.allocateBlock({ cidr: '196.201.0.0/16', rir: 'AFRINIC', purpose: 'anycast' });
+      const asn = ipam.holdAsn({ asn: 327780, rir: 'AFRINIC', announcementType: 'anycast' });
+      ipam.announce({ blockId: block.id, asnId: asn.id });
+
+      const blocks = await callTool(kernel, 'ipam.blocks', { rir: 'AFRINIC' }) as { blocks: { cidr: string; rir: string }[] };
+      assert.equal(blocks.blocks.length, 1);
+      assert.equal(blocks.blocks[0]!.cidr, '196.201.0.0/16');
+
+      const announcements = await callTool(kernel, 'ipam.announcements', {}) as { announcements: unknown[] };
+      assert.equal(announcements.announcements.length, 1);
+
+      const stats = await callTool(kernel, 'ipam.stats', {}) as { blocks: number; totalAddresses: string; asns: number };
+      assert.equal(stats.blocks, 1);
+      assert.equal(stats.totalAddresses, '65536'); // /16
+      assert.equal(stats.asns, 1);
     } finally {
       await kernel.shutdown();
     }
