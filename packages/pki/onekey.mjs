@@ -1,0 +1,16 @@
+import { generateKeyPair } from './dist/src/index.js';
+import { Oids, derBitString, derContext, derInteger, derOid, derSequence, derSet, derUtf8String } from './dist/src/asn1.js';
+import { ecdsaDerSignature, encodeSpki } from './dist/src/x509.js';
+import { sign } from 'node:crypto';
+import { writeFileSync } from 'node:fs';
+const key = generateKeyPair('ec-p256');
+writeFileSync('/tmp/onekey-priv.pem', key.privateKey);
+const subject = derSequence(derSet(derSequence(derOid(Oids.commonName), derUtf8String('plain.example.com'))));
+const attributes = derContext(0, Buffer.alloc(0));
+const children = [derInteger(0), subject, encodeSpki(key.jwk), attributes];
+const criValue = Buffer.concat(children);
+const cri = derSequence(...children);
+const raw = sign('sha256', criValue, { key: key.privateKey, dsaEncoding: 'ieee-p1363' });
+const csr = derSequence(cri, derSequence(derOid(Oids.ecdsaWithSha256)), derBitString(ecdsaDerSignature(raw)));
+writeFileSync('/tmp/onekey-mine.csr.der', csr);
+console.log('mine written, len:', csr.length);

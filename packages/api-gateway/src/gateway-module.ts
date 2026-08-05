@@ -712,6 +712,20 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/pki/idp/userinfo', auth('pki:read', (req) => this.pkiIdpUserinfo(req)));
     route('GET', '/pki/idp/discovery', () => this.pkiIdpDiscovery());
     route('POST', '/pki/idp/login', (req) => this.pkiIdpLogin(req));
+    // PRX Part C — ACME (RFC 8555) automated certificate issuance.
+    route('GET', '/pki/acme/directory', auth('pki:read', () => this.pkiAcmeDirectory()));
+    route('GET', '/pki/acme/new-nonce', auth('pki:read', () => this.pkiAcmeNewNonce()));
+    route('POST', '/pki/acme/new-account', auth('pki:write', (req) => this.pkiAcmeNewAccount(req)));
+    route('POST', '/pki/acme/new-order', auth('pki:write', (req) => this.pkiAcmeNewOrder(req)));
+    route('GET', '/pki/acme/order', auth('pki:read', (req) => this.pkiAcmeOrder(req)));
+    route('GET', '/pki/acme/authz', auth('pki:read', (req) => this.pkiAcmeAuthz(req)));
+    route('GET', '/pki/acme/challenge', auth('pki:read', (req) => this.pkiAcmeChallenge(req)));
+    route('GET', '/pki/acme/challenge/key-auth', auth('pki:read', (req) => this.pkiAcmeChallengeKeyAuth(req)));
+    route('POST', '/pki/acme/challenge/validate', auth('pki:write', (req) => this.pkiAcmeChallengeValidate(req)));
+    route('POST', '/pki/acme/challenge/proof', auth('pki:write', (req) => this.pkiAcmeChallengeProof(req)));
+    route('POST', '/pki/acme/finalize', auth('pki:write', (req) => this.pkiAcmeFinalize(req)));
+    route('GET', '/pki/acme/certificate', auth('pki:read', (req) => this.pkiAcmeCertificate(req)));
+    route('POST', '/pki/acme/revoke', auth('pki:write', (req) => this.pkiAcmeRevoke(req)));
     // Phase 7 — MOTO X mobility intelligence.
     route('POST', '/mobility/vehicles', auth('mobility:write', (req) => this.mobilityVehiclesRegister(req)));
     route('GET', '/mobility/vehicles', auth('mobility:read', (req) => this.mobilityVehiclesList(req)));
@@ -3916,6 +3930,152 @@ export class ApiGatewayModule implements IModule {
   private restaurantsStats(req: GatewayRequest): GatewayResponse {
     if (!this.restaurants) return json(501, { error: 'restaurants module not registered' });
     return json(200, { stats: this.restaurants.stats(req.query.venueId) });
+  }
+
+  // --- PRX Part C — ACME (RFC 8555) --------------------------------------
+
+  private pkiAcmeDirectory(): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    return json(200, this.pki.acmeDirectory());
+  }
+
+  private pkiAcmeNewNonce(): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    return json(200, { nonce: this.pki.acmeNewNonce() });
+  }
+
+  private pkiAcmeNewAccount(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.jws !== 'string') return json(400, { error: 'field "jws" (compact JWS) is required' });
+    try {
+      const result = this.pki.acmeNewAccount(b.jws, {
+        ...(typeof b.onlyReturnExisting === 'boolean' ? { onlyReturnExisting: b.onlyReturnExisting } : {}),
+        ...(Array.isArray(b.contact) ? { contact: b.contact.map(String) } : {}),
+      });
+      return json(201, { account: { id: result.account.id, status: result.account.status, contact: result.account.contact }, kid: result.kid, existing: result.existing });
+    } catch (err) {
+      const e = err as { type?: string; status?: number; message: string };
+      return json(e.status ?? 400, { error: e.message, type: e.type });
+    }
+  }
+
+  private pkiAcmeNewOrder(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string' || !Array.isArray(b.identifiers)) {
+      return json(400, { error: 'fields "accountId" and "identifiers" (array of {type, value}) are required' });
+    }
+    const identifiers = (b.identifiers as Array<Record<string, unknown>>).map((i) => ({
+      type: String(i.type ?? 'dns') as 'dns',
+      value: String(i.value),
+    }));
+    const order = this.pki.acmeNewOrder(b.accountId, identifiers);
+    return json(201, {
+      order: {
+        id: order.id, status: order.status, identifiers: order.identifiers,
+        authorizationIds: order.authorizationIds, finalizeUrl: order.finalizeUrl,
+        expiresAt: order.expiresAt,
+      },
+    });
+  }
+
+  private pkiAcmeOrder(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    if (!req.query.id) return json(400, { error: 'query parameter "id" is required' });
+    const order = this.pki.acmeGetOrder(req.query.id);
+    return order ? json(200, { order }) : json(404, { error: 'order not found' });
+  }
+
+  private pkiAcmeAuthz(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    if (!req.query.id) return json(400, { error: 'query parameter "id" is required' });
+    const authz = this.pki.acmeGetAuthorization(req.query.id);
+    return authz ? json(200, { authorization: authz }) : json(404, { error: 'authorization not found' });
+  }
+
+  private pkiAcmeChallenge(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    if (!req.query.id) return json(400, { error: 'query parameter "id" is required' });
+    const challenge = this.pki.acmeGetChallenge(req.query.id);
+    return challenge ? json(200, { challenge }) : json(404, { error: 'challenge not found' });
+  }
+
+  private pkiAcmeChallengeKeyAuth(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    if (!req.query.id) return json(400, { error: 'query parameter "id" is required' });
+    try {
+      return json(200, this.pki.acmeChallengeKeyAuthorization(req.query.id));
+    } catch (err) {
+      const e = err as { status?: number; message: string };
+      return json(e.status ?? 400, { error: e.message });
+    }
+  }
+
+  private pkiAcmeChallengeValidate(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string' || typeof b.challengeId !== 'string')
+      return json(400, { error: 'fields "accountId" and "challengeId" are required' });
+    try {
+      const challenge = this.pki.acmeRequestValidation(b.accountId, b.challengeId);
+      return json(200, { challenge });
+    } catch (err) {
+      const e = err as { status?: number; message: string };
+      return json(e.status ?? 400, { error: e.message });
+    }
+  }
+
+  private pkiAcmeChallengeProof(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string' || typeof b.challengeId !== 'string' || typeof b.location !== 'string' || typeof b.value !== 'string')
+      return json(400, { error: 'fields "accountId", "challengeId", "location", and "value" are required' });
+    try {
+      const challenge = this.pki.acmeSubmitProof(b.accountId, b.challengeId, { location: b.location, value: b.value });
+      return json(200, { challenge });
+    } catch (err) {
+      const e = err as { status?: number; message: string };
+      return json(e.status ?? 400, { error: e.message });
+    }
+  }
+
+  private pkiAcmeFinalize(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string' || typeof b.orderId !== 'string' || typeof b.csr !== 'string')
+      return json(400, { error: 'fields "accountId", "orderId", and "csr" (base64 DER) are required' });
+    let csr: Buffer;
+    try {
+      csr = Buffer.from(b.csr, 'base64');
+    } catch {
+      return json(400, { error: 'csr must be base64-encoded DER' });
+    }
+    const result = this.pki.acmeFinalize(b.accountId, b.orderId, csr);
+    return result.certificate
+      ? json(200, { order: { id: result.order.id, status: result.order.status, certificateUrl: result.order.certificateUrl }, certificate: { id: result.certificate.id, certDer: result.certificate.certDer } })
+      : json(400, { error: result.order.error?.detail ?? 'finalization failed', type: result.order.error?.type });
+  }
+
+  private pkiAcmeCertificate(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    if (!req.query.orderId) return json(400, { error: 'query parameter "orderId" is required' });
+    const cert = this.pki.acmeCertificate(req.query.orderId);
+    return cert ? json(200, { certificate: { id: cert.id, certDer: cert.certDer, sanDnsNames: cert.sanDnsNames, notAfter: cert.notAfter.toISOString() } }) : json(404, { error: 'no certificate for this order' });
+  }
+
+  private pkiAcmeRevoke(req: GatewayRequest): GatewayResponse {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string' || typeof b.certId !== 'string')
+      return json(400, { error: 'fields "accountId" and "certId" are required' });
+    try {
+      this.pki.acmeRevoke(b.accountId, b.certId, typeof b.reason === 'string' ? b.reason : undefined);
+      return json(200, { revoked: true });
+    } catch (err) {
+      const e = err as { status?: number; message: string };
+      return json(e.status ?? 400, { error: e.message });
+    }
   }
 
   // --- Phase 7 — MAZA marketplace ----------------------------------------

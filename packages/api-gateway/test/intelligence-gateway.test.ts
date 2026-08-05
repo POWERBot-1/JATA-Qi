@@ -992,6 +992,94 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.ok((categories.body as { categories: string[] }).categories.includes('crafts'));
   });
 
+  // --- PRX Part C — ACME automated issuance via gateway -------------------
+
+  it('acme: directory → nonce → new-account → new-order → proof → finalize → cert', async () => {
+    const pki = kernel.getModule<PkiModule>('pki');
+    // Seed a root + intermediate CA for issuance.
+    const root = pki.createRootCa([{ oid: '2.5.4.3', value: 'GW ACME Root' }]);
+    pki.createIntermediateCa([{ oid: '2.5.4.3', value: 'GW ACME Intermediate' }], root.id);
+
+    // Build a JWS-signed newAccount request (ES256).
+    const { generateKeyPair } = await import('@jataqi/pki');
+    const { sign } = await import('node:crypto');
+    const accountKey = generateKeyPair('ec-p256');
+    const b64 = (b: Buffer): string => b.toString('base64url');
+
+    const nonceRes = await jsonRequest('GET', `${base}/pki/acme/new-nonce`, undefined, token);
+    assert.equal(nonceRes.status, 200);
+    const nonce = (nonceRes.body as { nonce: string }).nonce;
+
+    const header = b64(Buffer.from(JSON.stringify({ alg: 'ES256', jwk: accountKey.jwk, nonce, url: '/new-account' }), 'utf8'));
+    const payload = b64(Buffer.from(JSON.stringify({ termsOfServiceAgreed: true }), 'utf8'));
+    const sig = sign('sha256', Buffer.from(`${header}.${payload}`), { key: accountKey.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+    const account = await jsonRequest('POST', `${base}/pki/acme/new-account`, { jws: `${header}.${payload}.${sig}` }, token);
+    assert.equal(account.status, 201);
+    const kid = (account.body as { kid: string }).kid;
+
+    // Order for acme.example.com.
+    const order = await jsonRequest('POST', `${base}/pki/acme/new-order`, {
+      accountId: kid, identifiers: [{ type: 'dns', value: 'acme.example.com' }],
+    }, token);
+    assert.equal(order.status, 201);
+    const orderBody = order.body as { order: { id: string; authorizationIds: string[]; status: string } };
+    assert.equal(orderBody.order.status, 'pending');
+
+    // Authorization + challenge + keyAuthorization.
+    const authzId = orderBody.order.authorizationIds[0]!;
+    const authz = await jsonRequest('GET', `${base}/pki/acme/authz?id=${authzId}`, undefined, token);
+    assert.equal(authz.status, 200);
+    const challengeId = (authz.body as { authorization: { challenges: Array<{ id: string; type: string }> } }).authorization.challenges[0]!.id;
+
+    const keyAuth = await jsonRequest('GET', `${base}/pki/acme/challenge/key-auth?id=${challengeId}`, undefined, token);
+    assert.equal(keyAuth.status, 200);
+    const ka = (keyAuth.body as { keyAuthorization: string }).keyAuthorization;
+
+    // Request validation + submit proof.
+    const validated = await jsonRequest('POST', `${base}/pki/acme/challenge/validate`, { accountId: kid, challengeId }, token);
+    assert.equal(validated.status, 200);
+    const proven = await jsonRequest('POST', `${base}/pki/acme/challenge/proof`, {
+      accountId: kid, challengeId,
+      location: 'http://acme.example.com/.well-known/acme-challenge/x', value: ka,
+    }, token);
+    assert.equal((proven.body as { challenge: { status: string } }).challenge.status, 'valid');
+
+    // Build a CSR and finalize.
+    const {
+      Oids, derBitString, derContext, derContextPrimitive, derInteger,
+      derOctetString, derOid, derSequence, derSet, derUtf8String,
+      ecdsaDerSignature, encodeSpki,
+    } = await import('@jataqi/pki');
+    const subjectKey = generateKeyPair('ec-p256');
+    const subject = derSequence(derSet(derSequence(derOid(Oids.commonName), derUtf8String('acme.example.com'))));
+    const sanExt = derSequence(derOid(Oids.subjectAltName), derOctetString(derSequence(derContextPrimitive(2, Buffer.from('acme.example.com')))));
+    const attrs = derContext(0, derSequence(derOid('1.2.840.113549.1.9.14'), derSet(derSequence(sanExt))));
+    const criChildren = [derInteger(0), subject, encodeSpki(subjectKey.jwk), attrs];
+    const cri = derSequence(...criChildren);
+    const raw = sign('sha256', cri, { key: subjectKey.privateKey, dsaEncoding: 'ieee-p1363' });
+    const csr = derSequence(cri, derSequence(derOid(Oids.ecdsaWithSha256)), derBitString(ecdsaDerSignature(raw)));
+
+    const finalized = await jsonRequest('POST', `${base}/pki/acme/finalize`, {
+      accountId: kid, orderId: orderBody.order.id, csr: csr.toString('base64'),
+    }, token);
+    assert.equal(finalized.status, 200);
+    const fin = finalized.body as { certificate: { id: string; certDer: string } };
+    assert.ok(fin.certificate.id);
+
+    // Fetch the certificate and revoke it.
+    const cert = await jsonRequest('GET', `${base}/pki/acme/certificate?orderId=${orderBody.order.id}`, undefined, token);
+    assert.equal(cert.status, 200);
+    assert.equal((cert.body as { certificate: { id: string } }).certificate.id, fin.certificate.id);
+
+    const revoked = await jsonRequest('POST', `${base}/pki/acme/revoke`, { accountId: kid, certId: fin.certificate.id, reason: 'keyCompromise' }, token);
+    assert.equal(revoked.status, 200);
+    assert.equal((revoked.body as { revoked: boolean }).revoked, true);
+
+    const directory = await jsonRequest('GET', `${base}/pki/acme/directory`, undefined, token);
+    assert.equal(directory.status, 200);
+    assert.equal((directory.body as { newOrder: string }).newOrder, '/new-order');
+  });
+
   // --- Authz guard --------------------------------------------------------
 
   it('intelligence routes reject unauthenticated requests', async () => {

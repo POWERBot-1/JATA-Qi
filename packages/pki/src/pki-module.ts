@@ -7,6 +7,11 @@ import type { StorageModule } from '@jataqi/storage';
 import { CertificateAuthority, type CaRecord, type CrlRecord, type IssuedCertificate, type IssueCertificateInput } from './ca.js';
 import { RegistrationAuthority, type CertificateRequest, type ValidationMethod } from './ra.js';
 import { IdentityProvider, type IdpClient, type TokenResponse, type UserInfo } from './idp.js';
+import {
+  AcmeService, parseJws, verifyJws,
+  type AcmeAuthorization, type AcmeChallenge, type AcmeIdentifier,
+  type AcmeOrder, type NewAccountResult, type ParsedJws,
+} from './acme.js';
 
 export const PkiEvents = Object.freeze({
   CaCreated: 'pki.ca.created',
@@ -24,6 +29,10 @@ export interface PkiModuleConfig {
   issuer?: string;
   /** IdP JWT signing algorithm. */
   signingAlg?: 'HS256' | 'EdDSA';
+  /** ACME default certificate validity in days (default 90). */
+  acmeValidityDays?: number;
+  /** ACME issuing CA id (default: newest intermediate, else root). */
+  acmeIssuerCaId?: string;
 }
 
 export class PkiModule implements IModule {
@@ -32,16 +41,21 @@ export class PkiModule implements IModule {
   readonly dependsOn = [] as const;
 
   private api!: KernelApi;
-  private readonly cfg: Required<PkiModuleConfig>;
+  private readonly cfg: Required<Pick<PkiModuleConfig, 'issuer' | 'signingAlg'>> & Pick<PkiModuleConfig, 'acmeValidityDays' | 'acmeIssuerCaId'>;
   readonly ca: CertificateAuthority;
   readonly ra: RegistrationAuthority;
   readonly idp: IdentityProvider;
+  readonly acme: AcmeService;
 
   constructor(cfg: PkiModuleConfig = {}) {
     this.cfg = { issuer: cfg.issuer ?? 'https://id.jataqi.local', signingAlg: cfg.signingAlg ?? 'HS256' };
     this.ca = new CertificateAuthority();
     this.ra = new RegistrationAuthority();
     this.idp = new IdentityProvider({ issuer: this.cfg.issuer, signingAlg: this.cfg.signingAlg });
+    this.acme = new AcmeService(this.ca, {
+      ...(cfg.acmeValidityDays !== undefined ? { validityDays: cfg.acmeValidityDays } : {}),
+      ...(cfg.acmeIssuerCaId !== undefined ? { issuerCaId: cfg.acmeIssuerCaId } : {}),
+    });
   }
 
   async init(kernel: KernelApi): Promise<void> {
@@ -204,12 +218,60 @@ export class PkiModule implements IModule {
     }
   }
 
+  // ---- ACME (RFC 8555) ---------------------------------------------------
+
+  /** RFC 8555 directory object. */
+  acmeDirectory(): Record<string, unknown> { return this.acme.directory(); }
+
+  acmeNewNonce(): string { return this.acme.newNonce(); }
+
+  /** Process a newAccount POST body (compact JWS). */
+  acmeNewAccount(serializedJws: string, opts?: { onlyReturnExisting?: boolean; contact?: string[] }): NewAccountResult {
+    return this.acme.newAccount(parseJws(serializedJws), opts);
+  }
+
+  acmeNewOrder(accountId: string, identifiers: AcmeIdentifier[]): AcmeOrder {
+    return this.acme.newOrder(accountId, identifiers);
+  }
+
+  acmeGetOrder(orderId: string): AcmeOrder | undefined { return this.acme.getOrder(orderId); }
+  acmeListOrders(accountId?: string): AcmeOrder[] { return this.acme.listOrders(accountId); }
+  acmeGetAuthorization(authzId: string): AcmeAuthorization | undefined { return this.acme.getAuthorization(authzId); }
+  acmeGetChallenge(challengeId: string): AcmeChallenge | undefined { return this.acme.getChallenge(challengeId); }
+
+  acmeRequestValidation(accountId: string, challengeId: string): AcmeChallenge {
+    return this.acme.requestValidation(accountId, challengeId);
+  }
+
+  acmeChallengeKeyAuthorization(challengeId: string): { token: string; keyAuthorization: string } {
+    return this.acme.challengeKeyAuthorization(challengeId);
+  }
+
+  acmeSubmitProof(accountId: string, challengeId: string, observed: { location: string; value: string }): AcmeChallenge {
+    return this.acme.submitProof(accountId, challengeId, observed);
+  }
+
+  acmeFinalize(accountId: string, orderId: string, csrDer: Buffer) {
+    return this.acme.finalize(accountId, orderId, csrDer);
+  }
+
+  acmeCertificate(orderId: string) { return this.acme.certificateForOrder(orderId); }
+
+  acmeRevoke(accountId: string, certId: string, reason?: string): boolean {
+    return this.acme.revoke(accountId, certId, reason);
+  }
+
+  /** Parse + verify a JWS (exposed for gateway/CLI request handling). */
+  acmeParseJws(serialized: string): ParsedJws { return parseJws(serialized); }
+  acmeVerifyJws(jws: ParsedJws, jwk: Record<string, string>): boolean { return verifyJws(jws, jwk); }
+
   /** PKI aggregate stats for ops surfaces. */
   stats(): Record<string, unknown> {
     return {
       ca: this.ca.stats(),
       ra: this.ra.stats(),
       idp: this.idp.stats(),
+      acme: this.acme.stats(),
       issuer: this.cfg.issuer,
       signingAlg: this.cfg.signingAlg,
     };

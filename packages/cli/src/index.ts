@@ -59,7 +59,8 @@ Commands:
   brands list         List the 15 JATA Qi product brands.
   automation <sub>    SOMA AI: list|show|create|run|executions|stats|enable|disable|remove.
   fx <sub>            KARIS FX: rates|rate|set|convert|history|analytics|currencies|stats.
-  pki <sub>           PKI: status|root|cas|issue|list|revoke|crl|ra|client|discovery.
+  pki <sub>           PKI: status|root|cas|issue|list|revoke|crl|ra|client|discovery|acme.
+  pki acme <sub>      ACME (RFC 8555): directory|nonce|new-account|new-order|challenge|validate|proof|finalize|cert|revoke.
   mobility <sub>      MOTO X: vehicles|fleets|drivers|trip|telemetry|geofences|stats.
   logistics <sub>     PORTLINK: ports|vessels|containers|shipments|track|warehouses|stats.
   farm <sub>          KARIS FARM: farms|fields|plant|harvest|herds|stats.
@@ -731,8 +732,125 @@ async function main() {
           case 'discovery':
             console.log(JSON.stringify(pki.idp.discovery(), null, 2));
             break;
+          case 'acme': {
+            const sub2 = args[2];
+            switch (sub2) {
+              case 'directory':
+                console.log(JSON.stringify(pki.acmeDirectory(), null, 2));
+                break;
+              case 'nonce':
+                console.log(pki.acmeNewNonce());
+                break;
+              case 'new-account': {
+                // Generate an account key, sign a newAccount JWS, and print
+                // the kid + account JWK for the operator to keep.
+                const { generateKeyPair } = await import('@jataqi/pki');
+                const { sign } = await import('node:crypto');
+                const key = generateKeyPair('ec-p256');
+                const b64 = (b: Buffer): string => b.toString('base64url');
+                const header = b64(Buffer.from(JSON.stringify({ alg: 'ES256', jwk: key.jwk, nonce: pki.acmeNewNonce(), url: '/new-account' }), 'utf8'));
+                const payload = b64(Buffer.from(JSON.stringify({ termsOfServiceAgreed: true }), 'utf8'));
+                const sig = sign('sha256', Buffer.from(`${header}.${payload}`), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+                const result = pki.acmeNewAccount(`${header}.${payload}.${sig}`);
+                console.log(JSON.stringify({ kid: result.kid, accountJwk: key.jwk, existing: result.existing, note: 'Keep this JWK — it is your ACME account key for JWS-signed requests.' }, null, 2));
+                break;
+              }
+              case 'new-order': {
+                const kid = args[3], domains = args[4];
+                if (!kid || !domains) { console.error('Usage: jataqi pki acme new-order <kid> <domain1,domain2>'); process.exit(1); }
+                const order = pki.acmeNewOrder(kid, domains.split(',').map((d) => d.trim()).filter(Boolean).map((d) => ({ type: 'dns' as const, value: d })));
+                const out: Record<string, unknown> = {
+                  order: { id: order.id, status: order.status, identifiers: order.identifiers, finalizeUrl: order.finalizeUrl },
+                };
+                const authzs = order.authorizationIds.map((id) => pki.acmeGetAuthorization(id)!).map((a) => {
+                  const first = a.challenges[0]!;
+                  let keyAuth: string | undefined;
+                  try { keyAuth = pki.acmeChallengeKeyAuthorization(first.id).keyAuthorization; } catch { /* no account */ }
+                  return {
+                    id: a.id, identifier: a.identifier.value, status: a.status,
+                    challenge: { id: first.id, type: first.type, token: first.token, keyAuthorization: keyAuth },
+                    proofLocation: `http://${a.identifier.value.replace(/^\*\./, '')}/.well-known/acme-challenge/${first.token}`,
+                  };
+                });
+                out.authorizations = authzs;
+                console.log(JSON.stringify(out, null, 2));
+                break;
+              }
+              case 'challenge': {
+                const id = args[3];
+                if (!id) { console.error('Usage: jataqi pki acme challenge <challengeId>'); process.exit(1); }
+                try {
+                  console.log(JSON.stringify(pki.acmeChallengeKeyAuthorization(id), null, 2));
+                } catch (err) {
+                  console.log((err as Error).message);
+                }
+                break;
+              }
+              case 'validate': {
+                const kid = args[3], challengeId = args[4];
+                if (!kid || !challengeId) { console.error('Usage: jataqi pki acme validate <kid> <challengeId>'); process.exit(1); }
+                try {
+                  console.log(JSON.stringify(pki.acmeRequestValidation(kid, challengeId), null, 2));
+                } catch (err) {
+                  console.log((err as Error).message);
+                }
+                break;
+              }
+              case 'proof': {
+                const kid = args[3], challengeId = args[4], location = args[5], value = args[6];
+                if (!kid || !challengeId || !location || !value) { console.error('Usage: jataqi pki acme proof <kid> <challengeId> <location> <keyAuthorization>'); process.exit(1); }
+                try {
+                  console.log(JSON.stringify(pki.acmeSubmitProof(kid, challengeId, { location, value }), null, 2));
+                } catch (err) {
+                  console.log((err as Error).message);
+                }
+                break;
+              }
+              case 'finalize': {
+                const kid = args[3], orderId = args[4], csrFile = args[5];
+                if (!kid || !orderId || !csrFile) { console.error('Usage: jataqi pki acme finalize <kid> <orderId> <csrFile.der>'); process.exit(1); }
+                const fs = await import('node:fs/promises');
+                const csr = await fs.readFile(csrFile);
+                const result = pki.acmeFinalize(kid, orderId, csr);
+                if (result.certificate) {
+                  const cert = result.certificate;
+                  console.log(JSON.stringify({ orderId: result.order.id, status: result.order.status, certificateId: cert.id, sanDnsNames: cert.sanDnsNames, certDer: cert.certDer }, null, 2));
+                } else {
+                  console.log(`finalize failed: ${result.order.error?.detail ?? 'unknown'}`);
+                }
+                break;
+              }
+              case 'cert': {
+                const orderId = args[3];
+                if (!orderId) { console.error('Usage: jataqi pki acme cert <orderId> [--out cert.der]'); process.exit(1); }
+                const cert = pki.acmeCertificate(orderId);
+                if (!cert) { console.log('no certificate for this order'); break; }
+                if (flag('out')) {
+                  const fs = await import('node:fs/promises');
+                  await fs.writeFile(flag('out')!, Buffer.from(cert.certDer, 'base64'));
+                  console.log(`wrote ${flag('out')}`);
+                } else {
+                  console.log(JSON.stringify({ certificateId: cert.id, sanDnsNames: cert.sanDnsNames, certDer: cert.certDer }, null, 2));
+                }
+                break;
+              }
+              case 'revoke': {
+                const kid = args[3], certId = args[4];
+                if (!kid || !certId) { console.error('Usage: jataqi pki acme revoke <kid> <certId> [--reason keyCompromise]'); process.exit(1); }
+                try {
+                  console.log(pki.acmeRevoke(kid, certId, flag('reason')) ? 'revoked' : 'not revoked');
+                } catch (err) {
+                  console.log((err as Error).message);
+                }
+                break;
+              }
+              default:
+                console.error('Usage: jataqi pki acme directory|nonce|new-account|new-order|challenge|validate|proof|finalize|cert|revoke'); process.exit(1);
+            }
+            break;
+          }
           default:
-            console.error('Usage: jataqi pki status|root|cas|issue|list|revoke|crl|ra|client|discovery'); process.exit(1);
+            console.error('Usage: jataqi pki status|root|cas|issue|list|revoke|crl|ra|client|discovery|acme'); process.exit(1);
         }
         break;
       }

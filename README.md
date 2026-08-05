@@ -183,6 +183,11 @@ node packages/cli/dist/src/index.js fx convert USD KES 10000
 node packages/cli/dist/src/index.js pki root "JATA Qi Root"
 node packages/cli/dist/src/index.js pki issue <caId> api.example.com --san api.example.com
 node packages/cli/dist/src/index.js pki client "my app" https://app.example.com/cb
+node packages/cli/dist/src/index.js pki acme new-account
+node packages/cli/dist/src/index.js pki acme new-order <kid> example.com
+node packages/cli/dist/src/index.js pki acme proof <kid> <challengeId> http://example.com/.well-known/acme-challenge/<token> <keyAuthorization>
+node packages/cli/dist/src/index.js pki acme finalize <kid> <orderId> request.csr.der
+node packages/cli/dist/src/index.js pki acme cert <orderId> --out cert.der
 node packages/cli/dist/src/index.js mobility register KDD 123B Toyota Corolla --lat -1.2921 --lng 36.8219
 node packages/cli/dist/src/index.js mobility trip -1.2921 36.8219 -1.2864 36.8172
 node packages/cli/dist/src/index.js logistics port Mombasa MBA KE
@@ -350,6 +355,8 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/pki/status` · `/pki/cas` · `/pki/certificates` · `/pki/crl` · `/pki/idp/discovery` | `pki:read` | PKI reads |
 | POST | `/pki/ca/root` · `/pki/ca/intermediate` · `/pki/certificates` · `/pki/certificates/revoke` · `/pki/ra/*` · `/pki/idp/clients` · `/pki/idp/authorize` | `pki:write` / `pki:read` | PKI operations |
 | POST | `/pki/idp/token` · `/pki/idp/introspect` | – | OIDC token + introspection endpoints |
+| GET | `/pki/acme/directory` · `/pki/acme/new-nonce` · `/pki/acme/order` · `/pki/acme/authz` · `/pki/acme/challenge` · `/pki/acme/challenge/key-auth` · `/pki/acme/certificate` | `pki:read` | ACME reads |
+| POST | `/pki/acme/new-account` · `/pki/acme/new-order` · `/pki/acme/challenge/validate` · `/pki/acme/challenge/proof` · `/pki/acme/finalize` · `/pki/acme/revoke` | `pki:write` | ACME operations (JWS-signed) |
 | POST | `/mobility/vehicles` · `/mobility/fleets` · `/mobility/drivers` · `/mobility/trips` · `/mobility/telemetry` · `/mobility/geofences` | `mobility:write` | MOTO X operations |
 | GET | `/mobility/vehicles` · `/mobility/fleets` · `/mobility/drivers` · `/mobility/trips` · `/mobility/telemetry` · `/mobility/geofences` · `/mobility/stats` | `mobility:read` | MOTO X reads |
 | POST | `/logistics/ports` · `/logistics/vessels` · `/logistics/containers` · `/logistics/shipments` · `/logistics/shipments/track` · `/logistics/warehouses` | `logistics:write` | PORTLINK operations |
@@ -466,6 +473,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **SOMA AI — Intelligent Automation Engine** (Phase 6 — scheduled / bus-event / manual automations with chained platform actions, concurrency caps, timeouts, execution history, stats)
 - ✅ **Self-Evolution × CLP 4/5** (Phase 7 extension — evolution proposals from concluded prompt experiments; distillation progress observations)
 - ✅ **PKI — PRX Part C** (X.509 CA root/intermediate hierarchy verified by OpenSSL, RFC 5280 DER certificates, revocation + CRLs, Registration Authority with dns-txt/http-01/email validation, OIDC-lite Identity Provider with JWT ID tokens + JWKS)
+- ✅ **ACME — RFC 8555 automated issuance** (PRX Part C — replay nonces, JWS-signed accounts via RFC 7638 thumbprints, orders/authorizations/challenges with http-01/dns-01/tls-alpn-01, keyAuthorization proofs, PKCS#10 CSR finalization cross-validated with OpenSSL, certificate fetch + revocation)
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
 - ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)
