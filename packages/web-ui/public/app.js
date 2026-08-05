@@ -307,6 +307,7 @@ const VIEWS = {
     const [pending, history, gstats] = await Promise.allSettled([
       api('GET', '/approvals'), api('GET', '/approvals?status=all'), api('GET', '/tools/governance-stats'),
     ]);
+    scheduleRefresh('approvals', 10_000);
     return {
       pending: pending.status === 'fulfilled' ? pending.value.approvals : [],
       history: history.status === 'fulfilled' ? history.value.approvals : [],
@@ -341,6 +342,7 @@ const VIEWS = {
     const [alerts, gstats] = await Promise.allSettled([
       api('GET', '/governance/alerts'), api('GET', '/tools/governance-stats'),
     ]);
+    scheduleRefresh('alerts', 15_000);
     return {
       alerts: alerts.status === 'fulfilled' ? alerts.value.alerts : [],
       checkedAt: alerts.status === 'fulfilled' ? alerts.value.checkedAt : null,
@@ -475,6 +477,16 @@ function tableFrom(rows, cols) {
     html += `<tr>${keys.map((k) => `<td>${esc(r[k])}</td>`).join('')}</tr>`;
   });
   return html + '</tbody></table>';
+}
+
+// --- View auto-refresh ------------------------------------------------------
+const refreshTimers = {};
+function scheduleRefresh(view, intervalMs) {
+  if (refreshTimers[view]) return; // one timer per view
+  refreshTimers[view] = setTimeout(() => {
+    delete refreshTimers[view];
+    if (state.view === view && state.token) loadView(view);
+  }, intervalMs);
 }
 
 function renderView(view, data) {

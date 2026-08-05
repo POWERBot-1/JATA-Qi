@@ -165,6 +165,10 @@ describe('WebUIModule', () => {
     assert.match(js, /audit-export-scope/, 'export scope selector rendered');
     assert.match(js, /Export CSV/, 'CSV export button present');
     assert.match(js, /Export JSON/, 'JSON export button present');
+    // Live auto-refresh for alerts + approvals views.
+    assert.match(js, /scheduleRefresh\('alerts', 15_000\)/, 'alerts auto-refresh scheduled');
+    assert.match(js, /scheduleRefresh\('approvals', 10_000\)/, 'approvals auto-refresh scheduled');
+    assert.match(js, /refreshTimers\[view\]/, 'refresh throttled per view');
     // Conversation export + governance feed topic.
     assert.match(js, /exportTanyaConversation/, 'tanya export action present');
     assert.match(js, /\/chat\/export\?id=/, 'chat export endpoint wired');
