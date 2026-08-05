@@ -138,6 +138,12 @@ describe('WebUIModule', () => {
     assert.match(js, /shareTanyaConversation/, 'share action present');
     assert.match(js, /tanya-org/, 'org scope input rendered');
     assert.match(js, /recipient email \(IdP identity\)/, 'IdP-identity sharing UI present');
+    // IdP-first login (client-credentials grant).
+    assert.match(js, /\/pki\/idp\/console-login/, 'console-login endpoint wired');
+    assert.match(js, /consoleLoginIdp/, 'passwordless IdP login helper present');
+    assert.match(js, /doIdpLogin/, 'IdP login button action present');
+    assert.match(js, /Sign in with saved IdP session/, 'IdP button rendered');
+    assert.match(js, /idpClientKey/, 'per-user IdP client keyed by username');
     // Deep IdP integration (refresh + rotation).
     assert.match(js, /\/pki\/idp\/rotate/, 'session rotation endpoint wired');
     assert.match(js, /\/pki\/idp\/token/, 'idp authorization-code exchange wired');

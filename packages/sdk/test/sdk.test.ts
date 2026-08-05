@@ -396,4 +396,32 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const filteredParsed = JSON.parse(filtered) as Array<{ action: string }>;
     for (const r of filteredParsed) assert.equal(r.action, 'tool.approval.decided');
   });
+
+  it('pki.consoleLogin — passwordless IdP-first login via client-credentials', async () => {
+    // Admin registers a user-bound client.
+    const who = await client.auth.whoami();
+    const adminUserId = who.principal.userId;
+    const clientRes = await fetch(`http://127.0.0.1:${port}/pki/idp/clients`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${client.getToken()}` },
+      body: JSON.stringify({ name: 'sdk-console-first', redirectUris: ['https://sdk.example.com/ui'], userId: adminUserId }),
+    });
+    const creds = await clientRes.json() as { clientId: string; clientSecret: string };
+
+    // Fresh SDK client with NO token — passwordless login via consoleLogin.
+    const anon = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    assert.equal(anon.getToken(), undefined);
+    const result = await anon.pki.consoleLogin(creds.clientId, creds.clientSecret);
+    assert.equal(result.ok, true);
+    assert.equal(result.principal!.userId, adminUserId);
+    assert.equal(result.principal!.username, 'admin');
+    assert.ok(anon.getToken(), 'SDK token auto-set from the minted session');
+
+    // The token works.
+    const me = await anon.auth.whoami();
+    assert.equal(me.principal.username, 'admin');
+
+    // Bad secret → ok:false (no throw).
+    const bad = await anon.pki.consoleLogin(creds.clientId, 'wrong');
+    assert.equal(bad.ok, false);
+  });
 });

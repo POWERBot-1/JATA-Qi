@@ -59,6 +59,7 @@ async function login(username, password) {
   localStorage.setItem('jq_principal', JSON.stringify(r.principal));
   localStorage.setItem('jq_expires', String(state.expiresAt));
   state.authNotice = '';
+  localStorage.setItem('jq_last_username', username);
   render();
   linkIdpSession(r.principal, username); // best-effort, never blocks login
 }
@@ -74,9 +75,13 @@ async function registerAndLogin(username, password) {
 // platform session can be silently rotated when it expires.
 async function linkIdpSession(principal, username) {
   try {
-    if (localStorage.getItem('jq_idp_client')) return;
-    const client = await api('POST', '/pki/idp/clients', { name: 'jataqi-console', redirectUris: [location.origin + '/ui'] });
-    localStorage.setItem('jq_idp_client', JSON.stringify(client));
+    const key = idpClientKey(username);
+    if (localStorage.getItem(key)) return;
+    // First-party client bound to this platform user — its secret is the
+    // credential for IdP-first login (client-credentials grant).
+    const client = await api('POST', '/pki/idp/clients', { name: 'jataqi-console', redirectUris: [location.origin + '/ui'], userId: principal.userId });
+    localStorage.setItem(key, JSON.stringify(client));
+    localStorage.setItem('jq_idp_client', JSON.stringify(client)); // legacy alias
     await api('POST', '/pki/idp/profile', { sub: principal.userId, preferred_username: username, roles: principal.roles });
     const authz = await api('POST', '/pki/idp/authorize', { clientId: client.clientId, redirectUri: location.origin + '/ui', scope: 'openid profile', userId: principal.userId });
     const tokens = await api('POST', '/pki/idp/token', { code: authz.code, clientId: client.clientId, clientSecret: client.clientSecret, redirectUri: location.origin + '/ui' });
@@ -85,12 +90,39 @@ async function linkIdpSession(principal, username) {
     }
   } catch { /* non-admin or IdP unavailable — rotation stays disabled */ }
 }
-function idpClientStored() {
-  try { return JSON.parse(localStorage.getItem('jq_idp_client')); } catch { return null; }
+function idpClientKey(username) { return `jq_idp_client_${(username || 'default').replace(/[^a-zA-Z0-9_-]/g, '_')}`; }
+function idpClientStored(username) {
+  try { return JSON.parse(localStorage.getItem(idpClientKey(username)) || localStorage.getItem('jq_idp_client')); } catch { return null; }
+}
+/** IdP-first login: exchange the stored bound client's secret for a platform session (no password). */
+async function consoleLoginIdp(username) {
+  const client = idpClientStored(username);
+  if (!client?.clientId || !client?.clientSecret) return null;
+  try {
+    const r = await fetch('/pki/idp/console-login', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ clientId: client.clientId, clientSecret: client.clientSecret, scope: 'openid profile' }),
+    });
+    if (!r.ok) return null;
+    const result = await r.json();
+    if (!result.ok || !result.session) return null;
+    state.token = result.session.token;
+    state.principal = result.principal;
+    state.expiresAt = result.session.expiresAt;
+    localStorage.setItem('jq_token', result.session.token);
+    localStorage.setItem('jq_principal', JSON.stringify(result.principal));
+    localStorage.setItem('jq_expires', String(result.session.expiresAt));
+    if (result.idpTokens?.access_token) {
+      let refresh = null;
+      try { refresh = JSON.parse(localStorage.getItem('jq_idp_tokens')).refresh_token; } catch { /* none */ }
+      localStorage.setItem('jq_idp_tokens', JSON.stringify({ refresh_token: refresh, access_token: result.idpTokens.access_token, expires_in: result.idpTokens.expires_in }));
+    }
+    return result.principal;
+  } catch { return null; }
 }
 /** Silently rotate the platform session via the IdP refresh token. */
 async function rotateIdpSession() {
-  const client = idpClientStored();
+  const client = idpClientStored(state.principal?.username);
   const tokens = (() => { try { return JSON.parse(localStorage.getItem('jq_idp_tokens')); } catch { return null; } })();
   if (!client || !tokens?.refresh_token) return false;
   try {
@@ -1024,12 +1056,14 @@ function render() {
         <button id="tab-register" class="auth-tab" onclick="setAuthTab('register')">Create Account</button>
       </div>
       ${notice}
-      <div class="form-group"><label>Username</label><input id="login-user" placeholder="admin" autofocus></div>
+      <div class="form-group"><label>Username</label><input id="login-user" placeholder="admin" value="${esc(localStorage.getItem('jq_last_username') || '')}" autofocus></div>
       <div class="form-group"><label>Password</label><input id="login-pass" type="password" placeholder="••••••••"></div>
       <div class="form-group" id="login-roles-group" style="display:none"><label>Roles</label>
         <select id="login-roles"><option value="developer" selected>developer</option><option value="analyst">analyst</option></select></div>
       <div class="auth-error" id="login-err">Invalid credentials</div>
       <button class="btn-primary" style="width:100%" id="login-submit" onclick="doLogin()">Sign In</button>
+      <div style="margin:14px 0;text-align:center;color:var(--text-dim);font-size:12px">— or —</div>
+      <button class="btn-ghost" style="width:100%" id="login-idp" onclick="doIdpLogin()">🔑 Sign in with saved IdP session</button>
     </div></div>`;
     $('#login-pass')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
     return;
@@ -1067,6 +1101,18 @@ window.setAuthTab = (mode) => {
   $('#login-roles-group').style.display = mode === 'register' ? '' : 'none';
   $('#login-submit').textContent = mode === 'register' ? 'Create Account' : 'Sign In';
 };
+window.doIdpLogin = () => {
+  const u = $('#login-user').value.trim();
+  consoleLoginIdp(u || localStorage.getItem('jq_last_username') || undefined).then((principal) => {
+    if (principal) {
+      localStorage.setItem('jq_last_username', principal.username);
+      render(); startSessionTimer();
+    } else {
+      $('#login-err').textContent = 'No saved IdP session for this browser — sign in with your password first.';
+      $('#login-err').style.display = 'block';
+    }
+  });
+};
 window.doLogin = () => {
   const u = $('#login-user').value, p = $('#login-pass').value;
   const submit = () => authMode === 'register' ? registerAndLogin(u, p) : login(u, p);
@@ -1095,6 +1141,13 @@ $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSe
 
 // Init.
 (async () => {
-  if (await checkStoredAuth()) { render(); startSessionTimer(); }
-  else render();
+  if (await checkStoredAuth()) { render(); startSessionTimer(); return; }
+  // IdP-first: if a bound client is stored, try passwordless login before
+  // showing the login screen.
+  const last = localStorage.getItem('jq_last_username') || undefined;
+  if (idpClientStored(last)) {
+    const principal = await consoleLoginIdp(last);
+    if (principal) { render(); startSessionTimer(); return; }
+  }
+  render();
 })();

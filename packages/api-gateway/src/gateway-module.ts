@@ -745,6 +745,7 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/pki/idp/userinfo', auth('pki:read', (req) => this.pkiIdpUserinfo(req)));
     route('GET', '/pki/idp/discovery', () => this.pkiIdpDiscovery());
     route('POST', '/pki/idp/login', (req) => this.pkiIdpLogin(req));
+    route('POST', '/pki/idp/console-login', (req) => this.pkiIdpConsoleLogin(req));
     route('POST', '/pki/idp/refresh', (req) => this.pkiIdpRefresh(req));
     route('POST', '/pki/idp/rotate', (req) => this.pkiIdpRotate(req));
     route('POST', '/pki/idp/profile', auth('pki:write', (req) => this.pkiIdpProfile(req)));
@@ -3182,8 +3183,24 @@ export class ApiGatewayModule implements IModule {
       name: b.name,
       redirectUris: b.redirectUris.map(String),
       ...(Array.isArray(b.scopes) ? { scopes: b.scopes.map(String) } : {}),
+      ...(typeof b.userId === 'string' && b.userId ? { userId: b.userId } : {}),
     });
-    return json(201, { clientId: client.clientId, clientSecret: client.clientSecret, redirectUris: client.redirectUris, scopes: client.scopes });
+    return json(201, { clientId: client.clientId, clientSecret: client.clientSecret, redirectUris: client.redirectUris, scopes: client.scopes, ...(client.userId ? { userId: client.userId } : {}) });
+  }
+
+  /** IdP-first login: client-credentials grant → platform session (one call). */
+  private async pkiIdpConsoleLogin(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.pki) return json(501, { error: 'pki module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.clientId !== 'string' || typeof b.clientSecret !== 'string')
+      return json(400, { error: 'fields "clientId" and "clientSecret" are required' });
+    const result = await this.pki.consoleLogin({
+      clientId: b.clientId, clientSecret: b.clientSecret,
+      ...(typeof b.scope === 'string' ? { scope: b.scope } : {}),
+      ...(typeof b.remoteAddress === 'string' ? { remoteAddress: b.remoteAddress } : {}),
+    });
+    if (!result.ok) return json(401, { error: result.reason ?? 'IdP login failed' });
+    return json(200, { ok: true, idpTokens: result.idpTokens, session: result.session, principal: result.principal });
   }
 
   private pkiIdpAuthorize(req: GatewayRequest): GatewayResponse {

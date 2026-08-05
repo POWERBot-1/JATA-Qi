@@ -150,10 +150,49 @@ export class PkiModule implements IModule {
 
   // ---- IdP surface -------------------------------------------------------
 
-  registerIdpClient(input: { name: string; redirectUris: string[]; scopes?: string[] }): IdpClient {
+  registerIdpClient(input: { name: string; redirectUris: string[]; scopes?: string[]; userId?: string }): IdpClient {
     const client = this.idp.registerClient(input);
-    void this.api.bus.emit(PkiEvents.ClientRegistered, { clientId: client.clientId, name: client.name });
+    void this.api.bus.emit(PkiEvents.ClientRegistered, { clientId: client.clientId, name: client.name, ...(input.userId ? { userId: input.userId } : {}) });
     return client;
+  }
+
+  /**
+   * OAuth2 client-credentials grant (RFC 6749 §4.4): a first-party client
+   * bound to a platform user exchanges its secret for an access token.
+   */
+  idpClientCredentials(input: { clientId: string; clientSecret: string; scope?: string }): { access_token: string; token_type: 'Bearer'; expires_in: number; scope?: string } {
+    const response = this.idp.clientCredentials(input);
+    void this.api.bus.emit(PkiEvents.TokensIssued, { clientId: input.clientId, grant: 'client_credentials' });
+    return response;
+  }
+
+  /**
+   * One-call IdP-first login: client-credentials grant → access token →
+   * platform session (via loginWithIdpToken). The console uses this for
+   * passwordless "Sign in with your IdP session" — possession of the bound
+   * client secret IS the credential.
+   */
+  async consoleLogin(input: { clientId: string; clientSecret: string; scope?: string; remoteAddress?: string }): Promise<{
+    ok: boolean;
+    reason?: string;
+    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    session?: { token: string; userId: string; username: string; expiresAt: number };
+    principal?: { userId: string; username: string; roles: string[] };
+  }> {
+    let tokens: { access_token: string; expires_in: number; scope?: string };
+    try {
+      tokens = this.idpClientCredentials({ clientId: input.clientId, clientSecret: input.clientSecret, ...(input.scope ? { scope: input.scope } : {}) });
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+    const login = await this.loginWithIdpToken(tokens.access_token, { remoteAddress: input.remoteAddress });
+    if (!login.ok) return { ok: false, reason: login.reason ?? 'session creation failed' };
+    return {
+      ok: true,
+      idpTokens: { access_token: tokens.access_token, expires_in: tokens.expires_in, ...(tokens.scope ? { scope: tokens.scope } : {}) },
+      session: login.session,
+      principal: login.principal,
+    };
   }
 
   idpAuthorize(input: { clientId: string; redirectUri: string; scope?: string; userId: string }): { code: string; redirectUri: string } {
@@ -224,15 +263,13 @@ export class PkiModule implements IModule {
     if (!info.active || !info.userId) return { ok: false, reason: 'invalid or expired IdP token' };
     const claims = (this.idp.userinfo(accessToken) ?? {}) as Record<string, unknown>;
     const preferredUsername = claims.preferred_username;
-    const username = typeof preferredUsername === 'string' && preferredUsername
-      ? preferredUsername
-      : info.userId;
     const roles = Array.isArray(claims.roles)
       ? (claims.roles as unknown[]).filter((r): r is string => typeof r === 'string')
       : ['analyst'];
     try {
       const security = this.api.getModule('security') as unknown as {
         getUser: (username: string) => Promise<{ id: string; username: string; active: boolean; roles: string[] } | undefined>;
+        findByUserId: (userId: string) => Promise<{ id: string; username: string; active: boolean; roles: string[] } | undefined>;
         registerUser: (username: string, password: string, roles: string[], metadata?: Record<string, unknown>) => Promise<unknown>;
         createSessionForUser: (username: string, roles: string[], opts?: { remoteAddress?: string }) => Promise<{
           ok: boolean;
@@ -241,7 +278,17 @@ export class PkiModule implements IModule {
           principal?: { userId: string; username: string; roles: string[] };
         }>;
       };
-      let user = await security.getUser(username);
+      // Username resolution: IdP preferred_username wins; otherwise fall back
+      // to the platform account bound to the subject (client-credentials
+      // grants carry the platform userId); otherwise JIT-provision with the
+      // subject id as the username (legacy behavior).
+      let username = typeof preferredUsername === 'string' && preferredUsername ? preferredUsername : '';
+      let user = username ? await security.getUser(username) : undefined;
+      if (!user) {
+        const byId = await security.findByUserId(info.userId);
+        if (byId) { username = byId.username; user = byId; }
+        else if (!username) username = info.userId;
+      }
       if (!user) {
         await security.registerUser(username, randomUnusablePassword(), roles, { provisionedBy: 'idp' });
       }

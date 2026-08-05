@@ -490,3 +490,71 @@ describe('IdP refresh + session rotation (deep integration)', () => {
     }
   });
 });
+
+describe('IdP-first login — client-credentials grant + consoleLogin', () => {
+  it('client-credentials grant issues a user-bound access token', async () => {
+    const t = await import('@jataqi/core-kernel/testing');
+    const { StorageModule } = await import('@jataqi/storage');
+    const { SecurityModule } = await import('@jataqi/security');
+    const { PkiModule } = await import('../src/index.js');
+    const kernel = t.createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    const pki = new PkiModule({ issuer: 'https://id.cc.test' });
+    kernel.register(pki);
+    await kernel.boot();
+    try {
+      // Client bound to a user (first-party console client).
+      const client = pki.registerIdpClient({ name: 'console', redirectUris: ['https://console.example.com/ui'], userId: 'u-cc' });
+      assert.equal(client.userId, 'u-cc');
+
+      const tokens = pki.idpClientCredentials({ clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.ok(tokens.access_token);
+      assert.equal(tokens.token_type, 'Bearer');
+      assert.ok(tokens.expires_in > 0);
+      assert.equal(pki.idp.introspect(tokens.access_token).userId, 'u-cc');
+
+      // Wrong secret / unbound client → throws.
+      assert.throws(() => pki.idpClientCredentials({ clientId: client.clientId, clientSecret: 'nope' }), /invalid client credentials/);
+      const unbound = pki.registerIdpClient({ name: 'third-party', redirectUris: ['https://x.example.com/cb'] });
+      assert.throws(() => pki.idpClientCredentials({ clientId: unbound.clientId, clientSecret: unbound.clientSecret }), /not bound to a user/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('consoleLogin mints a platform session from the client secret alone', async () => {
+    const t = await import('@jataqi/core-kernel/testing');
+    const { StorageModule } = await import('@jataqi/storage');
+    const { SecurityModule } = await import('@jataqi/security');
+    const { PkiModule } = await import('../src/index.js');
+    const kernel = t.createTestKernel();
+    kernel.register(new StorageModule());
+    const sec = new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } });
+    kernel.register(sec);
+    const pki = new PkiModule({ issuer: 'https://id.cl.test' });
+    kernel.register(pki);
+    await kernel.boot();
+    try {
+      pki.idp.upsertUser('u-cl', { preferred_username: 'console-user', roles: ['developer'] });
+      const client = pki.registerIdpClient({ name: 'console', redirectUris: ['https://console.example.com/ui'], userId: 'u-cl' });
+
+      const result = await pki.consoleLogin({ clientId: client.clientId, clientSecret: client.clientSecret });
+      assert.equal(result.ok, true);
+      assert.ok(result.session?.token);
+      assert.equal(result.principal?.username, 'console-user');
+      assert.deepEqual(result.principal?.roles, ['developer']);
+
+      // Session authenticates.
+      const principal = await sec.authenticate(result.session!.token);
+      assert.equal(principal?.username, 'console-user');
+
+      // Bad secret → ok:false.
+      const bad = await pki.consoleLogin({ clientId: client.clientId, clientSecret: 'nope' });
+      assert.equal(bad.ok, false);
+      assert.match(bad.reason ?? '', /invalid client credentials/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+});

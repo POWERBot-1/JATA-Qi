@@ -181,6 +181,12 @@ export class SecurityModule implements IModule {
     return list[0];
   }
 
+  /** Resolve a platform account by its internal id (IdP bridge lookups). */
+  async findByUserId(userId: string): Promise<User | undefined> {
+    const list = await this.users.query({ where: (u) => u.id === userId });
+    return list[0];
+  }
+
   async listUsers(): Promise<User[]> {
     return this.users.all();
   }

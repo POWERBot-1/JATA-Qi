@@ -1653,4 +1653,36 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const anon = await fetch(`${base}/audit/export`);
     assert.equal(anon.status, 401);
   });
+
+  it('POST /pki/idp/console-login — IdP-first passwordless login (client-credentials)', async () => {
+    // Admin registers a user-bound console client via the gateway (pki:write).
+    const who = await jsonRequest('GET', `${base}/whoami`, undefined, token);
+    const adminUserId = (who.body as { principal: { userId: string } }).principal.userId;
+    const client = await jsonRequest('POST', `${base}/pki/idp/clients`, {
+      name: 'console-first', redirectUris: ['https://console.example.com/ui'], userId: adminUserId,
+    }, token);
+    assert.equal(client.status, 201);
+    const creds = client.body as { clientId: string; clientSecret: string; userId: string };
+    assert.equal(creds.userId, adminUserId);
+
+    // Passwordless login with ONLY the client secret.
+    const login = await jsonRequest('POST', `${base}/pki/idp/console-login`, { clientId: creds.clientId, clientSecret: creds.clientSecret });
+    assert.equal(login.status, 200);
+    const body2 = login.body as { ok: boolean; session: { token: string; username: string }; principal: { userId: string } };
+    assert.equal(body2.ok, true);
+    assert.equal(body2.principal.userId, adminUserId);
+    assert.equal(body2.session.username, 'admin');
+
+    // The minted session works on protected routes.
+    const whoami = await jsonRequest('GET', `${base}/whoami`, undefined, body2.session.token);
+    assert.equal((whoami.body as { principal: { username: string } }).principal.username, 'admin');
+
+    // Bad secret → 401.
+    const bad = await jsonRequest('POST', `${base}/pki/idp/console-login`, { clientId: creds.clientId, clientSecret: 'wrong' });
+    assert.equal(bad.status, 401);
+
+    // Missing fields → 400.
+    const missing = await jsonRequest('POST', `${base}/pki/idp/console-login`, { clientId: creds.clientId });
+    assert.equal(missing.status, 400);
+  });
 });

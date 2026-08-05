@@ -207,6 +207,21 @@ export class PkiClient {
   async upsertProfile(sub: string, claims: { name?: string; email?: string; preferred_username?: string; roles?: string[] } = {}): Promise<{ profile: Record<string, unknown> }> {
     return this.c.request('POST', '/pki/idp/profile', { sub, ...claims });
   }
+  /** IdP-first login: client-credentials grant → fresh platform session (no password). */
+  async consoleLogin(clientId: string, clientSecret: string): Promise<{
+    ok: boolean; reason?: string;
+    idpTokens?: { access_token: string; expires_in: number; scope?: string };
+    session?: { token: string; userId: string; username: string; expiresAt: number };
+    principal?: { userId: string; username: string; roles: string[] };
+  }> {
+    try {
+      const r = await this.c.request<{ ok: boolean; reason?: string; idpTokens?: { access_token: string; expires_in: number; scope?: string }; session?: { token: string; userId: string; username: string; expiresAt: number }; principal?: { userId: string; username: string; roles: string[] } }>('POST', '/pki/idp/console-login', { clientId, clientSecret, scope: 'openid profile' });
+      if (r.ok && r.session) this.c.setToken(r.session.token);
+      return r;
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
 }
 
 // --- Auth ---------------------------------------------------------------------

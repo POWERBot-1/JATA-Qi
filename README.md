@@ -397,6 +397,7 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | POST | `/pki/idp/login` | – | IdP access token → platform session bridge (JIT provisioning) |
 | POST | `/pki/idp/refresh` | – | OIDC refresh_token grant (new access token) |
 | POST | `/pki/idp/rotate` | – | One-call session rotation: refresh IdP token + mint fresh platform session |
+| POST | `/pki/idp/console-login` | – | IdP-first login: client-credentials grant (bound client secret) → platform session |
 | POST | `/pki/idp/profile` | `pki:write` | Upsert IdP user claims (name/email/roles) |
 | POST | `/agriculture/farms` · `/agriculture/fields` · `/agriculture/crops` · `/agriculture/harvests` · `/agriculture/herds` | `agriculture:write` | KARIS FARM operations |
 | GET | `/agriculture/farms` · `/agriculture/fields` · `/agriculture/crops` · `/agriculture/harvests` · `/agriculture/herds` · `/agriculture/stats` | `agriculture:read` | KARIS FARM reads |
@@ -541,7 +542,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **KARIS FX — Foreign Exchange Intelligence** (Phase 6 — cross rates via anchor, bid/ask spreads, integer-exact conversions with margin, trend/volatility analytics, memory-integrated)
 - ✅ **MOTO X — Mobility Intelligence** (Phase 7 — vehicle/fleet/driver registry, nearest-vehicle dispatch, trip lifecycle + fares, telemetry, geofences)
 - ✅ **PORTLINK — Logistics & Port Intelligence** (Phase 7 — ports/vessels/containers, tracking-event shipment timelines, warehouses, freight analytics)
-- ✅ **IdP ↔ Security session bridge** (directive — OIDC authorization-code login mints platform sessions with RBAC + audit; JIT account provisioning; session rotation: refresh token → new IdP token → fresh platform session in one call, web UI auto-links the IdP session on login and silently rotates on expiry)
+- ✅ **IdP ↔ Security session bridge** (directive — OIDC authorization-code login mints platform sessions with RBAC + audit; JIT account provisioning; session rotation: refresh token → new IdP token → fresh platform session in one call, web UI auto-links the IdP session on login and silently rotates on expiry; **IdP-first login**: OAuth2 client-credentials grant (RFC 6749 §4.4) — a user-bound console client's secret alone mints a platform session via `POST /pki/idp/console-login`, with a "Sign in with saved IdP session" button + auto-login on load in the web console)
 - ✅ **KARIS FARM — Agricultural Intelligence** (Phase 7 — crop cycles, harvests + yield analytics, livestock)
 - ✅ **KARIS LOOP — Circular Economy Platform** (Phase 7 — collection lifecycle, take-back, circularity scores, CO2e savings)
 - ✅ **KARIS ENERGY — Energy Intelligence** (Phase 7 — solar/wind/grid assets, meters, consumption analytics, tariff billing)
@@ -553,7 +554,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)
 - ✅ **Adaptive Dashboard** (Phase 5 step 3 — widget framework, responsive layout engine, AI personalization; 19 built-in widgets incl. tool-governance widgets — governed tools / invocations / decisions KPIs + pending-approvals list, live governance panel in the web UI)
 - ✅ **Admin Console Web UI** (Phase 5 step 4 — `/ui` SPA served by the gateway: TANYA chat with personas + conversation history streaming over `/ws` (word-by-word chunks, HTTP fallback), QiL console streaming plan steps live, adaptive dashboard layouts (create/AI-adapt/auto-arrange), federated search console, memory/learning/FX views, PRX engine views (cloud/CDN/email/IPAM), tool-governance console (sync + approvals), **live activity feed** (subscribes to platform bus topics — security/memory/tool/tanya/orchestrator — with sidebar feed + toast notifications), system health/readiness/identity views)
-- ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, `subscribe(topics)` for platform bus events, bearer-token auth, reconnect with backoff, handshake watchdog; `pki` namespace with `idpRefresh`/`rotate`/`upsertProfile`; `audit` namespace with `list`/`exportCsv`/`exportJson`; `examples/sdk-streaming.mjs`)
+- ✅ **SDK WebSocket Streaming Client** (`StreamingClient` — typed `tanyaChat` / `qilRun` / `qilObjective` / `chat` over `/ws` with chunk/step handlers, `subscribe(topics)` for platform bus events, bearer-token auth, reconnect with backoff, handshake watchdog; `pki` namespace with `idpRefresh`/`rotate`/`upsertProfile`/`consoleLogin` (passwordless IdP-first login); `audit` namespace with `list`/`exportCsv`/`exportJson`; `examples/sdk-streaming.mjs`)
 - ✅ **Auth polish** (`GET /auth/session` expiry introspection; web UI register-first flow (Sign In / Create Account), session validation on restore, live countdown + auto-logout on expiry, global 401 handling; SDK `auth.session()`)
 - ✅ **Universal Wallet** (Phase 2 — double-entry ledger consolidating finance/commerce/game-economy wallets; escrow, treasury, multi-currency)
 - ✅ **Payments** (Phase 3 — M-Pesa, Flutterwave, Pesapal, Airtel Money, PayPal, Stripe adapters)

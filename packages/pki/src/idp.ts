@@ -13,6 +13,8 @@ export interface IdpClient {
   name: string;
   redirectUris: string[];
   scopes: string[];
+  /** Bound platform user (first-party client-credentials grant). */
+  userId?: string;
   createdAt: number;
 }
 
@@ -97,7 +99,7 @@ export class IdentityProvider {
 
   // ---- clients -----------------------------------------------------------
 
-  registerClient(input: { name: string; redirectUris: string[]; scopes?: string[] }): IdpClient {
+  registerClient(input: { name: string; redirectUris: string[]; scopes?: string[]; userId?: string }): IdpClient {
     if (input.redirectUris.length === 0) throw new Error('at least one redirectUri is required');
     const client: IdpClient = {
       clientId: randomUUID(),
@@ -106,6 +108,7 @@ export class IdentityProvider {
       redirectUris: [...input.redirectUris],
       scopes: input.scopes ?? ['openid', 'profile'],
       createdAt: Date.now(),
+      ...(input.userId ? { userId: input.userId } : {}),
     };
     this.clients.set(client.clientId, client);
     return client;
@@ -218,6 +221,24 @@ export class IdentityProvider {
   /** Revoke an access or refresh token. */
   revoke(token: string): boolean {
     return this.tokens.delete(token);
+  }
+
+  /**
+   * OAuth2 client-credentials grant (RFC 6749 §4.4) for first-party clients
+   * bound to a platform user (client.userId). The client secret is the
+   * credential; returns an access token for the bound user.
+   */
+  clientCredentials(input: { clientId: string; clientSecret: string; scope?: string }): { access_token: string; token_type: 'Bearer'; expires_in: number; scope?: string } {
+    const client = this.clients.get(input.clientId);
+    if (!client || client.clientSecret !== input.clientSecret) throw new Error('invalid client credentials');
+    if (!client.userId) throw new Error('client is not bound to a user');
+    const token = this.issueAccessToken(client.clientId, client.userId, input.scope ?? client.scopes.join(' '));
+    return {
+      access_token: token.token,
+      token_type: 'Bearer',
+      expires_in: this.cfg.accessTokenTtlSec,
+      ...(token.scope ? { scope: token.scope } : {}),
+    };
   }
 
   /** Verify + decode a JWT ID token (returns claims or throws). */
