@@ -128,6 +128,7 @@ const NAV = [
   { id: 'automations', label: 'Automations', icon: '⏰' },
   { id: 'tools', label: 'Tools', icon: '🔧' },
   { id: 'approvals', label: 'Approvals', icon: '✅' },
+  { id: 'audit', label: 'Audit Trail', icon: '📜' },
   { id: 'health', label: 'System Health', icon: '💚' },
   { id: 'identity', label: 'Creator Identity', icon: '🔐' },
   { id: 'readiness', label: 'Readiness', icon: '✅' },
@@ -203,6 +204,19 @@ const VIEWS = {
       pending: pending.status === 'fulfilled' ? pending.value.approvals : [],
       history: history.status === 'fulfilled' ? history.value.approvals : [],
       gstats: gstats.status === 'fulfilled' ? gstats.value : null,
+    };
+  },
+
+  audit: async () => {
+    const [approval, denied, login, total] = await Promise.allSettled([
+      api('GET', '/audit?action=tool.approval.decided'), api('GET', '/audit?action=tool.approval.required'),
+      api('GET', '/audit?action=auth.login&limit=10'), api('GET', '/audit?limit=50'),
+    ]);
+    return {
+      approval: approval.status === 'fulfilled' ? approval.value.records : [],
+      denied: denied.status === 'fulfilled' ? denied.value.records : [],
+      login: login.status === 'fulfilled' ? login.value.records : [],
+      total: total.status === 'fulfilled' ? total.value.records : [],
     };
   },
 
@@ -514,6 +528,18 @@ function renderView(view, data) {
       ${statCard('Failed', s.failed ?? null)}
     </div>
     <div class="card"><div class="card-title">Automations</div>${tableFrom(data.automations, ['id', 'name', 'trigger', 'enabled', 'status'])}</div>`;
+  } else if (view === 'audit') {
+    const approval = data.approval || [];
+    const denied = data.denied || [];
+    const login = data.login || [];
+    html += `<div class="stat-grid">
+      ${statCard('Decisions', approval.length, 'green')}
+      ${statCard('Denied Invokes', denied.length, 'red')}
+      ${statCard('Logins (10)', login.length)}
+    </div>
+    <div class="card"><div class="card-title">Approval Decisions (ledger)</div>${tableFrom(approval, ['ts', 'action', 'actor', 'result', 'detail'])}</div>
+    <div class="card"><div class="card-title">Denied High-Risk Invocations</div>${tableFrom(denied, ['ts', 'action', 'actor', 'result', 'resource'])}</div>
+    <div class="card"><div class="card-title">Recent Logins</div>${tableFrom(login, ['ts', 'actor', 'action', 'result'])}</div>`;
   } else if (view === 'approvals') {
     const pending = data.pending || [];
     const history = data.history || [];

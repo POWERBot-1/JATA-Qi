@@ -1489,4 +1489,23 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal(approved.result, 'success');
     assert.ok(approved.actor.length > 0, 'decider attributed');
   });
+
+  it('GET /audit supports the audit-trail view (approval + auth actions)', async () => {
+    // The prior audit test already produced approval records in this kernel.
+    const approval = (await jsonRequest('GET', `${base}/audit?action=tool.approval.decided`, undefined, token)).body as { records: { ts: number; actor: string; result: string }[]; count: number };
+    assert.ok(approval.count >= 1, 'approval decisions present');
+
+    // Denied high-risk invocations.
+    const denied = (await jsonRequest('GET', `${base}/audit?action=tool.approval.required`, undefined, token)).body as { count: number };
+    assert.ok(denied.count >= 1);
+
+    // Logins recorded with actor attribution (the shared admin session).
+    const logins = (await jsonRequest('GET', `${base}/audit?action=auth.login`, undefined, token)).body as { records: { actor: string; result: string }[] };
+    assert.ok(logins.records.length >= 1);
+    for (const r of logins.records) assert.equal(r.result, 'success');
+
+    // Limit applies.
+    const limited = (await jsonRequest('GET', `${base}/audit?action=auth.login&limit=1`, undefined, token)).body as { records: unknown[] };
+    assert.ok(limited.records.length <= 1);
+  });
 });
