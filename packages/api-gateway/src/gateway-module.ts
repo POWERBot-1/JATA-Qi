@@ -65,6 +65,8 @@ import type { MobilityModule } from '@jataqi/mobility';
 import type { LogisticsModule } from '@jataqi/logistics';
 import type { AgricultureModule } from '@jataqi/agriculture';
 import type { CircularModule } from '@jataqi/circular';
+import type { EnergyModule } from '@jataqi/energy';
+import type { BorderModule } from '@jataqi/border';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -138,6 +140,8 @@ export class ApiGatewayModule implements IModule {
   private logistics?: LogisticsModule;
   private agriculture?: AgricultureModule;
   private circular?: CircularModule;
+  private energy?: EnergyModule;
+  private border?: BorderModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -218,6 +222,8 @@ export class ApiGatewayModule implements IModule {
     this.logistics = this.tryModule<LogisticsModule>('logistics');
     this.agriculture = this.tryModule<AgricultureModule>('agriculture');
     this.circular = this.tryModule<CircularModule>('circular');
+    this.energy = this.tryModule<EnergyModule>('energy');
+    this.border = this.tryModule<BorderModule>('border');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -758,6 +764,32 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/circular/takeback/status', auth('circular:write', (req) => this.circularTakebackStatus(req)));
     route('GET', '/circular/score', auth('circular:read', (req) => this.circularScore(req)));
     route('GET', '/circular/stats', auth('circular:read', () => this.circularStats()));
+    // Phase 7 — KARIS ENERGY.
+    route('POST', '/energy/assets', auth('energy:write', (req) => this.energyAssetsRegister(req)));
+    route('GET', '/energy/assets', auth('energy:read', (req) => this.energyAssetsList(req)));
+    route('POST', '/energy/assets/status', auth('energy:write', (req) => this.energyAssetsStatus(req)));
+    route('POST', '/energy/meters', auth('energy:write', (req) => this.energyMetersRegister(req)));
+    route('GET', '/energy/meters', auth('energy:read', (req) => this.energyMetersList(req)));
+    route('POST', '/energy/readings', auth('energy:write', (req) => this.energyReadingsRecord(req)));
+    route('GET', '/energy/readings', auth('energy:read', (req) => this.energyReadingsList(req)));
+    route('POST', '/energy/tariffs', auth('energy:write', (req) => this.energyTariffsRegister(req)));
+    route('GET', '/energy/tariffs', auth('energy:read', () => this.energyTariffsList()));
+    route('POST', '/energy/bills', auth('energy:write', (req) => this.energyBillsIssue(req)));
+    route('GET', '/energy/bills', auth('energy:read', (req) => this.energyBillsList(req)));
+    route('GET', '/energy/stats', auth('energy:read', () => this.energyStats()));
+    // Phase 7 — KARIS BORDER X.
+    route('POST', '/border/posts', auth('border:write', (req) => this.borderPostsRegister(req)));
+    route('GET', '/border/posts', auth('border:read', (req) => this.borderPostsList(req)));
+    route('POST', '/border/posts/status', auth('border:write', (req) => this.borderPostsStatus(req)));
+    route('POST', '/border/watchlist', auth('border:write', (req) => this.borderWatchlistAdd(req)));
+    route('GET', '/border/watchlist', auth('border:read', () => this.borderWatchlistList()));
+    route('POST', '/border/crossings', auth('border:write', (req) => this.borderCrossingsProcess(req)));
+    route('GET', '/border/crossings', auth('border:read', (req) => this.borderCrossingsList(req)));
+    route('POST', '/border/crossings/override', auth('border:write', (req) => this.borderCrossingsOverride(req)));
+    route('POST', '/border/manifests', auth('border:write', (req) => this.borderManifestsDeclare(req)));
+    route('GET', '/border/manifests', auth('border:read', (req) => this.borderManifestsList(req)));
+    route('POST', '/border/manifests/status', auth('border:write', (req) => this.borderManifestsStatus(req)));
+    route('GET', '/border/stats', auth('border:read', () => this.borderStats()));
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1064,6 +1096,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
+      'energy', 'border',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -3486,6 +3519,229 @@ export class ApiGatewayModule implements IModule {
   private circularStats(): GatewayResponse {
     if (!this.circular) return json(501, { error: 'circular module not registered' });
     return json(200, { stats: this.circular.stats() });
+  }
+
+  // --- Phase 7 — KARIS ENERGY -------------------------------------------
+
+  private energyAssetsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.source !== 'string' || typeof b.capacityKw !== 'number')
+      return json(400, { error: 'fields "name", "source", and "capacityKw" are required' });
+    return json(201, { asset: this.energy.registerAsset({
+      name: b.name, source: b.source as never, capacityKw: b.capacityKw,
+      ...(typeof b.location === 'string' ? { location: b.location } : {}),
+    }) });
+  }
+
+  private energyAssetsList(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const assets = this.energy.listAssets(req.query.source as never, req.query.status as never);
+    return json(200, { assets, count: assets.length });
+  }
+
+  private energyAssetsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const asset = this.energy.setAssetStatus(b.id, b.status as never);
+    return asset ? json(200, { asset }) : json(404, { error: 'asset not found' });
+  }
+
+  private energyMetersRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string') return json(400, { error: 'field "name" is required' });
+    return json(201, { meter: this.energy.registerMeter({
+      name: b.name,
+      ...(typeof b.customerId === 'string' ? { customerId: b.customerId } : {}),
+      ...(typeof b.location === 'string' ? { location: b.location } : {}),
+    }) });
+  }
+
+  private energyMetersList(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const meters = this.energy.listMeters(req.query.customerId);
+    return json(200, { meters, count: meters.length });
+  }
+
+  private async energyReadingsRecord(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.meterId !== 'string' || typeof b.kwh !== 'number')
+      return json(400, { error: 'fields "meterId" and "kwh" are required' });
+    const reading = await this.energy.recordReading({
+      meterId: b.meterId, kwh: b.kwh,
+      ...(typeof b.voltageV === 'number' ? { voltageV: b.voltageV } : {}),
+    });
+    return json(201, { reading });
+  }
+
+  private energyReadingsList(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    if (!req.query.meterId) return json(400, { error: 'query parameter "meterId" is required' });
+    const readings = this.energy.readingsFor(req.query.meterId, {
+      ...(req.query.fromTs ? { fromTs: Number(req.query.fromTs) } : {}),
+      ...(req.query.toTs ? { toTs: Number(req.query.toTs) } : {}),
+      ...(req.query.limit ? { limit: Number(req.query.limit) } : {}),
+    });
+    return json(200, { readings, count: readings.length });
+  }
+
+  private energyTariffsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.pricePerKwh !== 'number')
+      return json(400, { error: 'fields "name" and "pricePerKwh" are required' });
+    return json(201, { tariff: this.energy.registerTariff({
+      name: b.name, pricePerKwh: b.pricePerKwh,
+      ...(typeof b.fixedCharge === 'number' ? { fixedCharge: b.fixedCharge } : {}),
+    }) });
+  }
+
+  private energyTariffsList(): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const tariffs = this.energy.listTariffs();
+    return json(200, { tariffs, count: tariffs.length });
+  }
+
+  private async energyBillsIssue(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.meterId !== 'string' || typeof b.tariffId !== 'string')
+      return json(400, { error: 'fields "meterId" and "tariffId" are required' });
+    const bill = await this.energy.bill({
+      meterId: b.meterId, tariffId: b.tariffId,
+      ...(typeof b.fromReadingId === 'string' ? { fromReadingId: b.fromReadingId } : {}),
+      ...(typeof b.toReadingId === 'string' ? { toReadingId: b.toReadingId } : {}),
+    });
+    return json(201, { bill });
+  }
+
+  private energyBillsList(req: GatewayRequest): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    const bills = this.energy.billsList(req.query.meterId);
+    return json(200, { bills, count: bills.length });
+  }
+
+  private energyStats(): GatewayResponse {
+    if (!this.energy) return json(501, { error: 'energy module not registered' });
+    return json(200, { stats: this.energy.stats() });
+  }
+
+  // --- Phase 7 — KARIS BORDER X ------------------------------------------
+
+  private borderPostsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.crossing !== 'string')
+      return json(400, { error: 'fields "name" and "crossing" are required' });
+    return json(201, { post: this.border.registerPost({
+      name: b.name, crossing: b.crossing,
+      ...(typeof b.location === 'string' ? { location: b.location } : {}),
+    }) });
+  }
+
+  private borderPostsList(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const posts = this.border.listPosts(req.query.status as never);
+    return json(200, { posts, count: posts.length });
+  }
+
+  private borderPostsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const post = this.border.setPostStatus(b.id, b.status as never);
+    return post ? json(200, { post }) : json(404, { error: 'post not found' });
+  }
+
+  private borderWatchlistAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.documentNo !== 'string' || typeof b.reason !== 'string')
+      return json(400, { error: 'fields "name", "documentNo", and "reason" are required' });
+    return json(201, { entry: this.border.addWatchlist({
+      name: b.name, documentNo: b.documentNo,
+      category: (b.category as never) ?? 'person', reason: b.reason,
+    }) });
+  }
+
+  private borderWatchlistList(): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const entries = this.border.listWatchlist();
+    return json(200, { entries, count: entries.length });
+  }
+
+  private async borderCrossingsProcess(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.postId !== 'string' || typeof b.travelerId !== 'string' || typeof b.travelerName !== 'string' || typeof b.documentNo !== 'string')
+      return json(400, { error: 'fields "postId", "travelerId", "travelerName", and "documentNo" are required' });
+    const crossing = await this.border.processCrossing({
+      postId: b.postId, travelerId: b.travelerId, travelerName: b.travelerName, documentNo: b.documentNo,
+      mode: (b.mode as never) ?? 'road', direction: (b.direction as never) ?? 'inbound',
+    });
+    return json(201, { crossing });
+  }
+
+  private borderCrossingsList(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const crossings = this.border.listCrossings({
+      ...(req.query.postId ? { postId: req.query.postId } : {}),
+      ...(req.query.clearance ? { clearance: req.query.clearance as never } : {}),
+      ...(req.query.direction ? { direction: req.query.direction as never } : {}),
+    });
+    return json(200, { crossings, count: crossings.length });
+  }
+
+  private borderCrossingsOverride(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.clearance !== 'string')
+      return json(400, { error: 'fields "id" and "clearance" are required' });
+    const crossing = this.border.overrideClearance(b.id, b.clearance as never, typeof b.reason === 'string' ? b.reason : undefined);
+    return crossing ? json(200, { crossing }) : json(404, { error: 'crossing not found' });
+  }
+
+  private async borderManifestsDeclare(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.postId !== 'string' || typeof b.reference !== 'string' || typeof b.description !== 'string' || typeof b.weightKg !== 'number')
+      return json(400, { error: 'fields "postId", "reference", "description", and "weightKg" are required' });
+    const manifest = await this.border.declareManifest({
+      postId: b.postId, reference: b.reference,
+      consignor: typeof b.consignor === 'string' ? b.consignor : '',
+      consignee: typeof b.consignee === 'string' ? b.consignee : '',
+      description: b.description, weightKg: b.weightKg,
+    });
+    return json(201, { manifest });
+  }
+
+  private borderManifestsList(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const manifests = this.border.listManifests({
+      ...(req.query.postId ? { postId: req.query.postId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.flagged ? { flagged: req.query.flagged === 'true' } : {}),
+    });
+    return json(200, { manifests, count: manifests.length });
+  }
+
+  private borderManifestsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const manifest = this.border.updateManifestStatus(b.id, b.status as never);
+    return manifest ? json(200, { manifest }) : json(404, { error: 'manifest not found' });
+  }
+
+  private borderStats(): GatewayResponse {
+    if (!this.border) return json(501, { error: 'border module not registered' });
+    return json(200, { stats: this.border.stats() });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

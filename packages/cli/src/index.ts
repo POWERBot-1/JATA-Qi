@@ -26,6 +26,8 @@ import type { MobilityModule } from '@jataqi/mobility';
 import type { LogisticsModule } from '@jataqi/logistics';
 import type { AgricultureModule } from '@jataqi/agriculture';
 import type { CircularModule } from '@jataqi/circular';
+import type { EnergyModule } from '@jataqi/energy';
+import type { BorderModule } from '@jataqi/border';
 import type { OrchestratorModule } from '@jataqi/orchestrator';
 
 const HELP = `
@@ -61,6 +63,8 @@ Commands:
   farm <sub>          KARIS FARM: farms|fields|plant|harvest|herds|stats.
   circular <sub>      KARIS LOOP: streams|collect|collections|takeback|score|stats.
   qil <sub>           QiL language: parse|compile|format|lint|run <file|->.
+  energy <sub>        KARIS ENERGY: assets|asset|meters|reading|tariffs|bill|stats.
+  border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
@@ -91,6 +95,8 @@ async function main() {
   const logistics = kernel.getModule<LogisticsModule>('logistics');
   const agriculture = kernel.getModule<AgricultureModule>('agriculture');
   const circular = kernel.getModule<CircularModule>('circular');
+  const energy = kernel.getModule<EnergyModule>('energy');
+  const border = kernel.getModule<BorderModule>('border');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
   let longRunning = false;
 
@@ -1029,6 +1035,120 @@ async function main() {
         }
         break;
       }
+      case 'energy': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'assets':
+            for (const a of energy.listAssets()) console.log(`- ${a.name} (${a.source}) ${a.capacityKw}kW [${a.status}]`);
+            console.log(`${energy.listAssets().length} asset(s)`);
+            break;
+          case 'asset': {
+            const name = args[2], source = args[3], capacity = args[4];
+            if (!name || !source || !capacity) { console.error('Usage: jataqi energy asset <name> <source> <capacityKw>'); process.exit(1); }
+            const a = energy.registerAsset({ name, source: source as never, capacityKw: Number(capacity) });
+            console.log(`registered ${a.id}`);
+            break;
+          }
+          case 'meters':
+            for (const m of energy.listMeters()) console.log(`- ${m.name}${m.customerId ? ` (${m.customerId})` : ''}`);
+            console.log(`${energy.listMeters().length} meter(s)`);
+            break;
+          case 'meter': {
+            const name = args[2];
+            if (!name) { console.error('Usage: jataqi energy meter <name> [--customer c1]'); process.exit(1); }
+            const m = energy.registerMeter({ name, ...(flag('customer') ? { customerId: flag('customer') } : {}) });
+            console.log(`registered ${m.id}`);
+            break;
+          }
+          case 'reading': {
+            const meterId = args[2], kwh = args[3];
+            if (!meterId || !kwh) { console.error('Usage: jataqi energy reading <meterId> <kwh>'); process.exit(1); }
+            try {
+              const r = await energy.recordReading({ meterId, kwh: Number(kwh) });
+              console.log(`recorded ${r.id} @ ${r.kwh}kWh`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'tariffs':
+            for (const t of energy.listTariffs()) console.log(`- ${t.name} ${t.pricePerKwh}/kWh + ${t.fixedCharge} fixed`);
+            console.log(`${energy.listTariffs().length} tariff(s)`);
+            break;
+          case 'bill': {
+            const meterId = args[2], tariffId = args[3];
+            if (!meterId || !tariffId) { console.error('Usage: jataqi energy bill <meterId> <tariffId> [--from <readingId>]'); process.exit(1); }
+            try {
+              const bill = await energy.bill({ meterId, tariffId, ...(flag('from') ? { fromReadingId: flag('from') } : {}) });
+              console.log(`bill ${bill.total} units (${bill.kwhUsed}kWh)`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(energy.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi energy assets|asset|meters|meter|reading|tariffs|bill|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'border': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'posts':
+            for (const p of border.listPosts()) console.log(`- ${p.name} (${p.crossing}) [${p.status}]`);
+            console.log(`${border.listPosts().length} post(s)`);
+            break;
+          case 'post': {
+            const name = args[2], crossing = args[3];
+            if (!name || !crossing) { console.error('Usage: jataqi border post <name> <crossing>'); process.exit(1); }
+            const p = border.registerPost({ name, crossing });
+            console.log(`registered ${p.id}`);
+            break;
+          }
+          case 'watchlist':
+            for (const w of border.listWatchlist()) console.log(`- ${w.name} ${w.documentNo} [${w.category}] ${w.active ? '' : '(inactive)'}`);
+            console.log(`${border.listWatchlist().length} entry(ies)`);
+            break;
+          case 'crossing': {
+            const postId = args[2], name = args[3], doc = args[4];
+            if (!postId || !name || !doc) { console.error('Usage: jataqi border crossing <postId> <travelerName> <documentNo> [--mode road] [--dir inbound]'); process.exit(1); }
+            const c = await border.processCrossing({
+              postId, travelerId: 'cli', travelerName: name, documentNo: doc,
+              mode: (flag('mode') as never) ?? 'road', direction: (flag('dir') as never) ?? 'inbound',
+            });
+            console.log(`${c.travelerName}: ${c.clearance}${c.reason ? ` (${c.reason})` : ''}`);
+            break;
+          }
+          case 'manifests':
+            for (const m of border.listManifests()) console.log(`- ${m.reference} ${m.description} ${m.weightKg}kg [${m.status}]${m.flagged ? ' FLAGGED' : ''}`);
+            console.log(`${border.listManifests().length} manifest(s)`);
+            break;
+          case 'manifest': {
+            const postId = args[2], ref = args[3], desc = args[4], weight = args[5];
+            if (!postId || !ref || !desc || !weight) { console.error('Usage: jataqi border manifest <postId> <reference> <description> <weightKg>'); process.exit(1); }
+            const m = await border.declareManifest({ postId, reference: ref, consignor: 'cli', consignee: 'cli', description: desc, weightKg: Number(weight) });
+            console.log(`${m.reference} [${m.status}]${m.flagged ? ' FLAGGED for inspection' : ''}`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(border.stats(), null, 2));
+            break;
+          default:
+            console.error('Usage: jataqi border posts|post|watchlist|crossing|manifests|manifest|stats'); process.exit(1);
+        }
+        break;
+      }
       case 'repl':
       default: {
         const rl = readline.createInterface({ input, output });
@@ -1038,7 +1158,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

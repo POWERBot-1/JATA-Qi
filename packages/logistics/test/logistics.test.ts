@@ -117,8 +117,10 @@ describe('LogisticsModule', () => {
       // Milestone recorded in the DME.
       const memory = kernel.getModule<DigitalMemoryModule>('memory');
       const recs = memory.query({ category: 'logistics_shipment' });
-      assert.equal(recs.length, 2); // booked + delivered
-      assert.match(recs[0]!.summary, /delivered/);
+      assert.equal(recs.length, 2); // booked + delivered (order-independent:
+      // events can share a millisecond under load, so match on content)
+      assert.ok(recs.some((r) => /delivered at/.test(r.summary)));
+      assert.ok(recs.some((r) => /booked:/.test(r.summary)));
 
       assert.equal(mod.stats().shipments, 1);
     } finally {

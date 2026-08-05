@@ -34,6 +34,8 @@ import { MobilityModule } from '@jataqi/mobility';
 import { LogisticsModule } from '@jataqi/logistics';
 import { AgricultureModule } from '@jataqi/agriculture';
 import { CircularModule } from '@jataqi/circular';
+import { EnergyModule } from '@jataqi/energy';
+import { BorderModule } from '@jataqi/border';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -98,6 +100,8 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new LogisticsModule());
     kernel.register(new AgricultureModule());
     kernel.register(new CircularModule());
+    kernel.register(new EnergyModule());
+    kernel.register(new BorderModule());
     gateway = new ApiGatewayModule();
     kernel.register(gateway);
     await kernel.boot();
@@ -865,6 +869,60 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const stats = await jsonRequest('GET', `${base}/circular/stats`, undefined, token);
     assert.equal(stats.status, 200);
     assert.equal((stats.body as { stats: { recycledKg: number } }).stats.recycledKg, 200);
+  });
+
+  // --- Phase 7 — KARIS ENERGY + KARIS BORDER X via gateway --------------
+
+  it('energy: asset → meter → readings → tariff → bill → stats over HTTP', async () => {
+    const asset = await jsonRequest('POST', `${base}/energy/assets`, { name: 'Roof Array', source: 'solar', capacityKw: 12.5 }, token);
+    assert.equal(asset.status, 201);
+
+    const meter = await jsonRequest('POST', `${base}/energy/meters`, { name: 'Office', customerId: 'c1' }, token);
+    assert.equal(meter.status, 201);
+    const meterId = (meter.body as { meter: { id: string } }).meter.id;
+
+    const r1 = await jsonRequest('POST', `${base}/energy/readings`, { meterId, kwh: 500 }, token);
+    assert.equal(r1.status, 201);
+    const r1Id = (r1.body as { reading: { id: string } }).reading.id;
+    await jsonRequest('POST', `${base}/energy/readings`, { meterId, kwh: 800 }, token);
+
+    const tariff = await jsonRequest('POST', `${base}/energy/tariffs`, { name: 'Commercial', pricePerKwh: 15, fixedCharge: 2000 }, token);
+    const tariffId = (tariff.body as { tariff: { id: string } }).tariff.id;
+
+    const bill = await jsonRequest('POST', `${base}/energy/bills`, { meterId, tariffId, fromReadingId: r1Id }, token);
+    assert.equal(bill.status, 201);
+    const billBody = bill.body as { bill: { kwhUsed: number; total: number } };
+    assert.equal(billBody.bill.kwhUsed, 300);
+    assert.equal(billBody.bill.total, 6500); // 300×15 + 2000
+
+    const stats = await jsonRequest('GET', `${base}/energy/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { stats: { meters: number } }).stats.meters, 1);
+  });
+
+  it('border: post → watchlist → crossing referred → manifest flagged → stats over HTTP', async () => {
+    const post = await jsonRequest('POST', `${base}/border/posts`, { name: 'Busia', crossing: 'KE-UG' }, token);
+    assert.equal(post.status, 201);
+    const postId = (post.body as { post: { id: string } }).post.id;
+
+    const watch = await jsonRequest('POST', `${base}/border/watchlist`, { name: 'Suspect X', documentNo: 'W-001', category: 'person', reason: 'test' }, token);
+    assert.equal(watch.status, 201);
+
+    const crossing = await jsonRequest('POST', `${base}/border/crossings`, {
+      postId, travelerId: 't1', travelerName: 'Suspect X', documentNo: 'W-001', mode: 'road', direction: 'inbound',
+    }, token);
+    assert.equal(crossing.status, 201);
+    assert.equal((crossing.body as { crossing: { clearance: string } }).crossing.clearance, 'referred');
+
+    const manifest = await jsonRequest('POST', `${base}/border/manifests`, {
+      postId, reference: 'MF-77', consignor: 'A', consignee: 'B', description: 'General goods', weightKg: 15000,
+    }, token);
+    assert.equal(manifest.status, 201);
+    assert.equal((manifest.body as { manifest: { flagged: boolean } }).manifest.flagged, true);
+
+    const stats = await jsonRequest('GET', `${base}/border/stats`, undefined, token);
+    assert.equal(stats.status, 200);
+    assert.equal((stats.body as { stats: { referred: number } }).stats.referred, 1);
   });
 
   // --- Authz guard --------------------------------------------------------

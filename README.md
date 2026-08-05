@@ -58,6 +58,8 @@ structured response → produce an auditable execution record.
 | `@jataqi/logistics` | **PORTLINK (Phase 7)** — Logistics & Port Intelligence: ports, vessels, containers, tracking-event shipment timelines, warehouses, freight analytics |
 | `@jataqi/agriculture` | **KARIS FARM (Phase 7)** — Agricultural Intelligence: farms/fields, crop cycles + growth stages, harvests, livestock herds, yield analytics |
 | `@jataqi/circular` | **KARIS LOOP (Phase 7)** — Circular Economy Platform: material streams, collection lifecycle, product take-back, circularity scoring, CO2e savings |
+| `@jataqi/energy` | **KARIS ENERGY (Phase 7)** — Energy Intelligence: generation assets, meters + monotonic readings, consumption analytics, tariff billing |
+| `@jataqi/border` | **KARIS BORDER X (Phase 7)** — Border Security Intelligence: posts, watchlist screening, crossing clearances, cargo manifests with risk flagging |
 | `@jataqi/qil` | **QiL** orchestration language — lexer, parser, AST, validator, and compiler to an execution plan |
 | `@jataqi/orchestrator` | Workflow engine / Mission Coordinator — executes QiL plans (retrieval → reasoning → reporting) and emits audit records |
 | `@jataqi/teams` | Multi-agent coordination (MAIF) — fan-out / sequential / consensus teams with synthesis |
@@ -190,6 +192,11 @@ node packages/cli/dist/src/index.js farm harvest <cycleId> 3400
 node packages/cli/dist/src/index.js circular stream "PET Bottles" --type plastic --co2e 1.5
 node packages/cli/dist/src/index.js circular collect <streamId> 200 Nairobi
 node packages/cli/dist/src/index.js circular score p1 --scope product
+node packages/cli/dist/src/index.js energy asset "Roof Array" solar 12.5
+node packages/cli/dist/src/index.js energy meter Office --customer c1
+node packages/cli/dist/src/index.js energy reading <meterId> 800
+node packages/cli/dist/src/index.js border post Busia KE-UG
+node packages/cli/dist/src/index.js border crossing <postId> "Alice" P7654321 --mode road
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
@@ -344,6 +351,10 @@ const result = await orch.runObjective('Analyze revenue', { principal });
 | GET | `/agriculture/farms` · `/agriculture/fields` · `/agriculture/crops` · `/agriculture/harvests` · `/agriculture/herds` · `/agriculture/stats` | `agriculture:read` | KARIS FARM reads |
 | POST | `/circular/streams` · `/circular/collections` · `/circular/collections/status` · `/circular/takeback` · `/circular/takeback/status` | `circular:write` | KARIS LOOP operations |
 | GET | `/circular/streams` · `/circular/collections` · `/circular/takeback` · `/circular/score` · `/circular/stats` | `circular:read` | KARIS LOOP reads |
+| POST | `/energy/assets` · `/energy/meters` · `/energy/readings` · `/energy/tariffs` · `/energy/bills` | `energy:write` | KARIS ENERGY operations |
+| GET | `/energy/assets` · `/energy/meters` · `/energy/readings` · `/energy/tariffs` · `/energy/bills` · `/energy/stats` | `energy:read` | KARIS ENERGY reads |
+| POST | `/border/posts` · `/border/watchlist` · `/border/crossings` · `/border/manifests` | `border:write` | KARIS BORDER X operations |
+| GET | `/border/posts` · `/border/watchlist` · `/border/crossings` · `/border/manifests` · `/border/stats` | `border:read` | KARIS BORDER X reads |
 
 ### Security model
 
@@ -449,6 +460,8 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **IdP ↔ Security session bridge** (directive — OIDC authorization-code login mints platform sessions with RBAC + audit; JIT account provisioning)
 - ✅ **KARIS FARM — Agricultural Intelligence** (Phase 7 — crop cycles, harvests + yield analytics, livestock)
 - ✅ **KARIS LOOP — Circular Economy Platform** (Phase 7 — collection lifecycle, take-back, circularity scores, CO2e savings)
+- ✅ **KARIS ENERGY — Energy Intelligence** (Phase 7 — solar/wind/grid assets, meters, consumption analytics, tariff billing)
+- ✅ **KARIS BORDER X — Border Security Intelligence** (Phase 7 — watchlist screening, crossing clearances, cargo risk flagging)
 - ✅ **Design System** (universal design language — tokens, WCAG AA color science, adaptive theming, CSS generation)
 - ✅ **Branding** (brand identity for the 15 JATA Qi products — logos, app icons, splash screens, marketing, business cards)
 - ✅ **Icons** (premium geometric SVG icon library — 7 variants, 29 categories)

@@ -137,6 +137,22 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(run, /"auditRecordId"/);
   });
 
+  it('energy asset + meter + stats work', async () => {
+    const asset = await jataqi('energy', 'asset', 'Roof Array', 'solar', '12.5');
+    assert.match(asset, /registered [0-9a-f-]{36}/);
+    const meter = await jataqi('energy', 'meter', 'Office');
+    assert.match(meter, /registered [0-9a-f-]{36}/);
+    const stats = await jataqi('energy', 'stats');
+    assert.match(stats, /"assets": 0/);
+  });
+
+  it('border post + watchlist + stats work', async () => {
+    const post = await jataqi('border', 'post', 'Busia', 'KE-UG');
+    assert.match(post, /registered [0-9a-f-]{36}/);
+    const stats = await jataqi('border', 'stats');
+    assert.match(stats, /"posts": 0/);
+  });
+
   it('automation create + list + stats work', async () => {
     const created = await jataqi('automation', 'create', 'cli automation', '--trigger', 'manual');
     assert.match(created, /created [0-9a-f-]{36}/);

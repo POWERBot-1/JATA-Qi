@@ -37,6 +37,8 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/logistics` | `logistics` | memory | PORTLINK (Phase 7) — ports, vessels, containers, shipments + tracking, warehouses |
 | `@jataqi/agriculture` | `agriculture` | memory | KARIS FARM (Phase 7) — farms, fields, crop cycles, harvests, livestock |
 | `@jataqi/circular` | `circular` | memory | KARIS LOOP (Phase 7) — material streams, collections, take-back, circularity |
+| `@jataqi/energy` | `energy` | memory | KARIS ENERGY (Phase 7) — assets, meters, readings, tariffs/billing |
+| `@jataqi/border` | `border` | memory | KARIS BORDER X (Phase 7) — posts, watchlists, crossings, manifests |
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |
 | `@jataqi/branding` | `branding` | – | brand identity for the 15 JATA Qi products |

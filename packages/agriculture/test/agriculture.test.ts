@@ -102,8 +102,8 @@ describe('AgricultureModule', () => {
       const memory = kernel.getModule<DigitalMemoryModule>('memory');
       const recs = memory.query({ category: 'agriculture_crop' });
       assert.equal(recs.length, 2);
-      assert.match(recs[0]!.summary, /harvested tomatoes: 900kg/);
-      assert.match(recs[1]!.summary, /planted tomatoes/);
+      assert.ok(recs.some((r) => /harvested tomatoes: 900kg/.test(r.summary)));
+      assert.ok(recs.some((r) => /planted tomatoes/.test(r.summary)));
 
       assert.equal(mod.stats(farm.id)!.totalHarvestedKg, 900);
     } finally {
