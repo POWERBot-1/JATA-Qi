@@ -452,6 +452,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ Knowledge Service (ingestion, chunking, retrieval, metadata filters, context expansion)
 - ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
+- ✅ **Agent Intelligence Tools** (20 tools over the Phase 6/7 engines — `fx.*`, `mobility.*`, `logistics.*`, `agriculture.*`, `circular.*`, `energy.*`, `border.*`, `restaurants.*`, `marketplace.*`, `platform.search`, `wallet.balance`, `crypto.balance`; graceful degradation on partial kernels)
 - ✅ **QiL Language** (lexer, parser, AST, validator, execution-plan compiler)
 - ✅ **QiL Tooling** (idempotent formatter, semantic linter, CLI `qil parse|compile|format|lint|run` with auto-provisioned agents)
 - ✅ **Orchestrator / Workflow Engine** (QiL plan execution, retrieval+reasoning+reporting, audit, durable history)

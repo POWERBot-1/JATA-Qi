@@ -12,6 +12,7 @@ import {
   knowledgeSearchTool,
   vectorSearchTool,
 } from './builtins.js';
+import { allIntelligenceTools } from './intelligence-tools.js';
 
 export interface AgentModuleConfig {
   /** Default LLM for new agents; falls back to EchoLLM if not set. */
@@ -92,12 +93,18 @@ export class AgentRuntimeModule implements IModule {
   static ScriptedLLM = ScriptedLLM;
 
   private defaultTools(): Tool[] {
+    // Optional platform engines resolve best-effort so agents work on
+    // partial kernels (each tool reports a clear error when absent).
+    const resolve = (id: string): unknown => {
+      try { return this.api.getModule(id); } catch { return undefined; }
+    };
     return [
       knowledgeSearchTool(() => this.api.getModule<KnowledgeService>('knowledge')),
       graphTraverseTool(() => this.api.getModule<KnowledgeGraphModule>('knowledge-graph')),
       graphFindEntityTool(() => this.api.getModule<KnowledgeGraphModule>('knowledge-graph')),
       graphRetrieveTool(() => this.api.getModule<KnowledgeGraphModule>('knowledge-graph')),
       vectorSearchTool(() => this.api.getModule<VectorSearchModule>('vector-search')),
+      ...allIntelligenceTools(resolve),
     ];
   }
 }

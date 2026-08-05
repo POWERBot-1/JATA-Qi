@@ -10,7 +10,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/vector-search` | `vector-search` | storage | embeddings + flat index |
 | `@jataqi/knowledge-service` | `knowledge` | storage, vector | ingest / chunk / retrieve |
 | `@jataqi/knowledge-graph` | `knowledge-graph` | storage | entities, triples, graph-RAG |
-| `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector | ReAct agents + tools + LLMs |
+| `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector, fx, mobility, logistics, agriculture, circular, energy, border, restaurants, marketplace, search, universal-wallet, crypto | ReAct agents + 25 default tools (knowledge/graph/vector + all intelligence engines) + LLMs |
 | `@jataqi/qil` | `qil` | – | QiL language → execution plan; idempotent formatter + semantic linter |
 | `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history |
 | `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger |

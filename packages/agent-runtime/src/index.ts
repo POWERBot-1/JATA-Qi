@@ -15,5 +15,18 @@ export {
   graphRetrieveTool,
   vectorSearchTool,
 } from './builtins.js';
+export {
+  fxRateTool, fxConvertTool,
+  mobilityDispatchTool, mobilityVehiclesTool,
+  logisticsTrackTool, logisticsShipmentsTool,
+  agricultureStatsTool, agricultureHarvestsTool,
+  circularStatsTool, circularCollectionsTool,
+  energyStatsTool, energyReadingsTool,
+  borderScreenTool, borderCrossingsTool,
+  restaurantsMenuTool, restaurantsOrdersTool,
+  marketplaceListingsTool, platformSearchTool,
+  walletBalanceTool, cryptoBalanceTool,
+  allIntelligenceTools,
+} from './intelligence-tools.js';
 export { ConversationManager, InMemorySessionMemory } from './memory.js';
 export type { ISessionMemory } from './memory.js';
