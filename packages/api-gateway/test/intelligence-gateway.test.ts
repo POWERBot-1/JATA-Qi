@@ -44,6 +44,7 @@ import { EmailModule } from '@jataqi/email';
 import { IpamModule } from '@jataqi/ipam';
 import { TanyaModule } from '@jataqi/tanya';
 import { MetricsModule } from '@jataqi/metrics';
+import { OrganizationsModule } from '@jataqi/organizations';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -101,6 +102,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new ConversationsModule());
     kernel.register(new MetricsModule());
     kernel.register(new ToolIntelligenceModule());
+    kernel.register(new OrganizationsModule());
     kernel.register(new SearchModule());
     kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
     kernel.register(new FxModule({ anchor: 'USD' }));
@@ -1684,5 +1686,46 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     // Missing fields → 400.
     const missing = await jsonRequest('POST', `${base}/pki/idp/console-login`, { clientId: creds.clientId });
     assert.equal(missing.status, 400);
+  });
+
+  it('org-aware TANYA: invite → accept → org-scoped chat (full loop)', async () => {
+    // Owner (admin) creates an org.
+    const org = await jsonRequest('POST', `${base}/orgs`, { name: 'Acme Org' }, token);
+    assert.equal(org.status, 201);
+    const orgId = (org.body as { organization: { id: string; ownerId: string } }).organization.id;
+
+    // Owner invites the recipient by email (userId not yet known).
+    const invite = await jsonRequest('POST', `${base}/org`, { id: orgId, action: 'invite', target: 'colleague@acme.io' }, token);
+    assert.equal(invite.status, 201);
+    const invToken = (invite.body as { invitation: { token: string } }).invitation.token;
+
+    // Recipient (existing user from a prior test) accepts.
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const recToken = (recLogin.body as { token: string }).token;
+    const accept = await jsonRequest('POST', `${base}/org`, { id: orgId, action: 'accept', token: invToken }, recToken);
+    assert.equal(accept.status, 200);
+
+    // Both users now list the org.
+    const ownerOrgs = (await jsonRequest('GET', `${base}/orgs`, undefined, token)).body as { organizations: { id: string }[] };
+    assert.ok(ownerOrgs.organizations.some((o) => o.id === orgId));
+    const recOrgs = (await jsonRequest('GET', `${base}/orgs`, undefined, recToken)).body as { organizations: { id: string }[] };
+    assert.ok(recOrgs.organizations.some((o) => o.id === orgId), 'recipient sees the org after accepting');
+
+    // Org-scoped TANYA chat (owner).
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'org hello', orgId }, token);
+    assert.equal(chat.status, 200);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+
+    // Org-scoped list reflects only this org's conversations.
+    const scoped = (await jsonRequest('GET', `${base}/tanya/conversations?orgId=${orgId}`, undefined, token)).body as { total: number };
+    assert.ok(scoped.total >= 1);
+
+    // Owner shares with the recipient (by platform userId).
+    const who = await jsonRequest('GET', `${base}/whoami`, undefined, recToken);
+    const recUserId = (who.body as { principal: { userId: string } }).principal.userId;
+    const share = await jsonRequest('POST', `${base}/tanya/share`, { conversationId: convId, recipientUserId: recUserId }, token);
+    assert.equal(share.status, 201);
+    const inbox = (await jsonRequest('GET', `${base}/tanya/shared`, undefined, recToken)).body as { count: number };
+    assert.equal(inbox.count, 1);
   });
 });

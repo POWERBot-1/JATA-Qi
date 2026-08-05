@@ -5895,6 +5895,7 @@ export class ApiGatewayModule implements IModule {
       const message = msg.message as string;
       const conversationId = typeof msg.conversationId === 'string' ? msg.conversationId : undefined;
       const persona = typeof msg.persona === 'string' && msg.persona ? msg.persona : 'main';
+      const orgId = typeof msg.orgId === 'string' && msg.orgId ? msg.orgId : undefined;
 
       // Safety scan.
       if (this.aiSafety) {
@@ -5916,6 +5917,7 @@ export class ApiGatewayModule implements IModule {
           message,
           ...(conversationId ? { conversationId } : {}),
           persona,
+          ...(orgId ? { orgId } : {}),
           onChunk: (chunk) => { ws.send(JSON.stringify({ type: 'tanya.chunk', content: chunk })); },
         });
         ws.send(JSON.stringify({

@@ -231,6 +231,7 @@ const NAV = [
   { id: 'knowledge', label: 'Knowledge', icon: '📚' },
   { id: 'commerce', label: 'Commerce', icon: '💳' },
   { id: 'organizations', label: 'Organizations', icon: '🏢' },
+  { id: 'orgs', label: 'My Orgs', icon: '👥' },
   { id: 'notifications', label: 'Notifications', icon: '🔔' },
   { id: 'governance', label: 'Governance', icon: '⚖️' },
   { id: 'devices', label: 'Devices', icon: '📡' },
@@ -313,19 +314,31 @@ const VIEWS = {
     };
   },
 
+  orgs: async () => {
+    const [mine, members] = await Promise.allSettled([
+      api('GET', '/orgs'), api('GET', '/org/members'),
+    ]);
+    return {
+      organizations: mine.status === 'fulfilled' ? mine.value.organizations : [],
+      members: members.status === 'fulfilled' ? members.value.members : [],
+    };
+  },
+
   // --- QiL console (interactive) ---
   qil: async () => null,
 
   // --- TANYA AI ---
   tanya: async () => {
-    const [convs, personas] = await Promise.allSettled([
-      api('GET', '/tanya/conversations'), api('GET', '/tanya/personas'),
+    const [convs, personas, orgs] = await Promise.allSettled([
+      api('GET', '/tanya/conversations'), api('GET', '/tanya/personas'), api('GET', '/orgs'),
     ]);
     state.conv = null;
     state.personas = personas.status === 'fulfilled' ? personas.value.personas : [];
+    state.myOrgs = orgs.status === 'fulfilled' ? orgs.value.organizations : [];
     return {
       conversations: convs.status === 'fulfilled' ? convs.value.conversations : [],
       personas: state.personas,
+      myOrgs: state.myOrgs,
     };
   },
   dashboards: async () => {
@@ -489,7 +502,7 @@ function renderView(view, data) {
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
         <select id="tanya-persona" style="max-width:200px"><option value="main">main</option></select>
         <select id="tanya-conv" style="flex:1;min-width:220px"><option value="">— new conversation —</option></select>
-        <input id="tanya-org" placeholder="org id (optional)" style="max-width:180px">
+        <select id="tanya-org" style="max-width:220px"><option value="">— no org scope —</option></select>
         <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
       </div>
       <div id="tanya-messages" class="chat-log">
@@ -515,6 +528,24 @@ function renderView(view, data) {
       (state.personas || []).forEach((p) => {
         if (p.id !== 'main') pSel.insertAdjacentHTML('beforeend', `<option value="${esc(p.id)}">${esc(p.name)}</option>`);
       });
+      // Org-aware TANYA: populate the org selector from my orgs and default
+      // to the first org (org-scoped conversations surface automatically).
+      const oSel = $('#tanya-org');
+      if (oSel) {
+        (state.myOrgs || []).forEach((o, idx) => {
+          oSel.insertAdjacentHTML('beforeend', `<option value="${esc(o.id)}">${esc(o.name)}</option>`);
+        });
+        if (state.myOrgs?.length) {
+          oSel.value = state.myOrgs[0].id;
+          // Reload the conversation list scoped to the default org.
+          api('GET', `/tanya/conversations?orgId=${encodeURIComponent(state.myOrgs[0].id)}`).then((r) => {
+            const cSel = $('#tanya-conv');
+            if (!cSel) return;
+            cSel.innerHTML = '<option value="">— new conversation —</option>';
+            (r.conversations || []).forEach((c) => cSel.insertAdjacentHTML('beforeend', `<option value="${esc(c.id)}">${esc(c.title)} (${c.messageCount})</option>`));
+          }).catch(() => {});
+        }
+      }
       const cSel = $('#tanya-conv');
       (data.conversations || []).forEach((c) => {
         cSel.insertAdjacentHTML('beforeend', `<option value="${esc(c.id)}">${esc(c.title)} (${c.messageCount})</option>`);
@@ -722,6 +753,19 @@ function renderView(view, data) {
     html += `</tbody></table></div>`;
   } else if (view === 'agents') {
     html += `<div class="card"><div class="card-title">Agent Reply</div><p style="white-space:pre-wrap">${esc(data.answer || data.reply || '—')}</p></div>`;
+  } else if (view === 'orgs') {
+    const orgs = data.organizations || [];
+    const members = data.members || [];
+    html += `<div class="card"><div class="card-title">Create Organization</div>
+      <div style="display:flex;gap:8px"><input id="org-name" placeholder="Organization name">
+      <button class="btn-primary" onclick="createOrg()">Create</button></div></div>
+    <div class="card"><div class="card-title">My Organizations (${orgs.length})</div>
+      ${orgs.length === 0 ? '<p style="color:var(--text-dim)">You are not a member of any organization yet.</p>' : orgs.map((o) => `<div class="notif-item"><div class="notif-dot"></div><div><div style="font-weight:600">${esc(o.name)} <span class="feed-dim">${esc(o.id)}</span></div><div style="color:var(--text-dim);font-size:13px">owner ${esc(o.ownerId)} · ${esc(o.slug)}</div><div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap"><input id="invite-email-${esc(o.id)}" placeholder="colleague email" style="max-width:220px"><input id="invite-user-${esc(o.id)}" placeholder="or userId" style="max-width:180px"><button class="btn-ghost" onclick="inviteToOrg('${esc(o.id)}')">Invite</button><button class="btn-ghost" onclick="copyOrgId('${esc(o.id)}')">Copy org id</button></div></div></div>`).join('')}
+    </div>
+    <div class="card"><div class="card-title">Accept Invitation</div>
+      <div style="display:flex;gap:8px"><input id="invite-token" placeholder="paste invitation token">
+      <button class="btn-ghost" onclick="acceptInvite()">Accept</button></div></div>
+    <div class="card"><div class="card-title">Members</div>${tableFrom(members, ['orgId', 'userId', 'role'])}</div>`;
   } else if (view === 'notifications') {
     html += `<div class="card"><div class="card-title">Inbox (${data.unread} unread)</div>`;
     (data.notifications || []).forEach((n) => {
@@ -887,6 +931,33 @@ async function sendTanyaHttp(message, persona, convId, orgId) {
   } catch (e) {
     appendChatMessage('system', `Error: ${e.message}`);
   }
+}
+async function createOrg() {
+  const name = $('#org-name')?.value.trim();
+  if (!name) return;
+  try { await api('POST', '/orgs', { name }); await loadView('orgs'); } catch (e) { alert(e.message); }
+}
+async function inviteToOrg(orgId) {
+  const email = $(`#invite-email-${orgId}`)?.value.trim();
+  const userId = $(`#invite-user-${orgId}`)?.value.trim();
+  const target = userId || email;
+  if (!target) { alert('Enter a colleague email or userId.'); return; }
+  try {
+    await api('POST', '/org', { id: orgId, action: 'invite', target });
+    alert(`Invitation created — share the token with ${target}`);
+  } catch (e) { alert(e.message); }
+}
+function copyOrgId(orgId) {
+  navigator.clipboard?.writeText(orgId).then(() => alert('Org id copied: ' + orgId)).catch(() => alert(orgId));
+}
+async function acceptInvite() {
+  const token = $('#invite-token')?.value.trim();
+  if (!token) return;
+  try {
+    await api('POST', '/org', { id: 'invite', action: 'accept', token });
+    alert('Welcome! You are now a member.');
+    await loadView('orgs');
+  } catch (e) { alert(e.message); }
 }
 async function exportAudit(format) {
   const scope = $('#audit-export-scope')?.value || 'decided';

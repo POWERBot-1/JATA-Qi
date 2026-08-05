@@ -46,7 +46,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/cdn` | `cdn` | memory | PRX CDN — edge nodes, zones, caching + origin shield, purge |
 | `@jataqi/email` | `email` | memory | PRX Email Provider — MX/SPF/DKIM/DMARC, mailboxes, delivery |
 | `@jataqi/ipam` | `ipam` | memory | PRX RIR Member — IP allocations, ASNs, subnetting, anycast |
-| `@jataqi/tanya` | `tanya` | conversations, agent-runtime, pki | TANYA AI — personas, persistent chat with tool-call history, IdP identity bridge, WS streaming (tanya.chunk), multi-user org-scoped chat + IdP-identity sharing |
+| `@jataqi/tanya` | `tanya` | conversations, agent-runtime, pki | TANYA AI — personas, persistent chat with tool-call history, IdP identity bridge, WS streaming (tanya.chunk), multi-user org-scoped chat + IdP-identity sharing, org-aware console |
 | `@jataqi/conversations` | `conversations` | storage | persistent history, folders, pins, search, sharing, export; org scope + recipient-scoped shares |
 | `@jataqi/self-evolution` | `self-evolution` | storage | governed self-evolution (CLP P7) — proposals, experiments, rollback |
 | `@jataqi/design-system` | `design-system` | – | universal design language — tokens, themes, CSS generation |

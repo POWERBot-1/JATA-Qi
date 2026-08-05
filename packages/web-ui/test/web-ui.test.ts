@@ -138,6 +138,14 @@ describe('WebUIModule', () => {
     assert.match(js, /shareTanyaConversation/, 'share action present');
     assert.match(js, /tanya-org/, 'org scope input rendered');
     assert.match(js, /recipient email \(IdP identity\)/, 'IdP-identity sharing UI present');
+    // Org-aware TANYA + Organizations view.
+    assert.match(js, /orgs: async/, 'orgs view present');
+    assert.match(js, /createOrg/, 'create-org action present');
+    assert.match(js, /inviteToOrg/, 'invite action present');
+    assert.match(js, /acceptInvite/, 'accept-invitation action present');
+    assert.match(js, /\/orgs/, 'my-orgs fetch wired');
+    assert.match(js, /state\.myOrgs\[0\]/, 'TANYA defaults to the first org');
+    assert.match(js, /\/tanya\/conversations\?orgId=/, 'org-scoped conversation list wired');
     // IdP-first login (client-credentials grant).
     assert.match(js, /\/pki\/idp\/console-login/, 'console-login endpoint wired');
     assert.match(js, /consoleLoginIdp/, 'passwordless IdP login helper present');
