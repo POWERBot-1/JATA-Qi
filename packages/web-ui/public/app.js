@@ -4,7 +4,8 @@
 // TANYA conversational AI, digital memory, learning, search, FX, and the PRX
 // engine views (cloud / CDN / email / IPAM).
 
-const state = { token: null, principal: null, view: 'dashboard', data: {}, conv: null, personas: [], expiresAt: null, authNotice: '' };
+const state = { token: null, principal: null, view: 'dashboard', data: {}, conv: null, personas: [], expiresAt: null, authNotice: '', feed: [], feedUnsub: null };
+let feedToastTimer = null;
 const $ = (s) => document.querySelector(s);
 const app = $('#app');
 
@@ -18,6 +19,7 @@ async function api(method, path, body) {
   if (!res.ok) {
     // Expired / revoked session — drop auth and return to the login screen.
     if (res.status === 401 && state.token && !path.startsWith('/auth/')) {
+      stopLiveFeed();
       state.token = null; state.principal = null; state.expiresAt = null;
       localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
       state.authNotice = 'Your session expired — please sign in again.';
@@ -56,6 +58,7 @@ async function registerAndLogin(username, password) {
   await login(username, password);
 }
 function logout() {
+  stopLiveFeed();
   api('POST', '/auth/logout').catch(() => {});
   state.token = null; state.principal = null; state.expiresAt = null;
   localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
@@ -99,6 +102,7 @@ function startSessionTimer() {
     }
     if (remaining <= 0) {
       clearInterval(state._sessionTimer);
+      stopLiveFeed();
       state.token = null; state.principal = null; state.expiresAt = null;
       localStorage.removeItem('jq_token'); localStorage.removeItem('jq_principal'); localStorage.removeItem('jq_expires');
       state.authNotice = 'Your session expired — please sign in again.';
@@ -602,6 +606,52 @@ function tanyaWsUrl() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${location.host}/ws?token=${encodeURIComponent(state.token)}`;
 }
+// --- Live activity feed (platform bus events over /ws) ---
+const FEED_ICONS = { security: '🔐', memory: '🧠', tool: '🔧', tanya: '💬', orchestrator: '⚡' };
+function feedIcon(type) {
+  for (const [prefix, icon] of Object.entries(FEED_ICONS)) if (type.startsWith(prefix)) return icon;
+  return '📡';
+}
+function addFeedEvent(type, data) {
+  const entry = { type, data, ts: Date.now() };
+  state.feed.unshift(entry);
+  if (state.feed.length > 50) state.feed.length = 50;
+  renderFeed();
+  showFeedToast(entry);
+}
+function renderFeed() {
+  const el = $('#activity-feed');
+  if (!el) return;
+  el.innerHTML = state.feed.length === 0
+    ? '<p style="color:var(--text-dim);font-size:13px">No live events yet — platform activity will appear here.</p>'
+    : state.feed.map((e) => `<div class="feed-item"><span>${feedIcon(e.type)}</span><div><div class="feed-type">${esc(e.type)}</div><div class="feed-dim">${new Date(e.ts).toLocaleTimeString()}</div></div></div>`).join('');
+}
+function showFeedToast(entry) {
+  const el = $('#feed-toast');
+  if (!el) return;
+  el.textContent = `${feedIcon(entry.type)} ${entry.type}`;
+  el.classList.add('visible');
+  clearTimeout(feedToastTimer);
+  feedToastTimer = setTimeout(() => el.classList.remove('visible'), 2500);
+}
+function startLiveFeed() {
+  if (state.feedUnsub || !state.token) return;
+  try {
+    const ws = new WebSocket(tanyaWsUrl());
+    ws.onopen = () => ws.send(JSON.stringify({ op: 'subscribe', topics: ['security', 'memory', 'tool', 'tanya', 'orchestrator'] }));
+    ws.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (!msg.type || msg.type === 'realtime.connected') return;
+      addFeedEvent(msg.type, msg.data);
+    };
+    ws.onclose = () => { if (state.feedUnsub === ws) state.feedUnsub = null; };
+    state.feedUnsub = ws;
+  } catch { /* non-fatal */ }
+}
+function stopLiveFeed() {
+  if (state.feedUnsub) { try { state.feedUnsub.close(); } catch {} state.feedUnsub = null; }
+}
+
 // Stream a TANYA turn over the /ws realtime channel (tanya.chunk events),
 // falling back to the HTTP /tanya/chat API when the socket cannot connect.
 function sendTanya() {
@@ -807,16 +857,25 @@ function render() {
     <div class="sidebar">
       <div class="sidebar-brand">🧠 JATA<span>Qi</span></div>
       ${NAV.map((n) => `<div class="nav-item ${state.view === n.id ? 'active' : ''}" onclick="loadView('${n.id}')">${n.icon} <span>${n.label}</span></div>`).join('')}
+      <div style="padding:12px 16px;border-top:1px solid var(--border)">
+        <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Live Activity</div>
+        <div id="activity-feed" style="max-height:180px;overflow-y:auto;font-size:12px">
+          <p style="color:var(--text-dim)">Connecting…</p>
+        </div>
+      </div>
       <div style="padding:16px 20px;border-top:1px solid var(--border);margin-top:auto">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">${esc(state.principal?.username)}</div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">session <span id="session-countdown">--:--</span></div>
         <button class="btn-ghost" style="width:100%" onclick="logout()">Sign Out</button>
       </div>
     </div>
-    <div class="main main-content"></div>
+    <div class="main main-content">
+      <div id="feed-toast" class="feed-toast"></div>
+    </div>
   </div>`;
   loadView(state.view);
   startSessionTimer();
+  startLiveFeed();
 }
 
 let authMode = 'signin';

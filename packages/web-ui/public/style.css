@@ -83,6 +83,13 @@ tr:hover { background: var(--surface2); }
 /* Inline message (sync feedback) */
 #tools-sync-msg { color: var(--text-dim); font-size: 13px; }
 
+/* Live activity feed */
+.feed-toast { position: fixed; top: 16px; right: 16px; z-index: 200; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 10px 16px; border-radius: var(--radius); font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.4); opacity: 0; transform: translateY(-8px); transition: .25s; pointer-events: none; }
+.feed-toast.visible { opacity: 1; transform: translateY(0); }
+.feed-item { display: flex; gap: 8px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid rgba(46,51,68,.4); }
+.feed-type { color: var(--text); font-size: 12px; }
+.feed-dim { color: var(--text-dim); font-size: 11px; }
+
 /* QiL console */
 .qil-log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; max-height: 45vh; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
 .qil-line { padding: 6px 4px; border-bottom: 1px solid rgba(46,51,68,.5); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }

@@ -126,6 +126,12 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // Live activity feed.
+    assert.match(js, /startLiveFeed/, 'live feed wired');
+    assert.match(js, /topics: \['security', 'memory', 'tool', 'tanya', 'orchestrator'\]/, 'subscribes to platform topics');
+    assert.match(js, /addFeedEvent/, 'feed events appended');
+    assert.match(js, /feed-toast/, 'toast element rendered');
+    assert.match(js, /activity-feed/, 'feed sidebar section present');
     // Auth polish: session introspection + register-first + countdown.
     assert.match(js, /\/auth\/session/, 'session introspection wired');
     assert.match(js, /registerAndLogin/, 'register-first flow present');
