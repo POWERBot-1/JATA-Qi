@@ -1728,4 +1728,15 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const inbox = (await jsonRequest('GET', `${base}/tanya/shared`, undefined, recToken)).body as { count: number };
     assert.equal(inbox.count, 1);
   });
+
+  it('GET /governance/alerts evaluates SLA rules live', async () => {
+    const res = await jsonRequest('GET', `${base}/governance/alerts`, undefined, token);
+    assert.equal(res.status, 200);
+    const body2 = res.body as { checkedAt: number; alerts: Array<{ id: string; state: string; severity: string }> };
+    assert.ok(body2.checkedAt > 0);
+    const ids = body2.alerts.map((a) => a.id);
+    assert.deepEqual(ids, ['approval-queue-age', 'deny-spike', 'r4-invocation-rate']);
+    for (const a of body2.alerts) assert.ok(['firing', 'ok'].includes(a.state));
+    for (const a of body2.alerts) assert.ok(['warning', 'critical'].includes(a.severity));
+  });
 });

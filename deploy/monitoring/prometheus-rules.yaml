@@ -56,3 +56,29 @@ spec:
           annotations:
             summary: "JATA Qi readiness probe failing"
             description: "The gateway reports not-ready (storage/security checks failing)."
+
+        # --- Tool governance SLA alerts (tool-intelligence metrics) ---
+
+        - alert: JataQiToolApprovalQueueHigh
+          expr: jataqi_tool_pending_approvals > 5
+          for: 10m
+          labels: { severity: warning, service: jataqi }
+          annotations:
+            summary: "Tool approval queue backing up"
+            description: "More than 5 tool approval requests have been pending for over 10 minutes — human review is lagging."
+
+        - alert: JataQiToolGovernanceDenySpike
+          expr: increase(jataqi_tool_governance_decisions_total{decision="DENY"}[5m]) > 5
+          for: 5m
+          labels: { severity: critical, service: jataqi }
+          annotations:
+            summary: "Governance DENY spike"
+            description: "More than 5 governance DENY decisions in 5 minutes — possible policy misconfiguration or abuse."
+
+        - alert: JataQiToolR4InvocationRateHigh
+          expr: sum(rate(jataqi_tool_invocations_total{risk=~"R4|R5"}[5m])) * 300 > 20
+          for: 5m
+          labels: { severity: warning, service: jataqi }
+          annotations:
+            summary: "High-risk tool invocation rate elevated"
+            description: "More than 20 R4/R5 (financial/infrastructure) invocations in 5 minutes — verify the approval gates are holding."

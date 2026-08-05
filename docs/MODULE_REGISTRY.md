@@ -25,7 +25,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/compute` | `compute` | – | statistics / regression / optimization |
 | `@jataqi/robotics` | `robotics` | storage | device registry, missions, telemetry |
 | `@jataqi/digital-twin` | `digital-twin` | storage | stateful twins, step/project |
-| `@jataqi/tool-intelligence` | `tool-intelligence` | storage | Universal AI Tool Layer: registry, adapters, risk, approvals, fallback; agent tool governance catalog (39 tools, R0–R4) + sync + governance metrics/observability |
+| `@jataqi/tool-intelligence` | `tool-intelligence` | storage | Universal AI Tool Layer: registry, adapters, risk, approvals, fallback; agent tool governance catalog (39 tools, R0–R4) + sync + governance metrics/observability + SLA alerts |
 | `@jataqi/readiness` | `readiness` | – | honest capability/readiness matrix |
 | `@jataqi/memory` | `memory` | storage | Digital Memory Engine (CLP P1) — governed platform-event memory |
 | `@jataqi/learning` | `learning` | memory | Continuous Learning + Personalization (CLP P2/6) + Knowledge Distillation (CLP P5) |

@@ -112,6 +112,15 @@ describe('monitoring stack — shape', () => {
     assert.match(text, /jataqi_request_duration_ms_bucket/);
     assert.match(text, /severity:\s*(critical|warning)/);
   });
+  it('governance SLA alert rules target the tool-intelligence metrics', () => {
+    const text = read('monitoring/prometheus-rules.yaml');
+    assert.match(text, /JataQiToolApprovalQueueHigh/);
+    assert.match(text, /jataqi_tool_pending_approvals/);
+    assert.match(text, /JataQiToolGovernanceDenySpike/);
+    assert.match(text, /jataqi_tool_governance_decisions_total\{decision="DENY"\}/);
+    assert.match(text, /JataQiToolR4InvocationRateHigh/);
+    assert.match(text, /jataqi_tool_invocations_total\{risk=~"R4\|R5"\}/);
+  });
   it('Grafana dashboard is valid JSON with RED panels', () => {
     const dash = JSON.parse(read('monitoring/grafana-dashboard.json')) as { panels: { title: string }[]; title: string };
     assert.ok(dash.title.includes('JATA Qi'));

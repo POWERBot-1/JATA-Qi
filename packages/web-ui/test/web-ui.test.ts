@@ -126,6 +126,11 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // Governance SLA alerts view.
+    assert.match(js, /alerts: async/, 'alerts view present');
+    assert.match(js, /\/governance\/alerts/, 'alerts endpoint wired');
+    assert.match(js, /SLA Rules/, 'rules panel rendered');
+    assert.match(js, /JataQiToolApprovalQueueHigh/, 'prometheus rule names surfaced');
     // Audit export (CSV/JSON compliance handoff).
     assert.match(js, /exportAudit/, 'audit export action present');
     assert.match(js, /\/audit\/export/, 'export endpoint wired');

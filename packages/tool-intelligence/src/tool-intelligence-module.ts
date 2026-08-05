@@ -44,10 +44,49 @@ export interface RegisterToolInput {
   metadata?: Record<string, unknown>;
 }
 
+/** Governance SLA thresholds for live alert evaluation. */
+export interface SlaConfig {
+  /** Max age of the oldest pending approval before an alert fires (default 10 min). */
+  pendingApprovalMaxAgeMs?: number;
+  /** Rolling window for the DENY-spike rule (default 5 min). */
+  denySpikeWindowMs?: number;
+  /** Max DENY decisions per window before an alert fires (default 5). */
+  denySpikeMax?: number;
+  /** Rolling window for the R4-invocation-rate rule (default 5 min). */
+  r4RateWindowMs?: number;
+  /** Max R4 invocations per window before an alert fires (default 20). */
+  r4RateMax?: number;
+}
+
+export interface SlaAlert {
+  id: string;
+  severity: 'warning' | 'critical';
+  state: 'firing' | 'ok';
+  message: string;
+  value: number;
+  threshold: number;
+  checkedAt: number;
+}
+
 export class ToolIntelligenceModule implements IModule {
   readonly id = 'tool-intelligence';
   readonly tags = ['core', 'tools'] as const;
   readonly dependsOn = ['storage'] as const;
+
+  private readonly sla: Required<SlaConfig>;
+  private readonly decisionHistory: Array<{ ts: number; decision: string }> = [];
+  private readonly r4History: Array<{ ts: number }> = [];
+  private lastSlaStates = new Map<string, 'firing' | 'ok'>();
+
+  constructor(config: SlaConfig = {}) {
+    this.sla = {
+      pendingApprovalMaxAgeMs: config.pendingApprovalMaxAgeMs ?? 10 * 60_000,
+      denySpikeWindowMs: config.denySpikeWindowMs ?? 5 * 60_000,
+      denySpikeMax: config.denySpikeMax ?? 5,
+      r4RateWindowMs: config.r4RateWindowMs ?? 5 * 60_000,
+      r4RateMax: config.r4RateMax ?? 20,
+    };
+  }
 
   private api!: KernelApi;
   private tools!: ICollection<ToolEntity>;
@@ -306,6 +345,7 @@ export class ToolIntelligenceModule implements IModule {
     this.ensureMetrics();
     this.mApprovals?.inc(1, { decision });
     this.mPending?.set([...this.approvals.values()].filter((a) => a.status === 'pending').length);
+    this.decisionHistory.push({ ts: Date.now(), decision });
     void this.api.bus.emit(ToolEvents.ApprovalDecided, { id: requestId, decision });
     // Immutable audit trail (best-effort; skipped when security is absent).
     void this.auditApproval({
@@ -334,6 +374,87 @@ export class ToolIntelligenceModule implements IModule {
     const all = [...this.approvals.values()];
     const filtered = status ? all.filter((a) => a.status === status) : all;
     return filtered.sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  // --- governance SLA alerts -------------------------------------------------
+
+  /**
+   * Evaluate governance SLA rules against live state:
+   *   approval-queue-age — oldest pending approval older than the threshold
+   *   deny-spike — DENY decisions in the rolling window above the cap
+   *   r4-invocation-rate — R4/R5 invocations in the rolling window above the cap
+   * Emits governance.alert.fired / governance.alert.cleared bus events on
+   * state transitions.
+   */
+  async evaluateSlaRules(): Promise<{ checkedAt: number; alerts: SlaAlert[] }> {
+    const checkedAt = Date.now();
+    const now = checkedAt;
+    const stats = await this.governanceStats();
+    const alerts: SlaAlert[] = [];
+
+    // 1. Approval queue age.
+    const pending = [...this.approvals.values()].filter((a) => a.status === 'pending');
+    const oldest = pending.length ? Math.min(...pending.map((a) => a.createdAt)) : undefined;
+    const ageMs = oldest !== undefined ? now - oldest : 0;
+    const queueAlert: SlaAlert = {
+      id: 'approval-queue-age',
+      severity: 'warning',
+      state: oldest !== undefined && ageMs > this.sla.pendingApprovalMaxAgeMs ? 'firing' : 'ok',
+      message: oldest !== undefined && ageMs > this.sla.pendingApprovalMaxAgeMs
+        ? `Oldest pending approval is ${Math.round(ageMs / 1000)}s old (limit ${Math.round(this.sla.pendingApprovalMaxAgeMs / 1000)}s)`
+        : 'Pending approval queue within SLA',
+      value: Math.round(ageMs / 1000),
+      threshold: Math.round(this.sla.pendingApprovalMaxAgeMs / 1000),
+      checkedAt,
+    };
+    alerts.push(queueAlert);
+
+    // 2. DENY spike (rolling window).
+    const sinceDeny = now - this.sla.denySpikeWindowMs;
+    const denials = this.decisionHistory.filter((d) => d.decision === 'denied' && d.ts >= sinceDeny).length;
+    const denyAlert: SlaAlert = {
+      id: 'deny-spike',
+      severity: 'critical',
+      state: denials > this.sla.denySpikeMax ? 'firing' : 'ok',
+      message: denials > this.sla.denySpikeMax
+        ? `${denials} governance DENY decisions in the last ${Math.round(this.sla.denySpikeWindowMs / 60_000)}m (limit ${this.sla.denySpikeMax})`
+        : 'Governance DENY rate within SLA',
+      value: denials,
+      threshold: this.sla.denySpikeMax,
+      checkedAt,
+    };
+    alerts.push(denyAlert);
+
+    // 3. R4/R5 invocation rate (rolling window).
+    const sinceR4 = now - this.sla.r4RateWindowMs;
+    const r4Count = this.r4History.filter((r) => r.ts >= sinceR4).length;
+    const r4Alert: SlaAlert = {
+      id: 'r4-invocation-rate',
+      severity: 'warning',
+      state: r4Count > this.sla.r4RateMax ? 'firing' : 'ok',
+      message: r4Count > this.sla.r4RateMax
+        ? `${r4Count} high-risk (R4/R5) invocations in the last ${Math.round(this.sla.r4RateWindowMs / 60_000)}m (limit ${this.sla.r4RateMax})`
+        : 'High-risk invocation rate within SLA',
+      value: r4Count,
+      threshold: this.sla.r4RateMax,
+      checkedAt,
+    };
+    alerts.push(r4Alert);
+
+    // State transitions → bus events.
+    for (const a of alerts) {
+      const prev = this.lastSlaStates.get(a.id);
+      if (prev !== a.state) {
+        this.lastSlaStates.set(a.id, a.state);
+        if (a.state === 'firing') {
+          void this.api.bus.emit('governance.alert.fired', { alertId: a.id, severity: a.severity, message: a.message });
+        } else if (prev === 'firing') {
+          void this.api.bus.emit('governance.alert.cleared', { alertId: a.id });
+        }
+      }
+    }
+    void stats;
+    return { checkedAt, alerts };
   }
 
   // --- governance observability -------------------------------------------
@@ -414,6 +535,7 @@ export class ToolIntelligenceModule implements IModule {
 
   private recordInvocation(tool: ToolEntity, status: InvocationResult['status'], durationMs: number, decision?: string): void {
     this.ensureMetrics();
+    if (tool.riskClass === 'R4' || tool.riskClass === 'R5') this.r4History.push({ ts: Date.now() });
     if (!this.metrics) return;
     this.mInvocations?.inc(1, { risk: tool.riskClass, status });
     this.mDuration?.observe(durationMs, { risk: tool.riskClass });

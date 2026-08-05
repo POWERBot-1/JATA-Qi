@@ -221,6 +221,7 @@ const NAV = [
   { id: 'automations', label: 'Automations', icon: '⏰' },
   { id: 'tools', label: 'Tools', icon: '🔧' },
   { id: 'approvals', label: 'Approvals', icon: '✅' },
+  { id: 'alerts', label: 'Governance Alerts', icon: '🚨' },
   { id: 'audit', label: 'Audit Trail', icon: '📜' },
   { id: 'health', label: 'System Health', icon: '💚' },
   { id: 'identity', label: 'Creator Identity', icon: '🔐' },
@@ -321,6 +322,17 @@ const VIEWS = {
     return {
       organizations: mine.status === 'fulfilled' ? mine.value.organizations : [],
       members: members.status === 'fulfilled' ? members.value.members : [],
+    };
+  },
+
+  alerts: async () => {
+    const [alerts, gstats] = await Promise.allSettled([
+      api('GET', '/governance/alerts'), api('GET', '/tools/governance-stats'),
+    ]);
+    return {
+      alerts: alerts.status === 'fulfilled' ? alerts.value.alerts : [],
+      checkedAt: alerts.status === 'fulfilled' ? alerts.value.checkedAt : null,
+      gstats: gstats.status === 'fulfilled' ? gstats.value : null,
     };
   },
 
@@ -671,6 +683,21 @@ function renderView(view, data) {
       ${statCard('Failed', s.failed ?? null)}
     </div>
     <div class="card"><div class="card-title">Automations</div>${tableFrom(data.automations, ['id', 'name', 'trigger', 'enabled', 'status'])}</div>`;
+  } else if (view === 'alerts') {
+    const alerts = data.alerts || [];
+    const firing = alerts.filter((a) => a.state === 'firing');
+    const g = data.gstats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Firing', firing.length, firing.length ? 'red' : 'green')}
+      ${statCard('Rules', alerts.length)}
+      ${statCard('Pending Approvals', g.approvals?.pending ?? 0, (g.approvals?.pending ?? 0) ? 'yellow' : 'green')}
+      ${statCard('DENY (window)', g.decisions?.byDecision?.DENY ?? 0, (g.decisions?.byDecision?.DENY ?? 0) > 0 ? 'yellow' : 'green')}
+    </div>
+    <div class="card"><div class="card-title">SLA Rules (${alerts.length})</div>
+      ${alerts.map((a) => `<div class="notif-item"><div class="notif-dot" style="background:${a.state === 'firing' ? 'var(--red)' : 'var(--green)'}"></div><div><div style="font-weight:600">${a.state === 'firing' ? '🚨 ' : '✅ '}${esc(a.id)} <span class="feed-dim">${esc(a.severity)}</span></div><div style="color:var(--text-dim);font-size:13px">${esc(a.message)}</div><div style="color:var(--text-dim);font-size:12px">value ${esc(a.value)} / threshold ${esc(a.threshold)}</div></div></div>`).join('')}
+    </div>
+    <div class="card"><div class="card-title">Prometheus</div>
+      <p style="color:var(--text-dim);font-size:13px">Mirrored as Prometheus alert rules in deploy/monitoring/prometheus-rules.yaml: <code>JataQiToolApprovalQueueHigh</code> · <code>JataQiToolGovernanceDenySpike</code> · <code>JataQiToolR4InvocationRateHigh</code>.</p></div>`;
   } else if (view === 'audit') {
     const approval = data.approval || [];
     const denied = data.denied || [];

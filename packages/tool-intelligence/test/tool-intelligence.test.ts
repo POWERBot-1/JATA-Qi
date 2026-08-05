@@ -547,3 +547,84 @@ describe('Approval audit trail — immutable ledger records', () => {
     }
   });
 });
+
+describe('Governance SLA alerts — evaluateSlaRules', () => {
+  let kernel: Kernel;
+  let ti: ToolIntelligenceModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    // Tiny thresholds so the time-window rules fire deterministically.
+    kernel.register(new ToolIntelligenceModule({
+      pendingApprovalMaxAgeMs: 30,
+      denySpikeWindowMs: 60_000,
+      denySpikeMax: 0, // any denial fires
+      r4RateWindowMs: 60_000,
+      r4RateMax: 0, // any R4 invocation fires
+    }));
+    await kernel.boot();
+    ti = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
+  });
+
+  afterEach(async () => { await kernel.shutdown(); });
+
+  it('fires the approval-queue-age alert when a request sits too long', async () => {
+    const tool = await ti.register({ canonicalName: 'r4', provider: 'p', version: '1', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+    ti.requestApproval(tool.id, 'u1', 'invoke');
+    await new Promise((r) => setTimeout(r, 40)); // exceed the 30ms threshold
+
+    const { alerts } = await ti.evaluateSlaRules();
+    const queue = alerts.find((a) => a.id === 'approval-queue-age')!;
+    assert.equal(queue.state, 'firing');
+    assert.equal(queue.severity, 'warning');
+    // value is the age in whole seconds (rounds to 0 for sub-second ages);
+    // the firing decision uses the millisecond threshold.
+    assert.equal(queue.value, 0);
+    assert.ok(queue.threshold <= 0);
+  });
+
+  it('fires deny-spike + r4-rate alerts and emits transition events', async () => {
+    const fired: string[] = [];
+    const unsub = kernel.bus.on('governance.alert.fired', (e: { alertId: string }) => { fired.push(e.alertId); });
+
+    const tool = await ti.register({ canonicalName: 'r4', provider: 'p', version: '1', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+    ti.registerAdapter({ id: tool.id, capabilities: () => ['x'], async invoke(input) { return input; } });
+    // One denied approval decision + one R4 invoke (no approval → pending_approval, still counted).
+    const req = ti.requestApproval(tool.id, 'u1', 'invoke');
+    ti.decideApproval(req.id, 'denied', 'admin');
+    await ti.invoke(tool.id, { a: 1 }, { userId: 'u2', username: 'u2', roles: ['developer'] });
+
+    const { alerts } = await ti.evaluateSlaRules();
+    const deny = alerts.find((a) => a.id === 'deny-spike')!;
+    assert.equal(deny.state, 'firing');
+    assert.equal(deny.severity, 'critical');
+    assert.equal(deny.value, 1);
+    const r4 = alerts.find((a) => a.id === 'r4-invocation-rate')!;
+    assert.equal(r4.state, 'firing');
+    assert.equal(r4.value, 1);
+
+    // Transition events fired once (queue alert stays ok here — the request
+    // is fresh; it is exercised in the dedicated queue test).
+    assert.ok(fired.includes('deny-spike'), 'deny-spike fired event');
+    assert.ok(fired.includes('r4-invocation-rate'), 'r4-rate fired event');
+    unsub();
+  });
+
+  it('reports ok when within thresholds and clears after firing', async () => {
+    const tool = await ti.register({ canonicalName: 'r4', provider: 'p', version: '1', category: 'c', capabilities: ['x'], protocol: 'function', riskClass: 'R4', status: 'ACTIVE' });
+    const req = ti.requestApproval(tool.id, 'u1', 'invoke');
+    await new Promise((r) => setTimeout(r, 40));
+    let { alerts } = await ti.evaluateSlaRules();
+    assert.equal(alerts.find((a) => a.id === 'approval-queue-age')!.state, 'firing');
+
+    // Decide the request → queue empties → alert clears on next evaluation.
+    const cleared: string[] = [];
+    const unsub = kernel.bus.on('governance.alert.cleared', (e: { alertId: string }) => { cleared.push(e.alertId); });
+    ti.decideApproval(req.id, 'approved', 'admin');
+    ({ alerts } = await ti.evaluateSlaRules());
+    assert.equal(alerts.find((a) => a.id === 'approval-queue-age')!.state, 'ok');
+    assert.ok(cleared.includes('approval-queue-age'), 'cleared event emitted');
+    unsub();
+  });
+});
