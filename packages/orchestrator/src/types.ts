@@ -46,6 +46,13 @@ export interface ExecuteOptions {
   agent?: string;
   /** Number of chunks each RETRIEVE pulls (default 4). */
   topK?: number;
+  /**
+   * Optional per-step callback for live execution streaming (WebSocket
+   * clients render steps as they complete). Receives the step result, its
+   * index (0-based) and the total step count. Best-effort: a throwing
+   * callback never fails the run.
+   */
+  onStep?: (step: StepResult, index: number, total: number) => void | Promise<void>;
 }
 
 export const OrchestratorEvents = Object.freeze({

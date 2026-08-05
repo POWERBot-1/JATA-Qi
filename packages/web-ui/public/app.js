@@ -56,6 +56,7 @@ function checkStoredAuth() {
 const NAV = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'tanya', label: 'TANYA Chat', icon: '💬' },
+  { id: 'qil', label: 'QiL Console', icon: '🧪' },
   { id: 'dashboards', label: 'Adaptive Dashboards', icon: '📐' },
   { id: 'search', label: 'Search', icon: '🔎' },
   { id: 'memory', label: 'Memory', icon: '🧠' },
@@ -133,6 +134,9 @@ const VIEWS = {
   devices: async () => api('GET', '/devices'),
   twins: async () => api('GET', '/twins'),
   flags: async () => api('GET', '/flags'),
+
+  // --- QiL console (interactive) ---
+  qil: async () => null,
 
   // --- TANYA AI ---
   tanya: async () => {
@@ -288,6 +292,18 @@ function renderView(view, data) {
       ${statCard('TANYA Conversations', data.tanya?.conversations ?? null)}
     </div>`;
     if (r?.overall) html += `<div class="card"><div class="card-title">Overall</div><p>${esc(r.overall)}</p></div>`;
+  } else if (view === 'qil') {
+    html += `<div class="card">
+      <div class="card-title">QiL Live Execution</div>
+      <p style="color:var(--text-dim);font-size:13px;margin-bottom:10px">Run a QiL program (source) or a natural-language objective. Steps stream live over /ws as they execute.</p>
+      <div class="form-group"><label>Program or objective</label>
+      <textarea id="qil-input" rows="6" placeholder='MISSION "Analyze my business"\nRETRIEVE "business"\nREASON "business"\nREPORT' style="font-family:monospace"></textarea></div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn-primary" onclick="runQiL('objective')">Run Objective</button>
+        <button class="btn-ghost" onclick="runQiL('source')">Run QiL Source</button>
+      </div>
+      <div id="qil-log" class="qil-log"><p style="color:var(--text-dim)">No runs yet.</p></div>
+    </div>`;
   } else if (view === 'tanya') {
     html += `<div class="card">
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
@@ -654,6 +670,46 @@ async function decideApproval(id, decision) {
   } catch (e) { alert(e.message); }
 }
 
+// --- QiL console actions ---
+function qilAppendLine(html) {
+  const log = $('#qil-log');
+  if (!log) return;
+  if (log.querySelector('p')) log.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'qil-line';
+  div.innerHTML = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+function runQiL(mode) {
+  const input = $('#qil-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const log = $('#qil-log');
+  if (log) log.innerHTML = '';
+  qilAppendLine(`<span class="qil-badge">▶</span> ${esc(mode)}: <code>${esc(text.slice(0, 80))}${text.length > 80 ? '…' : ''}</code>`);
+  const started = Date.now();
+  let ws;
+  try { ws = new WebSocket(tanyaWsUrl()); } catch { qilAppendLine('<span class="qil-badge qil-err">✗</span> WebSocket unavailable'); return; }
+  ws.onerror = () => qilAppendLine('<span class="qil-badge qil-err">✗</span> connection failed');
+  ws.onopen = () => { ws.send(JSON.stringify({ type: 'qil.run', [mode]: text })); };
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'qil.step') {
+      const st = msg.step || {};
+      const cls = st.status === 'success' ? 'qil-ok' : st.status === 'error' ? 'qil-err' : 'qil-warn';
+      qilAppendLine(`<span class="qil-badge ${cls}">${st.status === 'success' ? '✓' : st.status === 'error' ? '✗' : '·'}</span> [${msg.index + 1}/${msg.total}] <b>${esc(st.kind || st.keyword)}</b> ${st.error ? `<span class="qil-err">— ${esc(st.error)}</span>` : ''} <span class="qil-dim">${st.durationMs}ms</span>`);
+    } else if (msg.type === 'qil.done') {
+      qilAppendLine(`<span class="qil-badge ${msg.status === 'completed' ? 'qil-ok' : 'qil-err'}">${msg.status === 'completed' ? '✔' : '✖'}</span> run ${esc(msg.status)} · ${msg.stepCount} step(s) · ${Date.now() - started}ms`);
+      if (msg.finalReport) qilAppendLine(`<div class="qil-report">${esc(msg.finalReport)}</div>`);
+      ws.close();
+    } else if (msg.type === 'qil.error') {
+      qilAppendLine(`<span class="qil-badge qil-err">✗</span> ${esc(msg.error)}`);
+      ws.close();
+    }
+  };
+}
+
 // --- Render ---
 function render() {
   if (!state.token) {
@@ -695,6 +751,7 @@ window.autoArrange = autoArrange;
 window.doSearch = doSearch;
 window.syncTools = syncTools;
 window.decideApproval = decideApproval;
+window.runQiL = runQiL;
 $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
 

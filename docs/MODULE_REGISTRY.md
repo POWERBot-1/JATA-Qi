@@ -12,7 +12,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/knowledge-graph` | `knowledge-graph` | storage | entities, triples, graph-RAG |
 | `@jataqi/agent-runtime` | `agent-runtime` | knowledge, graph, vector, fx, mobility, logistics, agriculture, circular, energy, border, restaurants, marketplace, search, universal-wallet, crypto, cloud, cdn, email, ipam | ReAct agents + 37 default tools (knowledge/graph/vector + 32 intelligence tools) + LLMs |
 | `@jataqi/qil` | `qil` | – | QiL language → execution plan; idempotent formatter + semantic linter |
-| `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history |
+| `@jataqi/orchestrator` | `orchestrator` | agent-runtime, knowledge, qil | workflow engine + durable history + per-step streaming (onStep) |
 | `@jataqi/security` | `security` | storage | identity, auth, RBAC, audit ledger |
 | `@jataqi/api-gateway` | `api-gateway` | security, orchestrator | HTTP gateway, rate limiting, OpenAPI |
 | `@jataqi/metrics` | `metrics` | – | counters / gauges / histograms |

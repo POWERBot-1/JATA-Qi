@@ -79,6 +79,16 @@ tr:hover { background: var(--surface2); }
 /* Inline message (sync feedback) */
 #tools-sync-msg { color: var(--text-dim); font-size: 13px; }
 
+/* QiL console */
+.qil-log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; max-height: 45vh; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.qil-line { padding: 6px 4px; border-bottom: 1px solid rgba(46,51,68,.5); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.qil-badge { display: inline-block; width: 18px; text-align: center; color: var(--text-dim); }
+.qil-ok { color: var(--green); }
+.qil-err { color: var(--red); }
+.qil-warn { color: var(--yellow); }
+.qil-dim { color: var(--text-dim); font-size: 12px; }
+.qil-report { margin-top: 6px; padding: 10px; background: var(--surface2); border-radius: 6px; white-space: pre-wrap; width: 100%; }
+
 /* Spinner */
 .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

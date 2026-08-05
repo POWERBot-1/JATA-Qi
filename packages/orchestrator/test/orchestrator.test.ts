@@ -178,4 +178,33 @@ describe('Orchestrator — mandatory governance enforcement', () => {
     assert.equal(deploy.status, 'error');
     assert.match(deploy.error!, /governance DENY/);
   });
+
+  it('streams every step through the onStep callback (live execution)', async () => {
+    const r = compileSource('MISSION "stream test"\nRETRIEVE "stream"\nREASON "stream"\nREPORT');
+    assert.ok(r.ok && r.plan);
+    const seen: Array<{ index: number; total: number; kind: string; status: string }> = [];
+    const orch = kernel.getModule('orchestrator') as unknown as {
+      execute(plan: unknown, opts: { onStep: (s: { kind: string; status: string }, i: number, t: number) => void | Promise<void> }): Promise<{ steps: unknown[]; status: string }>;
+    };
+    const result = await orch.execute(r.plan!, {
+      onStep: (step, index, total) => { seen.push({ index, total, kind: step.kind, status: step.status }); },
+    });
+    assert.equal(seen.length, result.steps.length);
+    assert.equal(seen[0]!.total, 3); // retrieve + reason + report (mission is not a step)
+    assert.equal(seen[0]!.index, 0);
+    assert.equal(seen[2]!.index, 2);
+    assert.deepEqual(seen.map((s) => s.kind), ['retrieve', 'reason', 'report']);
+    for (const s of seen) assert.equal(s.status, 'success');
+  });
+
+  it('onStep callback failures never fail the run', async () => {
+    const r = compileSource('MISSION "robust"\nRETRIEVE "x"\nREPORT');
+    assert.ok(r.ok && r.plan);
+    const orch = kernel.getModule('orchestrator') as unknown as {
+      execute(plan: unknown, opts: { onStep: () => void }): Promise<{ status: string; steps: unknown[] }>;
+    };
+    const result = await orch.execute(r.plan!, { onStep: () => { throw new Error('client gone'); } });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.steps.length, 2);
+  });
 });

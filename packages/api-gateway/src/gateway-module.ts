@@ -5817,6 +5817,56 @@ export class ApiGatewayModule implements IModule {
         ws.send(JSON.stringify({ type: 'tanya.error', error: e instanceof Error ? e.message : String(e) }));
       }
     }
+
+    // QiL live execution — streams plan steps as they complete over /ws.
+    // Accepts `{ type: 'qil.run', source }` (raw QiL) or
+    // `{ type: 'qil.run', objective }` (natural language, compiled to a
+    // retrieve→reason→report plan). Emits qil.step per step and qil.done
+    // with the full result.
+    if (msg.type === 'qil.run' && principal) {
+      if (!this.orch) {
+        ws.send(JSON.stringify({ type: 'qil.error', error: 'orchestrator module not registered' }));
+        return;
+      }
+      const source = typeof msg.source === 'string' && msg.source.trim() ? msg.source : undefined;
+      const objective = typeof msg.objective === 'string' && msg.objective.trim() ? msg.objective : undefined;
+      if (!source && !objective) {
+        ws.send(JSON.stringify({ type: 'qil.error', error: 'field "source" (QiL) or "objective" (natural language) is required' }));
+        return;
+      }
+
+      // Safety scan on the human-provided text (objectives are free text).
+      if (objective && this.aiSafety) {
+        const scan = this.aiSafety.scan(objective);
+        if (scan.blocked) {
+          ws.send(JSON.stringify({ type: 'qil.error', error: 'input blocked by safety filter', risk: scan.risk }));
+          return;
+        }
+      }
+
+      try {
+        const started = Date.now();
+        const options = {
+          principal: { userId: principal.userId, username: principal.username, roles: [] },
+          onStep: (step: unknown, index: number, total: number): void => { ws.send(JSON.stringify({ type: 'qil.step', index, total, step })); },
+        };
+        const result = source
+          ? await this.orch.runSource(source, options)
+          : await this.orch.runObjective(objective!, options);
+        ws.send(JSON.stringify({
+          type: 'qil.done',
+          runId: result.id,
+          status: result.status,
+          mission: result.mission,
+          stepCount: result.steps.length,
+          finalReport: result.finalReport,
+          durationMs: Date.now() - started,
+          ...(result.auditRecordId ? { auditRecordId: result.auditRecordId } : {}),
+        }));
+      } catch (e) {
+        ws.send(JSON.stringify({ type: 'qil.error', error: e instanceof Error ? e.message : String(e) }));
+      }
+    }
   }
 
   // --- TANYA AI conversational product layer --------------------------------

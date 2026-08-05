@@ -122,6 +122,11 @@ describe('WebUIModule', () => {
     // Tool governance observability.
     assert.match(js, /\/tools\/governance-stats/, 'governance stats endpoint wired');
     assert.match(js, /Decisions ALLOW/, 'decision stat cards rendered');
+    // QiL live console.
+    assert.match(js, /qil: async/, 'qil view present');
+    assert.match(js, /runQiL/, 'qil run action present');
+    assert.match(js, /qil\.step/, 'streams qil.step events');
+    assert.match(js, /type: 'qil\.run'/, 'sends qil.run over /ws');
     // TANYA WebSocket streaming (with HTTP fallback).
     assert.match(js, /new WebSocket\(tanyaWsUrl\(\)\)/, 'tanya chat streams over /ws');
     assert.match(js, /tanya\.chunk/, 'streams tanya.chunk events');

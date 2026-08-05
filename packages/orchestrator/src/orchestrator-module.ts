@@ -72,12 +72,16 @@ export class OrchestratorModule implements IModule {
 
     for (const step of plan.steps) {
       await this.api.bus.emit(OrchestratorEvents.StepStarted, { planId: plan.id, stepId: step.id, kind: step.kind });
+      const stepIndex = results.length;
 
       // If a prior STOP/error halted the run, record the remaining steps as skipped.
       if (status === 'stopped' || status === 'failed') {
         const skipped: StepResult = { stepId: step.id, kind: step.kind, keyword: step.keyword, status: 'skipped', durationMs: 0 };
         results.push(skipped);
         await this.api.bus.emit(OrchestratorEvents.StepCompleted, { planId: plan.id, stepId: step.id, status: 'skipped' });
+        if (opts.onStep) {
+          try { await opts.onStep(skipped, stepIndex, plan.steps.length); } catch { /* streaming is best-effort */ }
+        }
         continue;
       }
 
@@ -94,6 +98,9 @@ export class OrchestratorModule implements IModule {
           result.durationMs = Date.now() - t0;
           results.push(result);
           await this.api.bus.emit(OrchestratorEvents.StepCompleted, { planId: plan.id, stepId: step.id, status: 'error' });
+          if (opts.onStep) {
+            try { await opts.onStep(result, stepIndex, plan.steps.length); } catch { /* streaming is best-effort */ }
+          }
           continue;
         } else if (gate) {
           result.governance = { decision: gate.decision, ...(gate.evaluationId ? { evaluationId: gate.evaluationId } : {}) };
@@ -147,6 +154,9 @@ export class OrchestratorModule implements IModule {
       result.durationMs = Date.now() - t0;
       results.push(result);
       await this.api.bus.emit(OrchestratorEvents.StepCompleted, { planId: plan.id, stepId: step.id, status: result.status });
+      if (opts.onStep) {
+        try { await opts.onStep(result, stepIndex, plan.steps.length); } catch { /* streaming is best-effort */ }
+      }
     }
 
     if (!finalReport) {
