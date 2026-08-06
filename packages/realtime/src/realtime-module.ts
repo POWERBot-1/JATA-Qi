@@ -45,6 +45,7 @@ const DEFAULT_EVENTS = [
   'infra.firmware.mismatch', 'infra.config.drift', 'infra.physical.access.denied',
   'resilience.failover.completed', 'resilience.dr.executed', 'resilience.fault.injected',
   'resilience.test.completed', 'resilience.slo.violated',
+  'review.scheduled', 'review.completed', 'review.signed_off', 'review.finding.critical',
 ];
 
 export class RealtimeModule implements IModule {

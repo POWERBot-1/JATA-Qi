@@ -70,6 +70,7 @@ export class JataQiClient {
   readonly infra: InfraClient;
   readonly resilience: ResilienceClient;
   readonly privacy: PrivacyClient;
+  readonly review: ReviewClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -114,6 +115,7 @@ export class JataQiClient {
     this.infra = new InfraClient(this);
     this.resilience = new ResilienceClient(this);
     this.privacy = new PrivacyClient(this);
+    this.review = new ReviewClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -1033,4 +1035,40 @@ export class PrivacyClient {
   }
   async minimizationChecks(): Promise<{ checks: unknown[] }> { return this.c.request('GET', '/privacy/minimize'); }
   async posture(): Promise<{ posture: unknown }> { return this.c.request('GET', '/privacy/posture'); }
+}
+
+// --- Independent Security Review ------------------------------------------------
+
+export class ReviewClient {
+  constructor(private c: JataQiClient) {}
+  /** Schedule an independent security review (architecture/code/infra/ai_safety/compliance/independent_audit). */
+  async schedule(kind: string, target: string, reviewer: string, opts: { phase?: string } = {}): Promise<{ review: unknown }> {
+    return this.c.request('POST', '/review/schedule', { kind, target, reviewer, ...opts });
+  }
+  async list(opts: { kind?: string; status?: string; target?: string } = {}): Promise<{ reviews: unknown[]; count: number }> {
+    return this.c.request('GET', '/review', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async start(id: string): Promise<{ review: unknown }> { return this.c.request('POST', '/review/start', { id }); }
+  async complete(id: string, summary: string): Promise<{ review: unknown }> { return this.c.request('POST', '/review/complete', { id, summary }); }
+  async signOff(id: string, approver: string): Promise<{ review: unknown }> { return this.c.request('POST', '/review/signoff', { id, approver }); }
+  async addFinding(reviewId: string, severity: string, title: string, opts: { description?: string; controlRef?: string; recommendation?: string; createdBy?: string } = {}): Promise<{ finding: unknown }> {
+    return this.c.request('POST', '/review/findings', { reviewId, severity, title, ...opts });
+  }
+  async findings(opts: { reviewId?: string; severity?: string; status?: string } = {}): Promise<{ findings: unknown[]; count: number }> {
+    return this.c.request('GET', '/review/findings', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async updateFinding(id: string, status: string, by: string, note?: string): Promise<{ finding: unknown }> {
+    return this.c.request('POST', '/review/findings/update', { id, status, by, ...(note ? { note } : {}) });
+  }
+  /** Static secure-code scan (optionally auto-creating findings for a review). */
+  async scanCode(files: Array<{ path: string; content: string }>, opts: { reviewId?: string; reviewer?: string } = {}): Promise<{ hits: unknown[]; count: number }> {
+    return this.c.request('POST', '/review/scan', { files, ...opts });
+  }
+  async architecture(answers: Array<{ questionId: string; score: number }>): Promise<{ assessment: unknown }> {
+    return this.c.request('POST', '/review/architecture', { answers });
+  }
+  async compliance(evidence: Record<string, boolean>): Promise<{ assessment: unknown }> {
+    return this.c.request('POST', '/review/compliance', { evidence });
+  }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/review/stats'); }
 }

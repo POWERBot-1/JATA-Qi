@@ -46,6 +46,7 @@ import type { SocModule } from '@jataqi/soc';
 import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
+import type { SecurityReviewModule } from '@jataqi/security-review';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -168,6 +169,7 @@ export class ApiGatewayModule implements IModule {
   private supplyChain?: SupplyChainSecurityModule;
   private infraGovernance?: InfrastructureGovernanceModule;
   private resilience?: ResilienceEngineeringModule;
+  private securityReview?: SecurityReviewModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -263,6 +265,7 @@ export class ApiGatewayModule implements IModule {
     this.supplyChain = this.tryModule<SupplyChainSecurityModule>('supply-chain-security');
     this.infraGovernance = this.tryModule<InfrastructureGovernanceModule>('infra-governance');
     this.resilience = this.tryModule<ResilienceEngineeringModule>('resilience-engineering');
+    this.securityReview = this.tryModule<SecurityReviewModule>('security-review');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -1094,6 +1097,19 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/resilience/availability', auth('resilience:write', (req) => this.resilienceAvailabilityRecord(req)));
     route('GET', '/resilience/availability', auth('resilience:read', () => this.resilienceAvailability()));
     route('GET', '/resilience/probes', auth('resilience:read', (req) => this.resilienceProbesList(req)));
+    // Independent Security Review.
+    route('POST', '/review/schedule', auth('review:write', (req) => this.reviewSchedule(req)));
+    route('GET', '/review', auth('review:read', (req) => this.reviewList(req)));
+    route('POST', '/review/start', auth('review:write', (req) => this.reviewStart(req)));
+    route('POST', '/review/complete', auth('review:write', (req) => this.reviewComplete(req)));
+    route('POST', '/review/signoff', auth('review:write', (req) => this.reviewSignOff(req)));
+    route('POST', '/review/findings', auth('review:write', (req) => this.reviewFindingsAdd(req)));
+    route('GET', '/review/findings', auth('review:read', (req) => this.reviewFindingsList(req)));
+    route('POST', '/review/findings/update', auth('review:write', (req) => this.reviewFindingsUpdate(req)));
+    route('POST', '/review/scan', auth('review:write', (req) => this.reviewScan(req)));
+    route('POST', '/review/architecture', auth('review:write', (req) => this.reviewArchitecture(req)));
+    route('POST', '/review/compliance', auth('review:write', (req) => this.reviewCompliance(req)));
+    route('GET', '/review/stats', auth('review:read', () => this.reviewStats()));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1440,7 +1456,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -5808,6 +5824,133 @@ export class ApiGatewayModule implements IModule {
       ...(req.query.ok === '1' ? { ok: true } : req.query.ok === '0' ? { ok: false } : {}),
     });
     return json(200, { probes: probes.slice(-50), count: probes.length });
+  }
+
+  // ---- Independent Security Review handlers --------------------------------
+
+  private reviewSchedule(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.kind !== 'string' || typeof b.target !== 'string' || typeof b.reviewer !== 'string')
+      return json(400, { error: 'fields "kind", "target", "reviewer" are required' });
+    try {
+      const review = this.securityReview.scheduleReview({
+        kind: b.kind as never, target: b.target, reviewer: b.reviewer,
+        ...(typeof b.phase === 'string' ? { phase: b.phase as never } : {}),
+      });
+      return json(201, { review });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private reviewList(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const reviews = this.securityReview.listReviews({
+      ...(req.query.kind ? { kind: req.query.kind as never } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.target ? { target: req.query.target } : {}),
+    });
+    return json(200, { reviews, count: reviews.length });
+  }
+
+  private reviewStart(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const review = this.securityReview.startReview(b.id);
+    return review ? json(200, { review }) : json(404, { error: 'review not found' });
+  }
+
+  private reviewComplete(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.summary !== 'string')
+      return json(400, { error: 'fields "id" and "summary" are required' });
+    const review = this.securityReview.completeReview(b.id, b.summary);
+    return review ? json(200, { review }) : json(404, { error: 'review not found' });
+  }
+
+  private reviewSignOff(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.approver !== 'string')
+      return json(400, { error: 'fields "id" and "approver" are required' });
+    try {
+      const review = this.securityReview.signOff(b.id, b.approver);
+      return review ? json(200, { review }) : json(404, { error: 'review not found' });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private reviewFindingsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.reviewId !== 'string' || typeof b.severity !== 'string' || typeof b.title !== 'string')
+      return json(400, { error: 'fields "reviewId", "severity", "title" are required' });
+    try {
+      const finding = this.securityReview.addFinding({
+        reviewId: b.reviewId, severity: b.severity as never, title: b.title,
+        ...(typeof b.description === 'string' ? { description: b.description } : {}),
+        ...(typeof b.controlRef === 'string' ? { controlRef: b.controlRef } : {}),
+        ...(typeof b.recommendation === 'string' ? { recommendation: b.recommendation } : {}),
+        ...(typeof b.createdBy === 'string' ? { createdBy: b.createdBy } : { createdBy: this.principalUsername(req) ?? 'reviewer' }),
+      });
+      return json(201, { finding });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private reviewFindingsList(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const findings = this.securityReview.listFindings({
+      ...(req.query.reviewId ? { reviewId: req.query.reviewId } : {}),
+      ...(req.query.severity ? { severity: req.query.severity as never } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { findings, count: findings.length });
+  }
+
+  private reviewFindingsUpdate(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const finding = this.securityReview.updateFinding(b.id, b.status as never, typeof b.by === 'string' ? b.by : 'reviewer', typeof b.note === 'string' ? b.note : undefined);
+    return finding ? json(200, { finding }) : json(404, { error: 'finding not found' });
+  }
+
+  private reviewScan(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    const files = Array.isArray(b.files) ? b.files as Array<{ path: string; content: string }> : [];
+    if (files.length === 0) return json(400, { error: 'field "files" (array of {path, content}) is required' });
+    const hits = typeof b.reviewId === 'string'
+      ? this.securityReview.scanAndFind(b.reviewId, files, typeof b.reviewer === 'string' ? b.reviewer : 'reviewer')
+      : this.securityReview.scanCode(files);
+    return json(200, { hits, count: hits.length });
+  }
+
+  private reviewArchitecture(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    const answers = Array.isArray(b.answers) ? b.answers as Array<{ questionId: string; score: number }> : [];
+    if (answers.length === 0) return json(400, { error: 'field "answers" is required' });
+    return json(200, { assessment: this.securityReview.assessArchitecture(answers) });
+  }
+
+  private reviewCompliance(req: GatewayRequest): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    const b = this.asObject(req.body);
+    const evidence = b.evidence && typeof b.evidence === 'object' ? b.evidence as Record<string, boolean> : {};
+    return json(200, { assessment: this.securityReview.assessCompliance(evidence) });
+  }
+
+  private reviewStats(): GatewayResponse {
+    if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
+    return json(200, { stats: this.securityReview.stats() });
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {

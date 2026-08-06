@@ -37,6 +37,7 @@ import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 import type { PrivacyModule } from '@jataqi/privacy';
+import type { SecurityReviewModule } from '@jataqi/security-review';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -93,6 +94,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  review <sub>         Security review: schedule|start|complete|signoff|finding|findings|scan|architecture|compliance|stats.
   privacy <sub>        Privacy engineering: pia|pias|decide|processing|secure-delete|deletions|minimize|posture.
   resilience <sub>    Global resilience: stats|regions|probe|failover|failback|plan|execute|fault|test|availability|compliance.
   supplychain <sub>   Supply chain security: stats|repo|pipeline|audit|provenance|release|deploy|integrity|monitor.
@@ -149,6 +151,7 @@ async function main() {
   const infra = kernel.getModule<InfrastructureGovernanceModule>('infra-governance');
   const resilience = kernel.getModule<ResilienceEngineeringModule>('resilience-engineering');
   const privacy = kernel.getModule<PrivacyModule>('privacy');
+  const review = kernel.getModule<SecurityReviewModule>('security-review');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1406,6 +1409,100 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'review': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'schedule': {
+            const kind = args[2], target = args[3], reviewer = args[4];
+            if (!kind || !target || !reviewer) { console.error('Usage: jataqi review schedule <kind> <target> <reviewer> [--phase pre_production|periodic|incident_driven]'); process.exit(1); }
+            const r = review.scheduleReview({ kind: kind as never, target, reviewer, ...(flag('phase') ? { phase: flag('phase') as never } : {}) });
+            console.log(`review ${r.id} scheduled: ${r.kind} on ${r.target} by ${r.reviewer} (independent=${r.independent})`);
+            break;
+          }
+          case 'start': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi review start <reviewId>'); process.exit(1); }
+            const r = review.startReview(id);
+            console.log(r ? `${id}: ${r.status}` : 'not found');
+            break;
+          }
+          case 'complete': {
+            const id = args[2], summary = args.slice(3).join(' ');
+            if (!id || !summary) { console.error('Usage: jataqi review complete <reviewId> <summary>'); process.exit(1); }
+            const r = review.completeReview(id, summary);
+            console.log(r ? `${id}: ${r.status}${r.status === 'needs_remediation' ? ' — open critical/high findings' : ''}` : 'not found');
+            break;
+          }
+          case 'signoff': {
+            const id = args[2], approver = args[3];
+            if (!id || !approver) { console.error('Usage: jataqi review signoff <reviewId> <approver>'); process.exit(1); }
+            try {
+              const r = review.signOff(id, approver);
+              console.log(r ? `${id}: signed off by ${r.signedOffBy}` : 'not found');
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'finding': {
+            const reviewId = args[2], severity = args[3], title = args.slice(4).join(' ');
+            if (!reviewId || !severity || !title) { console.error('Usage: jataqi review finding <reviewId> <severity> <title> [--rec recommendation]'); process.exit(1); }
+            const f = review.addFinding({ reviewId, severity: severity as never, title, ...(flag('rec') ? { recommendation: flag('rec') } : {}), createdBy: 'cli-reviewer' });
+            console.log(`finding ${f.id} [${f.severity}] ${f.title}`);
+            break;
+          }
+          case 'findings': {
+            const findings = review.listFindings({ ...(flag('review') ? { reviewId: flag('review') } : {}), ...(flag('severity') ? { severity: flag('severity') as never } : {}), ...(flag('status') ? { status: flag('status') as never } : {}) });
+            for (const f of findings) console.log(`- [${f.severity}] ${f.title} (${f.status}) ${f.controlRef ?? ''}`);
+            console.log(`${findings.length} finding(s)`);
+            break;
+          }
+          case 'scan': {
+            const path = args[2];
+            if (!path) { console.error('Usage: jataqi review scan <file> [--review reviewId]'); process.exit(1); }
+            const fsMod = await import('node:fs');
+            const content = fsMod.readFileSync(path, 'utf8');
+            const hits = flag('review')
+              ? review.scanAndFind(flag('review')!, [{ path, content }], 'cli-reviewer')
+              : review.scanCode([{ path, content }]);
+            for (const h of hits) console.log(`- [${h.severity}] ${h.ruleId} ${h.file}:${h.line} — ${h.snippet}`);
+            console.log(`${hits.length} hit(s)`);
+            break;
+          }
+          case 'architecture': {
+            // --zero-trust 1 --encryption 1 ... quick assessment
+            const answers = [
+              { questionId: 'arch.zero_trust', score: flag('zero-trust') ? Number(flag('zero-trust')) : 0 },
+              { questionId: 'arch.encryption', score: flag('encryption') ? Number(flag('encryption')) : 0 },
+              { questionId: 'arch.input_validation', score: flag('input-validation') ? Number(flag('input-validation')) : 0 },
+              { questionId: 'arch.authn_authz', score: flag('auth') ? Number(flag('auth')) : 0 },
+              { questionId: 'arch.secrets', score: flag('secrets') ? Number(flag('secrets')) : 0 },
+              { questionId: 'arch.resilience', score: flag('resilience') ? Number(flag('resilience')) : 0 },
+            ];
+            const a = review.assessArchitecture(answers);
+            console.log(`architecture score: ${a.score}/100`);
+            for (const g of a.gaps) console.log(`  ! ${g}`);
+            break;
+          }
+          case 'compliance': {
+            const a = review.assessCompliance({});
+            console.log(`compliance: ${a.overall}/100 (${a.families.filter((f) => f.passed).length}/${a.families.length} families passed)`);
+            for (const f of a.families.filter((x) => !x.passed)) console.log(`  ✗ ${f.id} ${f.name} (${f.satisfied}/${f.total})`);
+            break;
+          }
+          case 'stats': {
+            const s = review.stats();
+            console.log(`reviews: ${s.total} (completed ${s.completed}, signed-off ${s.signedOff}, needs-remediation ${s.needsRemediation})`);
+            console.log(`findings: ${s.openFindings} open (${s.criticalFindings} critical / ${s.highFindings} high) · ${s.remediatedFindings} remediated · ${s.acceptedFindings} accepted`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi review schedule|start|complete|signoff|finding|findings|scan|architecture|compliance|stats'); process.exit(1);
         }
         break;
       }
