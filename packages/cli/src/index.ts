@@ -33,6 +33,8 @@ import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
 import type { ActiveDefenseModule } from '@jataqi/active-defense';
 import type { SocModule } from '@jataqi/soc';
+import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
+import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -89,6 +91,8 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  supplychain <sub>   Supply chain security: stats|repo|pipeline|audit|provenance|release|deploy|integrity|monitor.
+  infra <sub>         Infra governance: stats|assets|asset|provision|approve|firmware|drift|compliance|access.
   soc <sub>           Security Operations: report|kpis|lake|telemetry|incidents|incident|escalate|hunt|hunts|playbooks|intel|match|insider|abuse|campaign|validation|tabletop.
   defense <sub>       Active Defense: posture|findings|risk|signal|bans|ban|lift|contain|actions|approve|deny|honeytokens|honeytoken|decoys|decoy|touches|incidents|incident|review|recover|report|integrity|rotate.
   cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
@@ -137,6 +141,8 @@ async function main() {
   const cloud = kernel.getModule<CloudModule>('cloud');
   const defense = kernel.getModule<ActiveDefenseModule>('active-defense');
   const soc = kernel.getModule<SocModule>('soc');
+  const supplyChain = kernel.getModule<SupplyChainSecurityModule>('supply-chain-security');
+  const infra = kernel.getModule<InfrastructureGovernanceModule>('infra-governance');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1394,6 +1400,168 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'supplychain': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'stats':
+            console.log(JSON.stringify(supplyChain.stats(), null, 2));
+            break;
+          case 'repo': {
+            const repo = args[2], branch = args[3];
+            if (!repo || !branch) { console.error('Usage: jataqi supplychain repo <repo> <branch> [--signed] [--ci] [--reviewers n]'); process.exit(1); }
+            const check = supplyChain.checkRepository(repo, {
+              branch, signedCommits: args.includes('--signed'), ciPassing: args.includes('--ci'),
+              reviewers: flag('reviewers') ? Number(flag('reviewers')) : 0,
+            });
+            console.log(`${repo}@${branch}: ${check.status}${check.violations.length ? ` — ${check.violations.join('; ')}` : ''}`);
+            break;
+          }
+          case 'pipeline': {
+            const pipeline = args[2];
+            if (!pipeline) { console.error('Usage: jataqi supplychain pipeline <pipeline> [--pinned] [--no-secrets] [--approval]'); process.exit(1); }
+            const check = supplyChain.checkPipeline(pipeline, {
+              pinnedSteps: args.includes('--pinned'), hasSecrets: !args.includes('--no-secrets'),
+              hasApproval: args.includes('--approval'),
+            });
+            console.log(`${pipeline}: ${check.status}${check.violations.length ? ` — ${check.violations.join('; ')}` : ''}`);
+            break;
+          }
+          case 'audit': {
+            const name = args[2], sha = args[3], license = args[4];
+            if (!name || !sha) { console.error('Usage: jataqi supplychain audit <name@version> <sha512> [license]'); process.exit(1); }
+            const audit = supplyChain.auditLockfile(
+              [{ name, integritySha512: sha, ...(license ? { license } : {}) }],
+              new Map([[name, sha]]),
+            );
+            const r = audit.results[0]!;
+            console.log(`${r.name}: ${r.verdict}${r.reason ? ` — ${r.reason}` : ''}`);
+            console.log(audit.ok ? 'lockfile OK' : `issues: ${audit.vulnerable} vulnerable, ${audit.licenseDenied} license, ${audit.mismatches} mismatch`);
+            break;
+          }
+          case 'provenance': {
+            const artifact = args[2], sha256 = args[3], builder = args[4], build = args[5];
+            if (!artifact || !sha256 || !builder || !build) { console.error('Usage: jataqi supplychain provenance <artifact> <sha256> <builder> <buildId>'); process.exit(1); }
+            const p = supplyChain.createProvenance({ artifactName: artifact, artifactSha256: sha256, builderId: builder, buildId: build, materials: [] });
+            console.log(`provenance ${p.id} created (signature ${p.signature ? 'present' : 'missing'})`);
+            const v = supplyChain.verifyProvenance(p.id);
+            console.log(`verification: ${v.status}`);
+            break;
+          }
+          case 'release': {
+            const release = args[2], artifact = args[3], sha256 = args[4];
+            if (!release || !artifact || !sha256) { console.error('Usage: jataqi supplychain release <release> <artifact> <sha256>'); process.exit(1); }
+            const r = supplyChain.signRelease({ release, artifactName: artifact, artifactSha256: sha256 });
+            console.log(`release ${r.release} signed (${r.id})`);
+            break;
+          }
+          case 'deploy': {
+            const env = args[2], artifact = args[3], sha256 = args[4];
+            if (!env || !artifact || !sha256) { console.error('Usage: jataqi supplychain deploy <env> <artifact> <sha256>'); process.exit(1); }
+            const d = supplyChain.attestDeployment({ environment: env, artifactName: artifact, artifactSha256: sha256, deployer: 'cli' });
+            console.log(`deployment to ${env}: ${d.status}`);
+            break;
+          }
+          case 'integrity': {
+            const release = args[2], artifact = args[3], sha256 = args[4], deployed = args[5];
+            if (!release || !artifact || !sha256) { console.error('Usage: jataqi supplychain integrity <release> <artifact> <sha256> [deployedSha256]'); process.exit(1); }
+            const c = supplyChain.checkIntegrity({ release, artifactName: artifact, artifactSha256: sha256, ...(deployed ? { deployedSha256: deployed } : {}) });
+            console.log(`integrity: ${c.status}`);
+            break;
+          }
+          case 'monitor': {
+            const monitoring = supplyChain.monitor();
+            for (const m of monitoring) console.log(`- ${m.release}: ${m.status}`);
+            console.log(`${monitoring.length} release(s) monitored`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi supplychain stats|repo|pipeline|audit|provenance|release|deploy|integrity|monitor'); process.exit(1);
+        }
+        break;
+      }
+      case 'infra': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'stats':
+            console.log(JSON.stringify({ ...infra.stats(), lifecycle: infra.lifecycleAnalytics() }, null, 2));
+            break;
+          case 'asset': {
+            const serial = args[2], model = args[3], role = args[4], fw = args[5];
+            if (!serial || !model || !role || !fw) { console.error('Usage: jataqi infra asset <serial> <model> <role> <firmwareVersion> [--fw-sha256 x]'); process.exit(1); }
+            const a = infra.registerAsset({ serial, model, role: role as never, firmwareVersion: fw, ...(flag('fw-sha256') ? { firmwareSha256: flag('fw-sha256') } : {}) });
+            console.log(`asset ${a.id} (${a.serial}) registered [${a.status}]`);
+            break;
+          }
+          case 'assets': {
+            const assets = infra.listAssets({ ...(flag('status') ? { status: flag('status') as never } : {}), ...(args.includes('--eol') ? { eol: true } : {}) });
+            for (const a of assets) console.log(`- ${a.serial} ${a.model} [${a.status}] fw=${a.firmwareStatus}${a.eolAt && a.eolAt < Date.now() ? ' (EOL!)' : ''}`);
+            console.log(`${assets.length} asset(s)`);
+            break;
+          }
+          case 'provision': {
+            const serial = args[2], token = args[3];
+            if (!serial || !token) { console.error('Usage: jataqi infra provision <serial> <oneTimeToken> [--by user]'); process.exit(1); }
+            const p = infra.enrollProvisioning({ serial, token, enrolledBy: flag('by') ?? 'cli', method: 'tpm' });
+            console.log(`provisioning ${p.id} enrolled (pending approval) — token hash ${p.tokenHash.slice(0, 12)}`);
+            break;
+          }
+          case 'approve': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi infra approve <provisioningId>'); process.exit(1); }
+            const p = infra.approveProvisioning(id, 'cli-operator');
+            console.log(p ? `provisioning ${p.id} approved → asset active` : 'not found');
+            break;
+          }
+          case 'firmware': {
+            const serial = args[2], sha = args[3];
+            if (!serial || !sha) { console.error('Usage: jataqi infra firmware <serial> <actualSha256>'); process.exit(1); }
+            const r = infra.validateFirmware(serial, sha);
+            console.log(`${serial}: firmware ${r.status}`);
+            break;
+          }
+          case 'drift': {
+            const serial = args[2];
+            if (!serial) { console.error('Usage: jataqi infra drift <serial> [--golden k=v,k2=v2] [--live k=v,...]'); process.exit(1); }
+            const parse = (s: string | undefined): Record<string, string> => {
+              const out: Record<string, string> = {};
+              for (const pair of (s ?? '').split(',')) {
+                if (!pair.includes('=')) continue;
+                const [k, v] = pair.split('=');
+                out[k!] = v!;
+              }
+              return out;
+            };
+            const drifts = infra.detectDrift(serial, parse(flag('golden')), parse(flag('live')));
+            for (const d of drifts) console.log(`- [${d.severity}] ${d.key}: ${d.expected} → ${d.actual}`);
+            console.log(`${drifts.length} drift(s)`);
+            break;
+          }
+          case 'compliance': {
+            const report = infra.complianceReport();
+            console.log(`compliance: ${report.passed}/${report.total} passed (${report.passed / Math.max(1, report.total) * 100 | 0}%)`);
+            for (const f of report.failing) console.log(`  ✗ ${f.name}: ${f.detail}`);
+            break;
+          }
+          case 'access': {
+            const facility = args[2], zone = args[3], person = args[4], action = args[5];
+            if (!facility || !zone || !person || !action) { console.error('Usage: jataqi infra access <facility> <zone> <person> <entry|exit|escort|denied> [reason]'); process.exit(1); }
+            const r = infra.logAccess({ facility, zone, person, action: action as never, ...(args[6] ? { reason: args[6] } : {}) });
+            console.log(`logged ${r.action} for ${r.person} @ ${r.facility}/${r.zone}`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi infra stats|asset|assets|provision|approve|firmware|drift|compliance|access'); process.exit(1);
         }
         break;
       }

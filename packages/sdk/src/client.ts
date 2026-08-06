@@ -66,6 +66,8 @@ export class JataQiClient {
   readonly cloud: CloudClient;
   readonly defense: DefenseClient;
   readonly soc: SocClient;
+  readonly supplyChain: SupplyChainClient;
+  readonly infra: InfraClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -106,6 +108,8 @@ export class JataQiClient {
     this.cloud = new CloudClient(this);
     this.defense = new DefenseClient(this);
     this.soc = new SocClient(this);
+    this.supplyChain = new SupplyChainClient(this);
+    this.infra = new InfraClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -857,4 +861,86 @@ export class SocClient {
     return this.c.request('POST', '/soc/tabletops', input);
   }
   async tabletops(): Promise<{ scenarios: unknown[] }> { return this.c.request('GET', '/soc/tabletops'); }
+}
+
+// --- Software Supply Chain Governance ---------------------------------------------
+
+export class SupplyChainClient {
+  constructor(private c: JataQiClient) {}
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/supplychain/stats'); }
+  async checkRepository(repo: string, facts: { branch: string; signedCommits?: boolean; ciPassing?: boolean; reviewers?: number }): Promise<{ check: unknown }> {
+    return this.c.request('POST', '/supplychain/repos/check', { repo, ...facts });
+  }
+  async repositories(): Promise<{ repositories: unknown[] }> { return this.c.request('GET', '/supplychain/repos'); }
+  async checkPipeline(pipeline: string, facts: { pinnedSteps?: boolean; hasSecrets?: boolean; hasApproval?: boolean }): Promise<{ check: unknown }> {
+    return this.c.request('POST', '/supplychain/pipelines/check', { pipeline, ...facts });
+  }
+  async pipelines(): Promise<{ pipelines: unknown[] }> { return this.c.request('GET', '/supplychain/pipelines'); }
+  async auditLockfile(records: Array<{ name: string; integritySha512: string; license?: string }>, computed: Record<string, string>): Promise<{ audit: unknown }> {
+    return this.c.request('POST', '/supplychain/audit', { records, computed });
+  }
+  async createProvenance(input: { artifactName: string; artifactSha256: string; builderId: string; buildId: string; materials?: Array<{ uri: string; digest: string }> }): Promise<{ provenance: unknown }> {
+    return this.c.request('POST', '/supplychain/provenance', input);
+  }
+  async provenances(): Promise<{ provenances: unknown[] }> { return this.c.request('GET', '/supplychain/provenance'); }
+  async verifyProvenance(id: string): Promise<{ verification: unknown }> { return this.c.request('POST', '/supplychain/provenance/verify', { id }); }
+  async signRelease(input: { release: string; artifactName: string; artifactSha256: string; notes?: string }): Promise<{ release: unknown }> {
+    return this.c.request('POST', '/supplychain/releases', input);
+  }
+  async releases(): Promise<{ releases: unknown[] }> { return this.c.request('GET', '/supplychain/releases'); }
+  async verifyRelease(id: string): Promise<{ verification: unknown }> { return this.c.request('POST', '/supplychain/releases/verify', { id }); }
+  async attestDeployment(input: { environment: string; artifactName: string; artifactSha256: string; deployer: string }): Promise<{ attestation: unknown; status: string }> {
+    return this.c.request('POST', '/supplychain/deployments', input);
+  }
+  async deployments(): Promise<{ attestations: unknown[] }> { return this.c.request('GET', '/supplychain/deployments'); }
+  async checkIntegrity(input: { release: string; artifactName: string; artifactSha256: string; deployedSha256?: string }): Promise<{ check: unknown }> {
+    return this.c.request('POST', '/supplychain/integrity', input);
+  }
+  async integrityHistory(): Promise<{ checks: unknown[] }> { return this.c.request('GET', '/supplychain/integrity'); }
+  async monitor(): Promise<{ monitoring: unknown[] }> { return this.c.request('GET', '/supplychain/monitor'); }
+}
+
+// --- Secure Infrastructure Governance ---------------------------------------------
+
+export class InfraClient {
+  constructor(private c: JataQiClient) {}
+  async stats(): Promise<{ stats: unknown; lifecycle: unknown }> { return this.c.request('GET', '/infra/stats'); }
+  async registerAsset(input: { serial: string; model: string; role: string; firmwareVersion: string; firmwareSha256?: string; measuredBoot?: string; location?: string; eolAt?: number }): Promise<{ asset: unknown }> {
+    return this.c.request('POST', '/infra/assets', input);
+  }
+  async assets(opts: { status?: string; role?: string; eol?: boolean } = {}): Promise<{ assets: unknown[]; count: number }> {
+    const query: Record<string, string> = {};
+    if (opts.status) query.status = opts.status;
+    if (opts.role) query.role = opts.role;
+    if (opts.eol) query.eol = '1';
+    return this.c.request('GET', '/infra/assets', undefined, query);
+  }
+  async setAssetStatus(serial: string, status: string): Promise<{ asset: unknown }> { return this.c.request('POST', '/infra/assets/status', { serial, status }); }
+  async enrollProvisioning(input: { serial: string; token: string; enrolledBy: string; method?: string }): Promise<{ provisioning: unknown }> {
+    return this.c.request('POST', '/infra/provisioning', input);
+  }
+  async approveProvisioning(id: string): Promise<{ provisioning: unknown }> { return this.c.request('POST', '/infra/provisioning/approve', { id }); }
+  async provisionings(): Promise<{ provisionings: unknown[] }> { return this.c.request('GET', '/infra/provisioning'); }
+  async validateFirmware(serial: string, actualSha256: string, measuredBoot?: string): Promise<{ asset: unknown; status: string }> {
+    return this.c.request('POST', '/infra/firmware/validate', { serial, actualSha256, ...(measuredBoot ? { measuredBoot } : {}) });
+  }
+  async firmwareReport(): Promise<{ report: unknown }> { return this.c.request('GET', '/infra/firmware'); }
+  async detectDrift(serial: string, golden: Record<string, string>, live: Record<string, string>): Promise<{ drifts: unknown[]; count: number }> {
+    return this.c.request('POST', '/infra/drift', { serial, golden, live });
+  }
+  async drifts(opts: { severity?: string; open?: boolean } = {}): Promise<{ drifts: unknown[]; count: number }> {
+    const query: Record<string, string> = {};
+    if (opts.severity) query.severity = opts.severity;
+    if (opts.open) query.open = '1';
+    return this.c.request('GET', '/infra/drift', undefined, query);
+  }
+  async remediateDrift(id: string): Promise<{ drift: unknown }> { return this.c.request('POST', '/infra/drift/remediate', { id }); }
+  async runCompliance(facts: Record<string, boolean>): Promise<{ checks: unknown[] }> { return this.c.request('POST', '/infra/compliance', { facts }); }
+  async complianceReport(): Promise<{ report: unknown }> { return this.c.request('GET', '/infra/compliance'); }
+  async logAccess(input: { facility: string; zone: string; person: string; action: string; reason?: string }): Promise<{ record: unknown }> {
+    return this.c.request('POST', '/infra/access', input);
+  }
+  async accessLog(opts: { facility?: string; action?: string } = {}): Promise<{ log: unknown[]; count: number; patterns: unknown[] }> {
+    return this.c.request('GET', '/infra/access', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
 }

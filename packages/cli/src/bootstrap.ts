@@ -99,6 +99,8 @@ import { TanyaModule } from '@jataqi/tanya';
 import { MobileModule } from '@jataqi/mobile';
 import { ActiveDefenseModule } from '@jataqi/active-defense';
 import { SocModule } from '@jataqi/soc';
+import { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
+import { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import { ConversationsModule } from '@jataqi/conversations';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
@@ -315,6 +317,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Global Security Operations — SOC, telemetry lake, threat hunting/intel,
   // insider risk, abuse detection, incident command, adversarial validation.
   kernel.register(new SocModule());
+  // Software supply chain + secure infrastructure governance.
+  kernel.register(new SupplyChainSecurityModule());
+  kernel.register(new InfrastructureGovernanceModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

@@ -43,6 +43,8 @@ import type { Span } from '@jataqi/tracing';
 import type { RealtimeModule } from '@jataqi/realtime';
 import type { ActiveDefenseModule } from '@jataqi/active-defense';
 import type { SocModule } from '@jataqi/soc';
+import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
+import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -162,6 +164,8 @@ export class ApiGatewayModule implements IModule {
   private tanya?: TanyaModule;
   private activeDefense?: ActiveDefenseModule;
   private soc?: SocModule;
+  private supplyChain?: SupplyChainSecurityModule;
+  private infraGovernance?: InfrastructureGovernanceModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -254,6 +258,8 @@ export class ApiGatewayModule implements IModule {
     this.tanya = this.tryModule<TanyaModule>('tanya');
     this.activeDefense = this.tryModule<ActiveDefenseModule>('active-defense');
     this.soc = this.tryModule<SocModule>('soc');
+    this.supplyChain = this.tryModule<SupplyChainSecurityModule>('supply-chain-security');
+    this.infraGovernance = this.tryModule<InfrastructureGovernanceModule>('infra-governance');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -1017,6 +1023,41 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/soc/validation', auth('soc:read', () => this.socValidationScore()));
     route('POST', '/soc/tabletops', auth('soc:write', (req) => this.socTabletopsAdd(req)));
     route('GET', '/soc/tabletops', auth('soc:read', () => this.socTabletopsList()));
+    // Software Supply Chain Governance.
+    route('GET', '/supplychain/stats', auth('supplychain:read', () => this.supplyChainStats()));
+    route('POST', '/supplychain/repos/check', auth('supplychain:write', (req) => this.supplyChainRepoCheck(req)));
+    route('GET', '/supplychain/repos', auth('supplychain:read', () => this.supplyChainRepos()));
+    route('POST', '/supplychain/pipelines/check', auth('supplychain:write', (req) => this.supplyChainPipelineCheck(req)));
+    route('GET', '/supplychain/pipelines', auth('supplychain:read', () => this.supplyChainPipelines()));
+    route('POST', '/supplychain/audit', auth('supplychain:write', (req) => this.supplyChainAudit(req)));
+    route('POST', '/supplychain/provenance', auth('supplychain:write', (req) => this.supplyChainProvenanceCreate(req)));
+    route('GET', '/supplychain/provenance', auth('supplychain:read', () => this.supplyChainProvenanceList()));
+    route('POST', '/supplychain/provenance/verify', auth('supplychain:read', (req) => this.supplyChainProvenanceVerify(req)));
+    route('POST', '/supplychain/releases', auth('supplychain:write', (req) => this.supplyChainReleaseSign(req)));
+    route('GET', '/supplychain/releases', auth('supplychain:read', () => this.supplyChainReleases()));
+    route('POST', '/supplychain/releases/verify', auth('supplychain:read', (req) => this.supplyChainReleaseVerify(req)));
+    route('POST', '/supplychain/deployments', auth('supplychain:write', (req) => this.supplyChainDeployAttest(req)));
+    route('GET', '/supplychain/deployments', auth('supplychain:read', () => this.supplyChainDeployments()));
+    route('POST', '/supplychain/integrity', auth('supplychain:write', (req) => this.supplyChainIntegrityCheck(req)));
+    route('GET', '/supplychain/integrity', auth('supplychain:read', () => this.supplyChainIntegrityHistory()));
+    route('GET', '/supplychain/monitor', auth('supplychain:read', () => this.supplyChainMonitor()));
+    // Secure Infrastructure Governance.
+    route('GET', '/infra/stats', auth('infra:read', () => this.infraStats()));
+    route('POST', '/infra/assets', auth('infra:write', (req) => this.infraAssetsRegister(req)));
+    route('GET', '/infra/assets', auth('infra:read', (req) => this.infraAssetsList(req)));
+    route('POST', '/infra/assets/status', auth('infra:write', (req) => this.infraAssetsStatus(req)));
+    route('POST', '/infra/provisioning', auth('infra:write', (req) => this.infraProvisioningEnroll(req)));
+    route('POST', '/infra/provisioning/approve', auth('infra:write', (req) => this.infraProvisioningApprove(req)));
+    route('GET', '/infra/provisioning', auth('infra:read', () => this.infraProvisioningList()));
+    route('POST', '/infra/firmware/validate', auth('infra:write', (req) => this.infraFirmwareValidate(req)));
+    route('GET', '/infra/firmware', auth('infra:read', () => this.infraFirmwareReport()));
+    route('POST', '/infra/drift', auth('infra:write', (req) => this.infraDriftDetect(req)));
+    route('GET', '/infra/drift', auth('infra:read', (req) => this.infraDriftList(req)));
+    route('POST', '/infra/drift/remediate', auth('infra:write', (req) => this.infraDriftRemediate(req)));
+    route('POST', '/infra/compliance', auth('infra:write', (req) => this.infraComplianceRun(req)));
+    route('GET', '/infra/compliance', auth('infra:read', () => this.infraComplianceReport()));
+    route('POST', '/infra/access', auth('infra:write', (req) => this.infraAccessLog(req)));
+    route('GET', '/infra/access', auth('infra:read', (req) => this.infraAccessList(req)));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1363,7 +1404,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -5264,6 +5305,297 @@ export class ApiGatewayModule implements IModule {
   private socTabletopsList(): GatewayResponse {
     if (!this.soc) return json(501, { error: 'soc module not registered' });
     return json(200, { scenarios: this.soc.tabletops() });
+  }
+
+  // ---- Software Supply Chain Governance handlers ---------------------------
+
+  private supplyChainStats(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { stats: this.supplyChain.stats() });
+  }
+
+  private supplyChainRepoCheck(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.repo !== 'string' || typeof b.branch !== 'string')
+      return json(400, { error: 'fields "repo" and "branch" are required' });
+    const check = this.supplyChain.checkRepository(b.repo, {
+      branch: b.branch,
+      signedCommits: b.signedCommits === true,
+      ciPassing: b.ciPassing === true,
+      reviewers: typeof b.reviewers === 'number' ? b.reviewers : 0,
+    });
+    return json(200, { check });
+  }
+
+  private supplyChainRepos(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { repositories: this.supplyChain.repositoryChecks() });
+  }
+
+  private supplyChainPipelineCheck(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.pipeline !== 'string') return json(400, { error: 'field "pipeline" is required' });
+    const check = this.supplyChain.checkPipeline(b.pipeline, {
+      pinnedSteps: b.pinnedSteps === true,
+      hasSecrets: b.hasSecrets === true,
+      hasApproval: b.hasApproval === true,
+    });
+    return json(200, { check });
+  }
+
+  private supplyChainPipelines(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { pipelines: this.supplyChain.pipelineChecks() });
+  }
+
+  private supplyChainAudit(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    const records = Array.isArray(b.records) ? b.records as Array<{ name: string; integritySha512: string; license?: string }> : [];
+    const computed = (b.computed && typeof b.computed === 'object') ? new Map(Object.entries(b.computed as Record<string, string>)) : new Map<string, string>();
+    if (records.length === 0) return json(400, { error: 'field "records" is required' });
+    return json(200, { audit: this.supplyChain.auditLockfile(records, computed) });
+  }
+
+  private supplyChainProvenanceCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.artifactName !== 'string' || typeof b.artifactSha256 !== 'string' || typeof b.builderId !== 'string' || typeof b.buildId !== 'string')
+      return json(400, { error: 'fields "artifactName", "artifactSha256", "builderId", "buildId" are required' });
+    const provenance = this.supplyChain.createProvenance({
+      artifactName: b.artifactName, artifactSha256: b.artifactSha256, builderId: b.builderId, buildId: b.buildId,
+      materials: Array.isArray(b.materials) ? b.materials as Array<{ uri: string; digest: string }> : [],
+    });
+    return json(201, { provenance });
+  }
+
+  private supplyChainProvenanceList(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { provenances: this.supplyChain.listProvenances() });
+  }
+
+  private supplyChainProvenanceVerify(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, { verification: this.supplyChain.verifyProvenance(b.id) });
+  }
+
+  private supplyChainReleaseSign(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.release !== 'string' || typeof b.artifactName !== 'string' || typeof b.artifactSha256 !== 'string')
+      return json(400, { error: 'fields "release", "artifactName", "artifactSha256" are required' });
+    const release = this.supplyChain.signRelease({
+      release: b.release, artifactName: b.artifactName, artifactSha256: b.artifactSha256,
+      ...(typeof b.notes === 'string' ? { notes: b.notes } : {}),
+    });
+    return json(201, { release });
+  }
+
+  private supplyChainReleases(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { releases: this.supplyChain.listReleases() });
+  }
+
+  private supplyChainReleaseVerify(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, { verification: this.supplyChain.verifyRelease(b.id) });
+  }
+
+  private supplyChainDeployAttest(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.environment !== 'string' || typeof b.artifactName !== 'string' || typeof b.artifactSha256 !== 'string' || typeof b.deployer !== 'string')
+      return json(400, { error: 'fields "environment", "artifactName", "artifactSha256", "deployer" are required' });
+    return json(201, this.supplyChain.attestDeployment({
+      environment: b.environment, artifactName: b.artifactName, artifactSha256: b.artifactSha256, deployer: b.deployer,
+    }));
+  }
+
+  private supplyChainDeployments(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { attestations: this.supplyChain.attestationsList() });
+  }
+
+  private supplyChainIntegrityCheck(req: GatewayRequest): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.release !== 'string' || typeof b.artifactName !== 'string' || typeof b.artifactSha256 !== 'string')
+      return json(400, { error: 'fields "release", "artifactName", "artifactSha256" are required' });
+    return json(200, { check: this.supplyChain.checkIntegrity({
+      release: b.release, artifactName: b.artifactName, artifactSha256: b.artifactSha256,
+      ...(typeof b.deployedSha256 === 'string' ? { deployedSha256: b.deployedSha256 } : {}),
+    }) });
+  }
+
+  private supplyChainIntegrityHistory(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { checks: this.supplyChain.integrityHistory() });
+  }
+
+  private supplyChainMonitor(): GatewayResponse {
+    if (!this.supplyChain) return json(501, { error: 'supply-chain-security module not registered' });
+    return json(200, { monitoring: this.supplyChain.monitor() });
+  }
+
+  // ---- Secure Infrastructure Governance handlers ------------------------------
+
+  private infraStats(): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    return json(200, { stats: this.infraGovernance.stats(), lifecycle: this.infraGovernance.lifecycleAnalytics() });
+  }
+
+  private infraAssetsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.serial !== 'string' || typeof b.model !== 'string' || typeof b.role !== 'string' || typeof b.firmwareVersion !== 'string')
+      return json(400, { error: 'fields "serial", "model", "role", "firmwareVersion" are required' });
+    try {
+      const asset = this.infraGovernance.registerAsset({
+        serial: b.serial, model: b.model, role: b.role as never, firmwareVersion: b.firmwareVersion,
+        ...(typeof b.firmwareSha256 === 'string' ? { firmwareSha256: b.firmwareSha256 } : {}),
+        ...(typeof b.measuredBoot === 'string' ? { measuredBoot: b.measuredBoot } : {}),
+        ...(typeof b.location === 'string' ? { location: b.location } : {}),
+        ...(typeof b.purchasedAt === 'number' ? { purchasedAt: b.purchasedAt } : {}),
+        ...(typeof b.eolAt === 'number' ? { eolAt: b.eolAt } : {}),
+      });
+      return json(201, { asset });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private infraAssetsList(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const assets = this.infraGovernance.listAssets({
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.role ? { role: req.query.role as never } : {}),
+      ...(req.query.eol === '1' ? { eol: true } : {}),
+    });
+    return json(200, { assets, count: assets.length });
+  }
+
+  private infraAssetsStatus(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.serial !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "serial" and "status" are required' });
+    const asset = this.infraGovernance.setStatus(b.serial, b.status as never);
+    return asset ? json(200, { asset }) : json(404, { error: 'asset not found' });
+  }
+
+  private infraProvisioningEnroll(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.serial !== 'string' || typeof b.token !== 'string' || typeof b.enrolledBy !== 'string')
+      return json(400, { error: 'fields "serial", "token", "enrolledBy" are required' });
+    try {
+      const record = this.infraGovernance.enrollProvisioning({
+        serial: b.serial, token: b.token, enrolledBy: b.enrolledBy,
+        method: b.method === 'tpm' || b.method === 'serial' || b.method === 'network' ? b.method : 'serial',
+      });
+      return json(201, { provisioning: record });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private infraProvisioningApprove(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const record = this.infraGovernance.approveProvisioning(b.id, this.principalUsername(req) ?? 'operator');
+    return record ? json(200, { provisioning: record }) : json(404, { error: 'provisioning not found' });
+  }
+
+  private infraProvisioningList(): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    return json(200, { provisionings: this.infraGovernance.provisioningsList() });
+  }
+
+  private infraFirmwareValidate(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.serial !== 'string' || typeof b.actualSha256 !== 'string')
+      return json(400, { error: 'fields "serial" and "actualSha256" are required' });
+    try {
+      return json(200, this.infraGovernance.validateFirmware(b.serial, b.actualSha256, typeof b.measuredBoot === 'string' ? b.measuredBoot : undefined));
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private infraFirmwareReport(): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    return json(200, { report: this.infraGovernance.firmwareStatusReport() });
+  }
+
+  private infraDriftDetect(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.serial !== 'string' || !b.golden || typeof b.golden !== 'object' || !b.live || typeof b.live !== 'object')
+      return json(400, { error: 'fields "serial", "golden", "live" (objects) are required' });
+    try {
+      const drifts = this.infraGovernance.detectDrift(b.serial, b.golden as Record<string, string>, b.live as Record<string, string>);
+      return json(200, { drifts, count: drifts.length });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private infraDriftList(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const drifts = this.infraGovernance.driftsList({
+      ...(req.query.severity ? { severity: req.query.severity as never } : {}),
+      ...(req.query.open === '1' ? { open: true } : {}),
+    });
+    return json(200, { drifts, count: drifts.length });
+  }
+
+  private infraDriftRemediate(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const drift = this.infraGovernance.remediateDrift(b.id);
+    return drift ? json(200, { drift }) : json(404, { error: 'drift not found' });
+  }
+
+  private infraComplianceRun(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    const facts = b.facts && typeof b.facts === 'object' ? b.facts as Record<string, boolean> : {};
+    return json(200, { checks: this.infraGovernance.runComplianceChecks(facts) });
+  }
+
+  private infraComplianceReport(): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    return json(200, { report: this.infraGovernance.complianceReport() });
+  }
+
+  private infraAccessLog(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.facility !== 'string' || typeof b.zone !== 'string' || typeof b.person !== 'string' || typeof b.action !== 'string')
+      return json(400, { error: 'fields "facility", "zone", "person", "action" are required' });
+    const record = this.infraGovernance.logAccess({
+      facility: b.facility, zone: b.zone, person: b.person, action: b.action as never,
+      ...(typeof b.reason === 'string' ? { reason: b.reason } : {}),
+    });
+    return json(201, { record });
+  }
+
+  private infraAccessList(req: GatewayRequest): GatewayResponse {
+    if (!this.infraGovernance) return json(501, { error: 'infra-governance module not registered' });
+    const log = this.infraGovernance.accessLog({
+      ...(req.query.facility ? { facility: req.query.facility } : {}),
+      ...(req.query.action ? { action: req.query.action as never } : {}),
+    });
+    return json(200, { log, count: log.length, patterns: this.infraGovernance.deniedAccessPatterns() });
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {

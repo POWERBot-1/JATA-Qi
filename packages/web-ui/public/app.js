@@ -245,6 +245,7 @@ const NAV = [
   { id: 'knowledge', label: 'Knowledge', icon: '📚' },
   { id: 'commerce', label: 'Commerce', icon: '💳' },
   { id: 'maza', label: 'MAZA', icon: '🛒' },
+  { id: 'command', label: 'Security Cmd', icon: '🛡️' },
   { id: 'organizations', label: 'Organizations', icon: '🏢' },
   { id: 'orgs', label: 'My Orgs', icon: '👥' },
   { id: 'notifications', label: 'Notifications', icon: '🔔' },
@@ -448,6 +449,20 @@ const VIEWS = {
       listings: listings.status === 'fulfilled' ? listings.value.listings : [],
       orders: orders.status === 'fulfilled' ? orders.value.orders : [],
       payouts: payouts.status === 'fulfilled' ? payouts.value.payouts : [],
+    };
+  },
+  command: async () => {
+    const [soc, defense, supply, infra, incidents] = await Promise.allSettled([
+      api('GET', '/soc/report'), api('GET', '/defense/posture'),
+      api('GET', '/supplychain/stats'), api('GET', '/infra/stats'),
+      api('GET', '/soc/incidents'),
+    ]);
+    return {
+      soc: soc.status === 'fulfilled' ? soc.value.report : null,
+      defense: defense.status === 'fulfilled' ? defense.value : null,
+      supply: supply.status === 'fulfilled' ? supply.value.stats : null,
+      infra: infra.status === 'fulfilled' ? infra.value.stats : null,
+      incidents: incidents.status === 'fulfilled' ? incidents.value.incidents : [],
     };
   },
   cdn: async () => {
@@ -726,6 +741,37 @@ function renderView(view, data) {
       ${tableFrom(data.autoscale, ['name', 'min', 'max', 'cpuHighThreshold', 'cpuLowThreshold', 'currentLoad', 'cooldownMs'])}
       ${(data.history || []).length ? `<div class="subtitle">Decision history (latest 10)</div>${tableFrom(data.history.slice(0, 10), ['ts', 'action', 'count', 'reason'])}` : ''}
     </div>`;
+  } else if (view === 'command') {
+    const soc = data.soc || {};
+    const k = soc.kpis || {};
+    const def = data.defense || {};
+    const ds = def.stats || {};
+    const sc = data.supply || {};
+    const ig = data.infra || {};
+    const openInc = (data.incidents || []).filter((i) => i.status !== 'closed');
+    const criticalFindings = (def.findingsBySeverity || {}).critical || 0;
+    const vuln = (sc.dependenciesVulnerable || 0) + (sc.dependenciesLicenseDenied || 0) + (sc.dependenciesMismatched || 0);
+    html += `<div class="stat-grid">
+      ${statCard('Open Incidents', openInc.length, openInc.length ? 'red' : 'green')}
+      ${statCard('SEV1', (k.sev1Incidents ?? 0), (k.sev1Incidents ?? 0) ? 'red' : 'green')}
+      ${statCard('Critical Findings', criticalFindings, criticalFindings ? 'red' : 'green')}
+      ${statCard('Critical Sessions', ds.blockedSessions ?? 0, (ds.blockedSessions ?? 0) ? 'red' : 'green')}
+      ${statCard('Risk Assessed', ds.riskAssessments ?? (ds.riskDistribution ? Object.values(ds.riskDistribution).reduce((a, b) => a + b, 0) : 0))}
+      ${statCard('Lake Entries', k.lakeEntries ?? 0)}
+      ${statCard('Intel Indicators', k.intelIndicators ?? 0)}
+      ${statCard('Hunts Run', k.huntsRun ?? 0)}
+      ${statCard('Insider Alerts', k.insiderAlerts ?? 0, (k.insiderAlerts ?? 0) ? 'yellow' : 'green')}
+      ${statCard('Abuse Alerts', k.abuseAlerts ?? 0, (k.abuseAlerts ?? 0) ? 'yellow' : 'green')}
+      ${statCard('Validation', k.validationScore != null ? Math.round(k.validationScore * 100) + '%' : null, (k.validationScore ?? 0) >= 0.8 ? 'green' : 'yellow')}
+      ${statCard('MTTR', k.avgTimeToResolveMin != null ? k.avgTimeToResolveMin + 'm' : null)}
+      ${statCard('Supply Chain OK', sc.repositories != null ? (sc.nonCompliantRepos + sc.nonCompliantPipelines + vuln) === 0 : null, (sc.nonCompliantRepos + sc.nonCompliantPipelines + vuln) === 0 ? 'green' : 'red')}
+      ${statCard('Firmware Drift', ig.firmwareMismatch ?? 0, (ig.firmwareMismatch ?? 0) ? 'red' : 'green')}
+      ${statCard('Config Drift', ig.openDrifts ?? 0, (ig.openDrifts ?? 0) ? 'yellow' : 'green')}
+      ${statCard('Compliance', ig.compliancePassRate != null ? ig.compliancePassRate + '%' : null, (ig.compliancePassRate ?? 100) >= 90 ? 'green' : 'yellow')}
+    </div>
+    <div class="card"><div class="card-title">Open Incidents (${openInc.length})</div>${tableFrom(openInc, ['id', 'title', 'severity', 'status', 'escalations', 'commander'])}</div>
+    <div class="card"><div class="card-title">Risk Distribution</div><div class="subtitle">${JSON.stringify(ds.riskDistribution || {})}</div></div>
+    <div class="card"><div class="card-title">Recent SOC Alerts</div>${(soc.recentAlerts || []).slice(0, 8).map((a) => `<div class="row">[${a.type}/${a.severity}] ${a.message}</div>`).join('') || '<div class="subtitle">no recent alerts</div>'}</div>`;
   } else if (view === 'maza') {
     const s = data.stats || {};
     const a = data.analytics || {};

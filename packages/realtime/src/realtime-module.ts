@@ -41,6 +41,8 @@ const DEFAULT_EVENTS = [
   'defense.finding.created', 'defense.containment.started', 'defense.containment.approval.requested',
   'defense.incident.recorded', 'defense.recovery.completed', 'defense.ban.added',
   'soc.incident.opened', 'soc.abuse.alert', 'soc.insider.alert', 'soc.intel.matched', 'soc.hunt.complete',
+  'supplychain.dependency.vulnerable', 'supplychain.deployment.mismatch', 'supplychain.integrity.drift',
+  'infra.firmware.mismatch', 'infra.config.drift', 'infra.physical.access.denied',
 ];
 
 export class RealtimeModule implements IModule {
