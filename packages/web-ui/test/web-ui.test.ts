@@ -178,6 +178,9 @@ describe('WebUIModule', () => {
     assert.match(js, /\/chat\/export\?id=/, 'chat export endpoint wired');
     assert.match(js, /'governance'/, 'governance topic in the live feed');
     assert.match(js, /governance: '🚨'/, 'governance feed icon');
+    // Model-routing toggle.
+    assert.match(js, /tanya-model-routing/, 'model-routing checkbox present');
+    assert.match(js, /modelRouting: true/, 'flag sent on chat frames');
     // Multi-user TANYA (org scope + sharing).
     assert.match(js, /\/tanya\/share/, 'share endpoint wired');
     assert.match(js, /\/tanya\/shared/, 'shared-with-me endpoint wired');

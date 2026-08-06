@@ -583,4 +583,17 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     // Unknown share id → error.
     await assert.rejects(anon.tanya.getShared('nope'), /not found/);
   });
+
+  it('tanya.chat modelRouting flag round-trips (no model-runtime → agent fallback)', async () => {
+    await client.auth.login('admin', 'admin');
+    // The CLI bootstrap registers no model-runtime in this test env, so the
+    // flag must round-trip and still produce an agent reply (fallback).
+    const chat = await client.tanya.chat('routing check', { modelRouting: true });
+    assert.ok(chat.reply.length > 0, 'reply produced via fallback');
+    assert.ok(chat.conversationId);
+
+    // Default (no flag) behaves identically.
+    const plain = await client.tanya.chat('plain check');
+    assert.ok(plain.reply.length > 0);
+  });
 });

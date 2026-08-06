@@ -195,7 +195,7 @@ export class AuditClient {
 export class TanyaClient {
   constructor(private c: JataQiClient) {}
   /** Run a conversational turn (persona + optional conversation/org scope). */
-  async chat(message: string, opts: { persona?: string; conversationId?: string; orgId?: string; title?: string } = {}): Promise<{
+  async chat(message: string, opts: { persona?: string; conversationId?: string; orgId?: string; title?: string; modelRouting?: boolean } = {}): Promise<{
     conversationId: string; userId: string; persona: string; agent: string;
     reply: string; toolCalls: Array<{ name: string; input: Record<string, unknown>; result?: unknown }>;
     finishedReason: string; messageCount: number;

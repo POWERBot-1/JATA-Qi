@@ -540,6 +540,7 @@ function renderView(view, data) {
         <select id="tanya-persona" style="max-width:200px"><option value="main">main</option></select>
         <select id="tanya-conv" style="flex:1;min-width:220px"><option value="">— new conversation —</option></select>
         <select id="tanya-org" style="max-width:220px"><option value="">— no org scope —</option></select>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim)"><input type="checkbox" id="tanya-model-routing"> model router</label>
         <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
       </div>
       <div id="tanya-messages" class="chat-log">
@@ -964,14 +965,15 @@ function sendTanya() {
   const persona = $('#tanya-persona')?.value || 'main';
   const convId = $('#tanya-conv')?.value || undefined;
   const orgId = $('#tanya-org')?.value.trim() || undefined;
+  const modelRouting = $('#tanya-model-routing')?.checked === true;
   let ws;
-  try { ws = new WebSocket(tanyaWsUrl()); } catch { sendTanyaHttp(message, persona, convId, orgId); return; }
+  try { ws = new WebSocket(tanyaWsUrl()); } catch { sendTanyaHttp(message, persona, convId, orgId, modelRouting); return; }
   let finished = false;
-  const fallback = () => { if (!finished) sendTanyaHttp(message, persona, convId, orgId); };
+  const fallback = () => { if (!finished) sendTanyaHttp(message, persona, convId, orgId, modelRouting); };
   ws.onerror = fallback;
   ws.onclose = () => { if (!finished) fallback(); };
   ws.onopen = () => {
-    ws.send(JSON.stringify({ type: 'tanya.chat', message, persona, ...(convId ? { conversationId: convId } : {}), ...(orgId ? { orgId } : {}) }));
+    ws.send(JSON.stringify({ type: 'tanya.chat', message, persona, ...(convId ? { conversationId: convId } : {}), ...(orgId ? { orgId } : {}), ...(modelRouting ? { modelRouting: true } : {}) }));
   };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
@@ -998,9 +1000,9 @@ function sendTanya() {
     }
   };
 }
-async function sendTanyaHttp(message, persona, convId, orgId) {
+async function sendTanyaHttp(message, persona, convId, orgId, modelRouting) {
   try {
-    const result = await api('POST', '/tanya/chat', { message, persona, ...(convId ? { conversationId: convId } : {}), ...(orgId ? { orgId } : {}) });
+    const result = await api('POST', '/tanya/chat', { message, persona, ...(convId ? { conversationId: convId } : {}), ...(orgId ? { orgId } : {}), ...(modelRouting ? { modelRouting: true } : {}) });
     appendChatMessage('assistant', result.reply, result.toolCalls);
     state.conv = result.conversationId;
     const cSel = $('#tanya-conv');
