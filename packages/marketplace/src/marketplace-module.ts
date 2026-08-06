@@ -7,7 +7,7 @@ import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { DigitalMemoryModule } from '@jataqi/memory';
 import type { CommerceModule } from '@jataqi/commerce';
 import { MarketplaceEngine, type CreateListingInput, type ListListingsFilter, type RegisterStorefrontInput } from './engine.js';
-import type { Listing, ListingStatus, MarketplaceStats, Review, Storefront, StorefrontStatus } from './types.js';
+import type { Cart, Listing, ListingStatus, MarketplaceStats, Order, OrderStatus, Payout, Review, Storefront, StorefrontStatus } from './types.js';
 
 export const MarketplaceEvents = Object.freeze({
   StorefrontRegistered: 'marketplace.storefront.registered',
@@ -15,6 +15,10 @@ export const MarketplaceEvents = Object.freeze({
   ListingStatusChanged: 'marketplace.listing.status_changed',
   ReviewAdded: 'marketplace.review.added',
   PurchaseCompleted: 'marketplace.purchase.completed',
+  OrderCreated: 'marketplace.order.created',
+  OrderPaid: 'marketplace.order.paid',
+  OrderCancelled: 'marketplace.order.cancelled',
+  OrderRefunded: 'marketplace.order.refunded',
 } as const);
 
 export class MarketplaceModule implements IModule {
@@ -144,5 +148,75 @@ export class MarketplaceModule implements IModule {
 
   private tryModule<T extends IModule>(id: string): T | undefined {
     try { return this.api.getModule<T>(id); } catch { return undefined; }
+  }
+
+  // ---- MAZA purchase flows ------------------------------------------------
+
+  createCart(buyerId: string): Cart {
+    return this.engine.createCart(buyerId);
+  }
+  getCart(id: string): Cart | undefined { return this.engine.getCart(id); }
+  getCartForBuyer(buyerId: string): Cart | undefined { return this.engine.getCartForBuyer(buyerId); }
+
+  async addToCart(cartId: string, listingId: string, quantity = 1): Promise<Cart> {
+    const cart = this.engine.addToCart(cartId, listingId, quantity);
+    await this.recordMemory('marketplace_cart', `added listing ${listingId} ×${quantity} to cart`, {
+      cartId, listingId, quantity,
+    });
+    return cart;
+  }
+  removeFromCart(cartId: string, listingId: string): Cart { return this.engine.removeFromCart(cartId, listingId); }
+  clearCart(cartId: string): Cart { return this.engine.clearCart(cartId); }
+
+  /**
+   * Checkout a cart → paid order + per-vendor payouts. Emits
+   * marketplace.order.created / marketplace.order.paid and records memory.
+   */
+  async checkout(cartId: string): Promise<Order> {
+    const { order } = this.engine.checkout(cartId);
+    void this.api.bus.emit(MarketplaceEvents.OrderCreated, { id: order.id, buyerId: order.buyerId, totalMinor: order.totalMinor, currency: order.currency });
+    void this.api.bus.emit(MarketplaceEvents.OrderPaid, { id: order.id, buyerId: order.buyerId, totalMinor: order.totalMinor });
+    await this.recordMemory('marketplace_order', `checkout ${order.currency} ${order.totalMinor} (${order.items.length} item(s)) by ${order.buyerId}`, {
+      orderId: order.id, buyerId: order.buyerId, totalMinor: order.totalMinor,
+    });
+    return order;
+  }
+
+  async quickPurchase(listingId: string, buyerId: string): Promise<Order> {
+    const order = this.engine.quickPurchase(listingId, buyerId);
+    void this.api.bus.emit(MarketplaceEvents.OrderCreated, { id: order.id, buyerId: order.buyerId, listingId });
+    void this.api.bus.emit(MarketplaceEvents.OrderPaid, { id: order.id, buyerId: order.buyerId, listingId });
+    await this.recordMemory('marketplace_purchase', `quick purchase of listing ${listingId} by ${buyerId}`, {
+      orderId: order.id, listingId, buyerId,
+    });
+    return order;
+  }
+
+  getOrder(id: string): Order | undefined { return this.engine.getOrder(id); }
+  listOrders(filter?: { buyerId?: string; vendorId?: string; status?: OrderStatus }): Order[] {
+    return this.engine.listOrders(filter);
+  }
+
+  async cancelOrder(orderId: string, buyerId: string): Promise<Order> {
+    const order = this.engine.cancelOrder(orderId, buyerId);
+    void this.api.bus.emit(MarketplaceEvents.OrderCancelled, { id: order.id, buyerId });
+    await this.recordMemory('marketplace_order', `order ${order.id} cancelled (restocked)`, { orderId: order.id });
+    return order;
+  }
+
+  async refundOrder(orderId: string): Promise<Order> {
+    const order = this.engine.refundOrder(orderId);
+    void this.api.bus.emit(MarketplaceEvents.OrderRefunded, { id: order.id, buyerId: order.buyerId });
+    await this.recordMemory('marketplace_order', `order ${order.id} refunded (restocked, payouts voided)`, { orderId: order.id });
+    return order;
+  }
+
+  listPayouts(vendorId?: string, status?: Payout['status']): Payout[] {
+    return this.engine.listPayouts(vendorId, status);
+  }
+  markPayoutPaid(id: string): Payout | undefined { return this.engine.markPayoutPaid(id); }
+
+  orderAnalytics(): { orders: number; gmvMinor: number; commissionMinor: number; pendingPayoutsMinor: number } {
+    return this.engine.orderAnalytics();
   }
 }

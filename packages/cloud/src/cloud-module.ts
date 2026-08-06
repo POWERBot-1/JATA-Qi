@@ -6,7 +6,8 @@ import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { DigitalMemoryModule } from '@jataqi/memory';
 import { CloudEngine, type ProvisionInstanceInput, type RegisterFlavorInput, type RegisterRegionInput } from './engine.js';
 import type {
-  AutoscalingGroup, CloudStats, FirewallAction, FirewallDirection,
+  AutoscaleDecision, AutoscalingGroup, AutoscalingHistoryEntry, AutoscaleSignals,
+  CloudStats, FirewallAction, FirewallDirection,
   FirewallProtocol, FirewallRule, Flavor, FlavorTier, HostingPlan, HostingTier,
   Image, Instance, InstanceStatus, LoadBalancer, Region, Snapshot, Volume, Vpc,
 } from './types.js';
@@ -165,11 +166,24 @@ export class CloudModule implements IModule {
   }
   listAutoscalingGroups(): AutoscalingGroup[] { return this.engine.listAutoscalingGroups(); }
 
-  evaluateAutoscaling(groupId: string, load: number): { action: 'scale_out' | 'scale_in' | 'none'; count: number } {
+  evaluateAutoscaling(groupId: string, load: number | AutoscaleSignals): AutoscaleDecision {
     const result = this.engine.evaluateAutoscaling(groupId, load);
-    void this.api.bus.emit(CloudEvents.AutoscalingEvaluated, { groupId, action: result.action, count: result.count, load });
+    void this.api.bus.emit(CloudEvents.AutoscalingEvaluated, {
+      groupId, action: result.action, count: result.count,
+      signals: result.signals, reason: result.reason,
+    });
     return result;
   }
+
+  updateAutoscalingGroup(groupId: string, input: Parameters<CloudEngine['updateAutoscalingGroup']>[1]): AutoscalingGroup {
+    return this.engine.updateAutoscalingGroup(groupId, input);
+  }
+
+  autoscalingHistory(groupId?: string): AutoscalingHistoryEntry[] {
+    return this.engine.autoscalingHistory(groupId);
+  }
+
+  autoscalingCount(groupId: string): number { return this.engine.autoscalingCount(groupId); }
 
   stats(): CloudStats { return this.engine.stats(); }
 

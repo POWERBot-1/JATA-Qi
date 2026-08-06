@@ -4,7 +4,7 @@
 // provides the storefront/product layer only. Pure engine.
 
 import { randomUUID } from 'node:crypto';
-import type { Listing, ListingStatus, MarketplaceStats, Review, Storefront, StorefrontStatus } from './types.js';
+import type { Cart, Listing, ListingStatus, MarketplaceStats, Order, OrderItem, OrderStatus, Payout, Review, Storefront, StorefrontStatus } from './types.js';
 
 export interface RegisterStorefrontInput {
   vendorId: string;
@@ -38,6 +38,9 @@ export class MarketplaceEngine {
   private storefronts = new Map<string, Storefront>();
   private listings = new Map<string, Listing>();
   private reviews = new Map<string, Review>();
+  private carts = new Map<string, Cart>();
+  private orders = new Map<string, Order>();
+  private payouts: Payout[] = [];
 
   // ---- storefronts -------------------------------------------------------
 
@@ -190,6 +193,232 @@ export class MarketplaceEngine {
       ...(topCategory ? { topCategory } : {}),
     };
   }
+// ---- MAZA purchase flows: carts → checkout → orders → payouts -------------
+
+  // ---- carts -------------------------------------------------------------
+
+  createCart(buyerId: string): Cart {
+    if (!buyerId) throw new Error('buyerId is required');
+    const existing = this.getCartForBuyer(buyerId);
+    if (existing) return existing;
+    const cart: Cart = {
+      id: randomUUID(), buyerId, items: [], totalMinor: 0, currency: 'KES',
+      updatedAt: Date.now(), createdAt: Date.now(),
+    };
+    this.carts.set(cart.id, cart);
+    return cart;
+  }
+
+  getCart(id: string): Cart | undefined { return this.carts.get(id); }
+
+  getCartForBuyer(buyerId: string): Cart | undefined {
+    return [...this.carts.values()].find((c) => c.buyerId === buyerId);
+  }
+
+  addToCart(cartId: string, listingId: string, quantity = 1): Cart {
+    if (quantity < 1) throw new Error('quantity must be >= 1');
+    const cart = this.carts.get(cartId);
+    if (!cart) throw new Error(`unknown cart ${cartId}`);
+    const listing = this.listings.get(listingId);
+    if (!listing) throw new Error(`unknown listing ${listingId}`);
+    if (listing.status !== 'listed') throw new Error(`listing is ${listing.status}`);
+    if (listing.stock !== undefined && listing.stock < quantity) throw new Error(`only ${listing.stock} in stock`);
+    const existing = cart.items.find((i) => i.listingId === listingId);
+    if (existing) {
+      const nextQty = existing.quantity + quantity;
+      if (listing.stock !== undefined && listing.stock < nextQty) throw new Error(`only ${listing.stock} in stock`);
+      existing.quantity = nextQty;
+    } else {
+      cart.items.push({
+        listingId, title: listing.title, vendorId: listing.vendorId,
+        storefrontId: listing.storefrontId, priceMinor: listing.priceMinor,
+        currency: listing.currency, quantity,
+      });
+    }
+    this.recomputeCart(cart);
+    return cart;
+  }
+
+  removeFromCart(cartId: string, listingId: string): Cart {
+    const cart = this.carts.get(cartId);
+    if (!cart) throw new Error(`unknown cart ${cartId}`);
+    cart.items = cart.items.filter((i) => i.listingId !== listingId);
+    this.recomputeCart(cart);
+    return cart;
+  }
+
+  clearCart(cartId: string): Cart {
+    const cart = this.carts.get(cartId);
+    if (!cart) throw new Error(`unknown cart ${cartId}`);
+    cart.items = [];
+    cart.totalMinor = 0;
+    cart.updatedAt = Date.now();
+    return cart;
+  }
+
+  private recomputeCart(cart: Cart): void {
+    if (cart.items.length === 0) {
+      cart.totalMinor = 0;
+      cart.currency = 'KES';
+    } else {
+      const first = cart.items[0]!;
+      cart.currency = first.currency;
+      cart.totalMinor = cart.items.reduce((s, i) => s + i.priceMinor * i.quantity, 0);
+    }
+    cart.updatedAt = Date.now();
+  }
+
+  // ---- checkout + orders -------------------------------------------------
+
+  /**
+   * Checkout a cart: validates availability + stock, decrements inventory,
+   * creates a paid order, and generates per-vendor payouts (5% commission).
+   * Returns the order and clears the cart.
+   */
+  checkout(cartId: string): { order: Order; cart: Cart } {
+    const cart = this.carts.get(cartId);
+    if (!cart) throw new Error(`unknown cart ${cartId}`);
+    if (cart.items.length === 0) throw new Error('cart is empty');
+    const items: OrderItem[] = [];
+    for (const item of cart.items) {
+      const listing = this.listings.get(item.listingId);
+      if (!listing) throw new Error(`unknown listing ${item.listingId}`);
+      if (listing.status !== 'listed') throw new Error(`listing "${listing.title}" is ${listing.status}`);
+      if (listing.stock !== undefined && listing.stock < item.quantity) {
+        throw new Error(`only ${listing.stock} of "${listing.title}" in stock`);
+      }
+      if (listing.stock !== undefined) this.adjustStock(listing.id, -item.quantity);
+      items.push({
+        listingId: listing.id, title: listing.title, vendorId: listing.vendorId,
+        storefrontId: listing.storefrontId, priceMinor: listing.priceMinor,
+        currency: listing.currency, quantity: item.quantity,
+        lineTotalMinor: listing.priceMinor * item.quantity,
+      });
+    }
+    const totalMinor = items.reduce((s, i) => s + i.lineTotalMinor, 0);
+    const order: Order = {
+      id: randomUUID(), buyerId: cart.buyerId, items,
+      totalMinor, currency: cart.currency, status: 'paid',
+      commissionMinor: Math.round(totalMinor * 0.05),
+      createdAt: Date.now(), paidAt: Date.now(),
+    };
+    this.orders.set(order.id, order);
+    // Payouts per vendor line.
+    for (const item of items) {
+      const gross = item.lineTotalMinor;
+      const commission = Math.round(gross * 0.05);
+      this.payouts.push({
+        id: randomUUID(), vendorId: item.vendorId, orderId: order.id,
+        orderCreatedAt: order.createdAt, amountMinor: gross, currency: item.currency,
+        commissionMinor: commission, netMinor: gross - commission,
+        status: 'pending', createdAt: Date.now(),
+      });
+    }
+    this.clearCart(cart.id);
+    return { order, cart };
+  }
+
+  /** Backward-compat single-listing purchase → full order + payout. */
+  quickPurchase(listingId: string, buyerId: string): Order {
+    const listing = this.listings.get(listingId);
+    if (!listing) throw new Error(`unknown listing ${listingId}`);
+    if (listing.status !== 'listed') throw new Error(`listing is ${listing.status}`);
+    if (listing.stock !== undefined && listing.stock < 1) throw new Error('listing is out of stock');
+    if (listing.stock !== undefined) this.adjustStock(listing.id, -1);
+    const order: Order = {
+      id: randomUUID(), buyerId, listingId,
+      items: [{
+        listingId: listing.id, title: listing.title, vendorId: listing.vendorId,
+        storefrontId: listing.storefrontId, priceMinor: listing.priceMinor,
+        currency: listing.currency, quantity: 1, lineTotalMinor: listing.priceMinor,
+      }],
+      totalMinor: listing.priceMinor, currency: listing.currency, status: 'paid',
+      commissionMinor: Math.round(listing.priceMinor * 0.05),
+      createdAt: Date.now(), paidAt: Date.now(),
+    };
+    this.orders.set(order.id, order);
+    this.payouts.push({
+      id: randomUUID(), vendorId: listing.vendorId, orderId: order.id,
+      orderCreatedAt: order.createdAt, amountMinor: listing.priceMinor,
+      currency: listing.currency, commissionMinor: order.commissionMinor,
+      netMinor: listing.priceMinor - order.commissionMinor,
+      status: 'pending', createdAt: Date.now(),
+    });
+    return order;
+  }
+
+  getOrder(id: string): Order | undefined { return this.orders.get(id); }
+
+  listOrders(filter?: { buyerId?: string; vendorId?: string; status?: OrderStatus }): Order[] {
+    return [...this.orders.values()].filter((o) =>
+      (!filter?.buyerId || o.buyerId === filter.buyerId) &&
+      (!filter?.status || o.status === filter.status) &&
+      (!filter?.vendorId || o.items.some((i) => i.vendorId === filter.vendorId)))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** Cancel a pending order (restores stock). */
+  cancelOrder(orderId: string, buyerId: string): Order {
+    const order = this.orders.get(orderId);
+    if (!order) throw new Error(`unknown order ${orderId}`);
+    if (order.buyerId !== buyerId) throw new Error('order belongs to another buyer');
+    if (order.status !== 'pending') throw new Error(`order is ${order.status} — only pending orders can be cancelled`);
+    for (const item of order.items) {
+      const listing = this.listings.get(item.listingId);
+      if (listing?.stock !== undefined) this.adjustStock(listing.id, item.quantity);
+    }
+    order.status = 'cancelled';
+    order.cancelledAt = Date.now();
+    return order;
+  }
+
+  /** Refund a paid order (restores stock, voids pending payouts). */
+  refundOrder(orderId: string): Order {
+    const order = this.orders.get(orderId);
+    if (!order) throw new Error(`unknown order ${orderId}`);
+    if (order.status !== 'paid') throw new Error(`order is ${order.status} — only paid orders can be refunded`);
+    for (const item of order.items) {
+      const listing = this.listings.get(item.listingId);
+      if (listing?.stock !== undefined) this.adjustStock(listing.id, item.quantity);
+    }
+    order.status = 'refunded';
+    order.refundedAt = Date.now();
+    for (const payout of this.payouts) {
+      if (payout.orderId === order.id && payout.status === 'pending') {
+        payout.status = 'paid'; // voided: mark settled so it drops out of pending
+        payout.netMinor = 0;
+        payout.commissionMinor = 0;
+      }
+    }
+    return order;
+  }
+
+  // ---- payouts -----------------------------------------------------------
+
+  listPayouts(vendorId?: string, status?: Payout['status']): Payout[] {
+    return this.payouts.filter((p) =>
+      (!vendorId || p.vendorId === vendorId) &&
+      (!status || p.status === status));
+  }
+
+  markPayoutPaid(id: string): Payout | undefined {
+    const payout = this.payouts.find((p) => p.id === id);
+    if (!payout) return undefined;
+    payout.status = 'paid';
+    return payout;
+  }
+
+  /** Aggregate order analytics (additive to stats()). */
+  orderAnalytics(): { orders: number; gmvMinor: number; commissionMinor: number; pendingPayoutsMinor: number } {
+    const paid = [...this.orders.values()].filter((o) => o.status === 'paid');
+    return {
+      orders: this.orders.size,
+      gmvMinor: paid.reduce((s, o) => s + o.totalMinor, 0),
+      commissionMinor: paid.reduce((s, o) => s + o.commissionMinor, 0),
+      pendingPayoutsMinor: this.payouts.filter((p) => p.status === 'pending').reduce((s, p) => s + p.netMinor, 0),
+    };
+  }
+
 }
 
 function avg(values: number[]): number {

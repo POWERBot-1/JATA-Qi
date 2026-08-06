@@ -62,6 +62,8 @@ export class JataQiClient {
   readonly tanya: TanyaClient;
   readonly alerts: AlertsClient;
   readonly mobile: MobileClient;
+  readonly marketplace: MarketplaceClient;
+  readonly cloud: CloudClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -98,6 +100,8 @@ export class JataQiClient {
     this.tanya = new TanyaClient(this);
     this.alerts = new AlertsClient(this);
     this.mobile = new MobileClient(this);
+    this.marketplace = new MarketplaceClient(this);
+    this.cloud = new CloudClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -626,4 +630,80 @@ export class MFAClient {
   constructor(private c: JataQiClient) {}
   // MFA is accessed via direct module API, not gateway (no endpoints yet).
   // This namespace is reserved for future gateway endpoints.
+}
+
+// --- MAZA marketplace (purchase flows) --------------------------------------
+
+export class MarketplaceClient {
+  constructor(private c: JataQiClient) {}
+  async storefronts(): Promise<{ storefronts: unknown[]; count: number }> { return this.c.request('GET', '/marketplace/storefronts'); }
+  async registerStorefront(vendorId: string, name: string, opts: { description?: string; categories?: string[] } = {}): Promise<{ storefront: unknown }> {
+    return this.c.request('POST', '/marketplace/storefronts', { vendorId, name, ...opts });
+  }
+  async listings(opts: { category?: string; status?: string; query?: string; maxPrice?: number } = {}): Promise<{ listings: unknown[]; count: number }> {
+    return this.c.request('GET', '/marketplace/listings', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async createListing(input: { storefrontId: string; title: string; category: string; priceMinor: number; currency?: string; description?: string; stock?: number }): Promise<{ listing: unknown }> {
+    return this.c.request('POST', '/marketplace/listings', input);
+  }
+  async stats(): Promise<{ stats: unknown; analytics: unknown }> { return this.c.request('GET', '/marketplace/stats'); }
+  async cart(buyerId: string): Promise<{ cart: unknown }> { return this.c.request('POST', '/marketplace/cart', { buyerId }); }
+  async getCart(cartId: string): Promise<{ cart: unknown }> { return this.c.request('GET', '/marketplace/cart', undefined, { id: cartId }); }
+  async addToCart(cartId: string, listingId: string, quantity = 1): Promise<{ cart: unknown }> {
+    return this.c.request('POST', '/marketplace/cart/items', { cartId, listingId, quantity });
+  }
+  async removeFromCart(cartId: string, listingId: string): Promise<{ cart: unknown }> {
+    return this.c.request('POST', '/marketplace/cart/items/remove', { cartId, listingId });
+  }
+  async clearCart(cartId: string): Promise<{ cart: unknown }> { return this.c.request('POST', '/marketplace/cart/clear', { cartId }); }
+  async checkout(cartId: string): Promise<{ order: unknown }> { return this.c.request('POST', '/marketplace/checkout', { cartId }); }
+  async orders(opts: { buyerId?: string; vendorId?: string; status?: string } = {}): Promise<{ orders: unknown[]; count: number }> {
+    return this.c.request('GET', '/marketplace/orders', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async getOrder(orderId: string): Promise<{ order: unknown }> { return this.c.request('GET', '/marketplace/order', undefined, { id: orderId }); }
+  async cancelOrder(orderId: string, buyerId: string): Promise<{ order: unknown }> {
+    return this.c.request('POST', '/marketplace/order/cancel', { orderId, buyerId });
+  }
+  async refundOrder(orderId: string): Promise<{ order: unknown }> { return this.c.request('POST', '/marketplace/order/refund', { orderId }); }
+  async payouts(opts: { vendorId?: string; status?: string } = {}): Promise<{ payouts: unknown[]; count: number }> {
+    return this.c.request('GET', '/marketplace/payouts', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+}
+
+// --- Cloud (PRX Part E) ------------------------------------------------------
+
+export class CloudClient {
+  constructor(private c: JataQiClient) {}
+  async regions(): Promise<{ regions: unknown[]; count: number }> { return this.c.request('GET', '/cloud/regions'); }
+  async registerRegion(input: { name: string; code: string; country: string; zones: string[]; capacitySlots?: number }): Promise<{ region: unknown }> {
+    return this.c.request('POST', '/cloud/regions', input);
+  }
+  async flavors(): Promise<{ flavors: unknown[]; count: number }> { return this.c.request('GET', '/cloud/flavors'); }
+  async registerFlavor(input: { name: string; tier: string; vcpu: number; ramGb: number; diskGb: number; pricePerHourMinor: number; gpu?: number }): Promise<{ flavor: unknown }> {
+    return this.c.request('POST', '/cloud/flavors', input);
+  }
+  async images(): Promise<{ images: unknown[]; count: number }> { return this.c.request('GET', '/cloud/images'); }
+  async instances(opts: { regionId?: string; status?: string } = {}): Promise<{ instances: unknown[]; count: number }> {
+    return this.c.request('GET', '/cloud/instances', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async provisionInstance(input: { name: string; regionId: string; flavorId: string; imageId: string; vpcId?: string; autoscalingGroupId?: string }): Promise<{ instance: unknown }> {
+    return this.c.request('POST', '/cloud/instances', input);
+  }
+  async setInstanceStatus(instanceId: string, status: string): Promise<{ instance: unknown }> {
+    return this.c.request('POST', '/cloud/instances/status', { instanceId, status });
+  }
+  async autoscaleGroups(): Promise<{ groups: unknown[]; count: number }> { return this.c.request('GET', '/cloud/autoscaling'); }
+  async createAutoscaleGroup(input: { name: string; regionId: string; templateInstanceId: string; min: number; max: number; cpuHighThreshold?: number; cpuLowThreshold?: number; cooldownMs?: number; memoryHighThreshold?: number; memoryLowThreshold?: number; schedule?: unknown }): Promise<{ group: unknown }> {
+    return this.c.request('POST', '/cloud/autoscaling', input);
+  }
+  async evaluateAutoscale(groupId: string, load: { cpu?: number; memory?: number; requestsPerMinute?: number }): Promise<{ result: unknown }> {
+    return this.c.request('POST', '/cloud/autoscaling/evaluate', { groupId, ...load });
+  }
+  async updateAutoscaleGroup(groupId: string, input: Record<string, unknown>): Promise<{ group: unknown }> {
+    return this.c.request('POST', '/cloud/autoscaling/update', { groupId, ...input });
+  }
+  async autoscaleHistory(groupId?: string): Promise<{ decisions: unknown[]; count: number }> {
+    return this.c.request('GET', '/cloud/autoscaling/history', undefined, groupId ? { groupId } : undefined);
+  }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/cloud/stats'); }
 }

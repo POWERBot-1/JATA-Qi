@@ -896,6 +896,18 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/marketplace/purchases', auth('marketplace:write', (req) => this.marketplacePurchases(req)));
     route('GET', '/marketplace/categories', auth('marketplace:read', () => this.marketplaceCategories()));
     route('GET', '/marketplace/stats', auth('marketplace:read', () => this.marketplaceStats()));
+    // MAZA purchase flows: cart → checkout → orders → payouts.
+    route('POST', '/marketplace/cart', auth('marketplace:write', (req) => this.marketplaceCartGetOrCreate(req)));
+    route('GET', '/marketplace/cart', auth('marketplace:read', (req) => this.marketplaceCartGet(req)));
+    route('POST', '/marketplace/cart/items', auth('marketplace:write', (req) => this.marketplaceCartAdd(req)));
+    route('POST', '/marketplace/cart/items/remove', auth('marketplace:write', (req) => this.marketplaceCartRemove(req)));
+    route('POST', '/marketplace/cart/clear', auth('marketplace:write', (req) => this.marketplaceCartClear(req)));
+    route('POST', '/marketplace/checkout', auth('marketplace:write', (req) => this.marketplaceCheckout(req)));
+    route('GET', '/marketplace/orders', auth('marketplace:read', (req) => this.marketplaceOrdersList(req)));
+    route('GET', '/marketplace/order', auth('marketplace:read', (req) => this.marketplaceOrderGet(req)));
+    route('POST', '/marketplace/order/cancel', auth('marketplace:write', (req) => this.marketplaceOrderCancel(req)));
+    route('POST', '/marketplace/order/refund', auth('marketplace:write', (req) => this.marketplaceOrderRefund(req)));
+    route('GET', '/marketplace/payouts', auth('marketplace:read', (req) => this.marketplacePayoutsList(req)));
     // PRX Part E — Cloud Infrastructure Provider.
     route('POST', '/cloud/regions', auth('cloud:write', (req) => this.cloudRegionsRegister(req)));
     route('GET', '/cloud/regions', auth('cloud:read', (req) => this.cloudRegionsList(req)));
@@ -928,6 +940,8 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/cloud/autoscaling', auth('cloud:write', (req) => this.cloudAutoscalingCreate(req)));
     route('GET', '/cloud/autoscaling', auth('cloud:read', () => this.cloudAutoscalingList()));
     route('POST', '/cloud/autoscaling/evaluate', auth('cloud:write', (req) => this.cloudAutoscalingEvaluate(req)));
+    route('POST', '/cloud/autoscaling/update', auth('cloud:write', (req) => this.cloudAutoscalingUpdate(req)));
+    route('GET', '/cloud/autoscaling/history', auth('cloud:read', (req) => this.cloudAutoscalingHistory(req)));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -4560,6 +4574,12 @@ export class ApiGatewayModule implements IModule {
       name: b.name, regionId: b.regionId, templateInstanceId: b.templateInstanceId, min: b.min, max: b.max,
       ...(typeof b.cpuHighThreshold === 'number' ? { cpuHighThreshold: b.cpuHighThreshold } : {}),
       ...(typeof b.cpuLowThreshold === 'number' ? { cpuLowThreshold: b.cpuLowThreshold } : {}),
+      ...(typeof b.cooldownMs === 'number' ? { cooldownMs: b.cooldownMs } : {}),
+      ...(typeof b.memoryHighThreshold === 'number' ? { memoryHighThreshold: b.memoryHighThreshold } : {}),
+      ...(typeof b.memoryLowThreshold === 'number' ? { memoryLowThreshold: b.memoryLowThreshold } : {}),
+      ...(typeof b.requestsHigh === 'number' ? { requestsHigh: b.requestsHigh } : {}),
+      ...(typeof b.requestsLow === 'number' ? { requestsLow: b.requestsLow } : {}),
+      ...(Array.isArray(b.schedule) ? { schedule: b.schedule as never } : {}),
     }) });
   }
 
@@ -4572,10 +4592,44 @@ export class ApiGatewayModule implements IModule {
   private cloudAutoscalingEvaluate(req: GatewayRequest): GatewayResponse {
     if (!this.cloud) return json(501, { error: 'cloud module not registered' });
     const b = this.asObject(req.body);
-    if (typeof b.groupId !== 'string' || typeof b.load !== 'number')
-      return json(400, { error: 'fields "groupId" and "load" (0..1) are required' });
-    const result = this.cloud.evaluateAutoscaling(b.groupId, b.load);
+    if (typeof b.groupId !== 'string') return json(400, { error: 'field "groupId" is required' });
+    // Backward compatible: { load } (cpu) or { cpu, memory, requestsPerMinute }.
+    const signals: Record<string, number> = {};
+    for (const k of ['load', 'cpu', 'memory', 'requestsPerMinute'] as const) {
+      if (typeof b[k] === 'number') signals[k === 'load' ? 'cpu' : k] = b[k] as number;
+    }
+    if (Object.keys(signals).length === 0) return json(400, { error: 'provide load/cpu, memory, or requestsPerMinute' });
+    const result = this.cloud.evaluateAutoscaling(b.groupId, signals);
     return json(200, { result });
+  }
+
+  private cloudAutoscalingUpdate(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.groupId !== 'string') return json(400, { error: 'field "groupId" is required' });
+    try {
+      const group = this.cloud.updateAutoscalingGroup(b.groupId, {
+        ...(typeof b.min === 'number' ? { min: b.min } : {}),
+        ...(typeof b.max === 'number' ? { max: b.max } : {}),
+        ...(typeof b.cpuHighThreshold === 'number' ? { cpuHighThreshold: b.cpuHighThreshold } : {}),
+        ...(typeof b.cpuLowThreshold === 'number' ? { cpuLowThreshold: b.cpuLowThreshold } : {}),
+        ...(typeof b.cooldownMs === 'number' ? { cooldownMs: b.cooldownMs } : {}),
+        ...(typeof b.memoryHighThreshold === 'number' ? { memoryHighThreshold: b.memoryHighThreshold } : {}),
+        ...(typeof b.memoryLowThreshold === 'number' ? { memoryLowThreshold: b.memoryLowThreshold } : {}),
+        ...(typeof b.requestsHigh === 'number' ? { requestsHigh: b.requestsHigh } : {}),
+        ...(typeof b.requestsLow === 'number' ? { requestsLow: b.requestsLow } : {}),
+        ...(Array.isArray(b.schedule) ? { schedule: b.schedule as never } : {}),
+      });
+      return json(200, { group });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private cloudAutoscalingHistory(req: GatewayRequest): GatewayResponse {
+    if (!this.cloud) return json(501, { error: 'cloud module not registered' });
+    const decisions = this.cloud.autoscalingHistory(req.query.groupId);
+    return json(200, { decisions, count: decisions.length });
   }
 
   private cloudStats(): GatewayResponse {
@@ -5004,7 +5058,113 @@ export class ApiGatewayModule implements IModule {
 
   private marketplaceStats(): GatewayResponse {
     if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
-    return json(200, { stats: this.marketplace.stats() });
+    return json(200, { stats: this.marketplace.stats(), analytics: this.marketplace.orderAnalytics() });
+  }
+
+  // ---- MAZA purchase flows handlers --------------------------------------
+
+  private marketplaceCartGetOrCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.buyerId !== 'string') return json(400, { error: 'field "buyerId" is required' });
+    const cart = this.marketplace.getCartForBuyer(b.buyerId) ?? this.marketplace.createCart(b.buyerId);
+    return json(200, { cart });
+  }
+
+  private marketplaceCartGet(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const cart = this.marketplace.getCart(req.query.id ?? '');
+    return cart ? json(200, { cart }) : json(404, { error: 'cart not found' });
+  }
+
+  private async marketplaceCartAdd(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.cartId !== 'string' || typeof b.listingId !== 'string')
+      return json(400, { error: 'fields "cartId" and "listingId" are required' });
+    try {
+      const cart = await this.marketplace.addToCart(b.cartId, b.listingId, typeof b.quantity === 'number' ? b.quantity : 1);
+      return json(200, { cart });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private marketplaceCartRemove(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.cartId !== 'string' || typeof b.listingId !== 'string')
+      return json(400, { error: 'fields "cartId" and "listingId" are required' });
+    return json(200, { cart: this.marketplace.removeFromCart(b.cartId, b.listingId) });
+  }
+
+  private marketplaceCartClear(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.cartId !== 'string') return json(400, { error: 'field "cartId" is required' });
+    return json(200, { cart: this.marketplace.clearCart(b.cartId) });
+  }
+
+  private async marketplaceCheckout(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.cartId !== 'string') return json(400, { error: 'field "cartId" is required' });
+    try {
+      const order = await this.marketplace.checkout(b.cartId);
+      return json(200, { order });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private marketplaceOrdersList(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const orders = this.marketplace.listOrders({
+      ...(req.query.buyerId ? { buyerId: req.query.buyerId } : {}),
+      ...(req.query.vendorId ? { vendorId: req.query.vendorId } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { orders, count: orders.length });
+  }
+
+  private marketplaceOrderGet(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const order = this.marketplace.getOrder(req.query.id ?? '');
+    return order ? json(200, { order }) : json(404, { error: 'order not found' });
+  }
+
+  private async marketplaceOrderCancel(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.orderId !== 'string' || typeof b.buyerId !== 'string')
+      return json(400, { error: 'fields "orderId" and "buyerId" are required' });
+    try {
+      const order = await this.marketplace.cancelOrder(b.orderId, b.buyerId);
+      return json(200, { order });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async marketplaceOrderRefund(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.orderId !== 'string') return json(400, { error: 'field "orderId" is required' });
+    try {
+      const order = await this.marketplace.refundOrder(b.orderId);
+      return json(200, { order });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private marketplacePayoutsList(req: GatewayRequest): GatewayResponse {
+    if (!this.marketplace) return json(501, { error: 'marketplace module not registered' });
+    const payouts = this.marketplace.listPayouts(
+      req.query.vendorId,
+      req.query.status ? (req.query.status as never) : undefined,
+    );
+    return json(200, { payouts, count: payouts.length });
   }
 
   private async backupsList(req: GatewayRequest): Promise<GatewayResponse> {

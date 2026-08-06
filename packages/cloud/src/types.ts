@@ -146,6 +146,21 @@ export interface AutoscalingGroup {
   cpuLowThreshold: number;
   currentLoad: number;
   createdAt: number;
+  // ---- deep-dive (all optional → backward compatible) ---------------------
+  /** Min seconds between scale actions (anti-flapping). */
+  cooldownMs?: number;
+  /** Memory utilization thresholds (0..1). */
+  memoryHighThreshold?: number;
+  memoryLowThreshold?: number;
+  /** Requests-per-minute thresholds. */
+  requestsHigh?: number;
+  requestsLow?: number;
+  /** Time-of-day capacity override windows (local hours). */
+  schedule?: AutoscaleScheduleWindow[];
+  /** When the last scale action happened (cooldown bookkeeping). */
+  lastDecisionAt?: number;
+  /** Rollup of recent evaluation decisions. */
+  decisions?: AutoscaleDecision[];
 }
 
 export interface CloudStats {
@@ -164,4 +179,38 @@ export interface CloudStats {
   autoscalingGroups: number;
   capacityUsedPct: number;
   estimatedMonthlyRevenueMinor: number;
+}
+
+// ---- Autoscaling deep-dive: multi-signal thresholds, cooldowns, schedules,
+
+export interface AutoscaleScheduleWindow {
+  /** Local hour (0-23) when the window starts. */
+  startHour: number;
+  /** Local hour (0-23, exclusive) when the window ends. */
+  endHour: number;
+  /** Override min capacity during the window. */
+  min?: number;
+  /** Override max capacity during the window. */
+  max?: number;
+}
+
+export interface AutoscaleSignals {
+  /** CPU utilization 0..1. */
+  cpu?: number;
+  /** Memory utilization 0..1. */
+  memory?: number;
+  /** Requests per minute. */
+  requestsPerMinute?: number;
+}
+
+export interface AutoscaleDecision {
+  ts: number;
+  signals: AutoscaleSignals;
+  action: 'scale_out' | 'scale_in' | 'none';
+  count: number;
+  reason: string;
+}
+
+export interface AutoscalingHistoryEntry extends AutoscaleDecision {
+  groupId: string;
 }

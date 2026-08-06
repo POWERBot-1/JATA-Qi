@@ -5,7 +5,8 @@
 
 import { randomUUID } from 'node:crypto';
 import type {
-  AutoscalingGroup, CloudStats, FirewallAction, FirewallDirection,
+  AutoscaleDecision, AutoscalingGroup, AutoscalingHistoryEntry, AutoscaleScheduleWindow,
+  AutoscaleSignals, CloudStats, FirewallAction, FirewallDirection,
   FirewallProtocol, FirewallRule, Flavor, FlavorTier, HostingPlan, HostingTier,
   Image, Instance, InstanceStatus, LoadBalancer, Region, Snapshot, Volume, Vpc,
 } from './types.js';
@@ -367,6 +368,8 @@ export class CloudEngine {
   createAutoscalingGroup(input: {
     name: string; regionId: string; templateInstanceId: string;
     min: number; max: number; cpuHighThreshold?: number; cpuLowThreshold?: number;
+    cooldownMs?: number; memoryHighThreshold?: number; memoryLowThreshold?: number;
+    requestsHigh?: number; requestsLow?: number; schedule?: AutoscaleScheduleWindow[];
   }): AutoscalingGroup {
     const template = this.instances.get(input.templateInstanceId);
     if (!template) throw new Error(`unknown template instance ${input.templateInstanceId}`);
@@ -378,6 +381,12 @@ export class CloudEngine {
       cpuHighThreshold: input.cpuHighThreshold ?? 0.75,
       cpuLowThreshold: input.cpuLowThreshold ?? 0.25,
       currentLoad: 0, createdAt: Date.now(),
+      ...(input.cooldownMs !== undefined ? { cooldownMs: input.cooldownMs } : {}),
+      ...(input.memoryHighThreshold !== undefined ? { memoryHighThreshold: input.memoryHighThreshold } : {}),
+      ...(input.memoryLowThreshold !== undefined ? { memoryLowThreshold: input.memoryLowThreshold } : {}),
+      ...(input.requestsHigh !== undefined ? { requestsHigh: input.requestsHigh } : {}),
+      ...(input.requestsLow !== undefined ? { requestsLow: input.requestsLow } : {}),
+      ...(input.schedule !== undefined ? { schedule: input.schedule } : {}),
     };
     this.autoscalingGroups.set(group.id, group);
     return group;
@@ -387,19 +396,100 @@ export class CloudEngine {
   listAutoscalingGroups(): AutoscalingGroup[] { return [...this.autoscalingGroups.values()]; }
 
   /**
-   * Evaluate an autoscaling group against the current load (0..1). Scales out
-   * when load > cpuHighThreshold and count < max; scales in when load <
-   * cpuLowThreshold and count > min (terminating the newest scaled instance).
+   * Update an autoscaling group (thresholds, bounds, cooldown, schedule).
+   * Only provided fields are changed.
    */
-  evaluateAutoscaling(groupId: string, load: number): { action: 'scale_out' | 'scale_in' | 'none'; count: number } {
+  updateAutoscalingGroup(groupId: string, input: {
+    min?: number; max?: number; cpuHighThreshold?: number; cpuLowThreshold?: number;
+    cooldownMs?: number; memoryHighThreshold?: number; memoryLowThreshold?: number;
+    requestsHigh?: number; requestsLow?: number; schedule?: AutoscaleScheduleWindow[];
+  }): AutoscalingGroup {
     const group = this.autoscalingGroups.get(groupId);
     if (!group) throw new Error(`unknown autoscaling group ${groupId}`);
-    group.currentLoad = load;
-    const members = this.listInstances({ autoscalingGroupId: groupId } as never)
-      .filter((i) => i.autoscalingGroupId === groupId && i.status !== 'terminated');
-    const template = this.getInstance(group.templateInstanceId)!;
+    const min = input.min ?? group.min;
+    const max = input.max ?? group.max;
+    if (min < 0 || max < min) throw new Error('valid min/max required');
+    group.min = min; group.max = max;
+    if (input.cpuHighThreshold !== undefined) group.cpuHighThreshold = input.cpuHighThreshold;
+    if (input.cpuLowThreshold !== undefined) group.cpuLowThreshold = input.cpuLowThreshold;
+    if (input.cooldownMs !== undefined) group.cooldownMs = input.cooldownMs;
+    if (input.memoryHighThreshold !== undefined) group.memoryHighThreshold = input.memoryHighThreshold;
+    if (input.memoryLowThreshold !== undefined) group.memoryLowThreshold = input.memoryLowThreshold;
+    if (input.requestsHigh !== undefined) group.requestsHigh = input.requestsHigh;
+    if (input.requestsLow !== undefined) group.requestsLow = input.requestsLow;
+    if (input.schedule !== undefined) group.schedule = input.schedule;
+    return group;
+  }
 
-    if (load > group.cpuHighThreshold && members.length < group.max) {
+  /** Decision history for a group (newest first). */
+  autoscalingHistory(groupId?: string): AutoscalingHistoryEntry[] {
+    const entries: AutoscalingHistoryEntry[] = [];
+    for (const g of this.autoscalingGroups.values()) {
+      if (groupId && g.id !== groupId) continue;
+      for (const d of g.decisions ?? []) entries.push({ groupId: g.id, ...d });
+    }
+    return entries.sort((a, b) => b.ts - a.ts);
+  }
+
+  /** Current capacity (non-terminated members) of a group. */
+  autoscalingCount(groupId: string): number {
+    return this.listInstances({ autoscalingGroupId: groupId } as never)
+      .filter((i) => i.autoscalingGroupId === groupId && i.status !== 'terminated').length;
+  }
+
+  /**
+   * Evaluate an autoscaling group against live signals. Backward compatible:
+   * a plain number is treated as CPU utilization (0..1). Multi-signal mode
+   * scales out when ANY high threshold is exceeded and scales in when ALL
+   * provided signals are below their low thresholds. Cooldown enforcement
+   * (cooldownMs) and time-of-day schedule capacity overrides apply.
+   * Every evaluation is appended to the group's decision history.
+   */
+  evaluateAutoscaling(
+    groupId: string,
+    load: number | AutoscaleSignals,
+  ): AutoscaleDecision {
+    const group = this.autoscalingGroups.get(groupId);
+    if (!group) throw new Error(`unknown autoscaling group ${groupId}`);
+    const signals: AutoscaleSignals = typeof load === 'number' ? { cpu: load } : load;
+    const cpu = signals.cpu;
+    group.currentLoad = cpu ?? group.currentLoad;
+
+    // Effective min/max: schedule windows override when the current local hour
+    // falls inside a window.
+    let min = group.min;
+    let max = group.max;
+    const hour = new Date().getHours();
+    for (const w of group.schedule ?? []) {
+      if (hour >= w.startHour && hour < w.endHour) {
+        if (w.min !== undefined) min = Math.max(min, w.min);
+        if (w.max !== undefined) max = Math.min(max, w.max);
+      }
+    }
+
+    const members = this.autoscalingCount(groupId);
+    const template = this.getInstance(group.templateInstanceId)!;
+    const now = Date.now();
+
+    const record = (action: AutoscaleDecision['action'], count: number, reason: string): AutoscaleDecision => {
+      const decision: AutoscaleDecision = { ts: now, signals, action, count, reason };
+      group.lastDecisionAt = action === 'none' ? group.lastDecisionAt : now;
+      group.decisions = [...(group.decisions ?? []), decision].slice(-50);
+      return decision;
+    };
+
+    // Cooldown: no scale action within cooldownMs of the last one.
+    if (group.cooldownMs !== undefined && group.lastDecisionAt !== undefined &&
+        now - group.lastDecisionAt < group.cooldownMs && members !== min && members !== max) {
+      return record('none', members, `cooldown (${Math.round((group.cooldownMs - (now - group.lastDecisionAt!)) / 1000)}s remaining)`);
+    }
+
+    const high =
+      (cpu !== undefined && cpu > group.cpuHighThreshold) ||
+      (signals.memory !== undefined && group.memoryHighThreshold !== undefined && signals.memory > group.memoryHighThreshold) ||
+      (signals.requestsPerMinute !== undefined && group.requestsHigh !== undefined && signals.requestsPerMinute > group.requestsHigh);
+
+    if (high && members < max) {
       this.provisionInstance({
         name: `${template.name}-scale`,
         regionId: group.regionId,
@@ -407,15 +497,30 @@ export class CloudEngine {
         imageId: template.imageId,
         autoscalingGroupId: groupId,
       });
-      return { action: 'scale_out', count: members.length + 1 };
+      return record('scale_out', members + 1, `signal(s) above high threshold (cpu=${cpu}, mem=${signals.memory}, rpm=${signals.requestsPerMinute})`);
     }
-    if (load < group.cpuLowThreshold && members.length > group.min) {
+
+    const lowAll = (() => {
+      let provided = 0;
+      let below = 0;
+      if (cpu !== undefined) { provided++; if (cpu < group.cpuLowThreshold) below++; }
+      if (signals.memory !== undefined && group.memoryLowThreshold !== undefined) { provided++; if (signals.memory < group.memoryLowThreshold) below++; }
+      if (signals.requestsPerMinute !== undefined && group.requestsLow !== undefined) { provided++; if (signals.requestsPerMinute < group.requestsLow) below++; }
+      return provided > 0 && below === provided;
+    })();
+
+    if (lowAll && members > min) {
       // Terminate the newest member (oldest template stays).
-      const newest = [...members].sort((a, b) => b.createdAt - a.createdAt)[0];
+      const newest = [...this.listInstances({ autoscalingGroupId: groupId } as never)
+        .filter((i) => i.autoscalingGroupId === groupId && i.status !== 'terminated')]
+        .sort((a, b) => b.createdAt - a.createdAt)[0];
       if (newest) this.terminateInstance(newest.id);
-      return { action: 'scale_in', count: members.length - 1 };
+      return record('scale_in', members - 1, `all signals below low threshold`);
     }
-    return { action: 'none', count: members.length };
+
+    if (high) return record('none', members, `at max capacity (${members}/${max})`);
+    if (lowAll) return record('none', members, `at min capacity (${members}/${min})`);
+    return record('none', members, `within thresholds`);
   }
 
   // ---- analytics ---------------------------------------------------------

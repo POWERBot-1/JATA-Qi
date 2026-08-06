@@ -184,3 +184,126 @@ describe('CloudModule', () => {
     }
   });
 });
+
+describe('Autoscaling deep dive (multi-signal, cooldown, schedule, history)', () => {
+  function setup() {
+    const c = new CloudEngine();
+    const { region, vps, ubuntu } = seedCatalog(c);
+    const template = c.provisionInstance({ name: 'web-template', regionId: region.id, flavorId: vps.id, imageId: ubuntu.id });
+    return { c, region, template };
+  }
+
+  it('scales out on any high signal and records decision history', () => {
+    const { c, template } = setup();
+    const g = c.createAutoscalingGroup({
+      name: 'web', regionId: template.regionId, templateInstanceId: template.id,
+      min: 1, max: 4, cpuHighThreshold: 0.7, cpuLowThreshold: 0.2,
+      memoryHighThreshold: 0.8, memoryLowThreshold: 0.3,
+    });
+    // CPU low → within thresholds.
+    const none = c.evaluateAutoscaling(g.id, { cpu: 0.5 });
+    assert.equal(none.action, 'none');
+    // Memory high → scale out even though CPU is low.
+    const out = c.evaluateAutoscaling(g.id, { cpu: 0.5, memory: 0.9 });
+    assert.equal(out.action, 'scale_out');
+    assert.equal(out.count, 1);
+    assert.equal(c.autoscalingCount(g.id), 1);
+    // History recorded with signals (assert by content — evaluations can share a ms).
+    const history = c.autoscalingHistory(g.id);
+    assert.equal(history.length, 2);
+    const outEntry = history.find((h) => h.action === 'scale_out')!;
+    assert.deepEqual(outEntry.signals, { cpu: 0.5, memory: 0.9 });
+  });
+
+  it('scales in only when ALL provided signals are below low thresholds', () => {
+    const { c, template } = setup();
+    const g = c.createAutoscalingGroup({
+      name: 'web', regionId: template.regionId, templateInstanceId: template.id,
+      min: 1, max: 3, cpuHighThreshold: 0.7, cpuLowThreshold: 0.2,
+      memoryHighThreshold: 0.8, memoryLowThreshold: 0.3, requestsHigh: 1000, requestsLow: 100,
+    });
+    c.evaluateAutoscaling(g.id, { cpu: 0.9, memory: 0.2, requestsPerMinute: 50 });
+    assert.equal(c.autoscalingCount(g.id), 1, 'scaled out on cpu');
+    c.evaluateAutoscaling(g.id, { cpu: 0.9, memory: 0.2, requestsPerMinute: 50 });
+    assert.equal(c.autoscalingCount(g.id), 2, 'scaled out again');
+    // CPU low but memory high → still scales out (memory breaches its high threshold).
+    const hold = c.evaluateAutoscaling(g.id, { cpu: 0.1, memory: 0.9, requestsPerMinute: 10 });
+    assert.equal(hold.action, 'scale_out');
+    assert.equal(c.autoscalingCount(g.id), 3, 'now at max');
+    // All low → scale in.
+    const in1 = c.evaluateAutoscaling(g.id, { cpu: 0.1, memory: 0.2, requestsPerMinute: 10 });
+    assert.equal(in1.action, 'scale_in');
+    assert.equal(c.autoscalingCount(g.id), 2);
+    // Still all low → scale in again.
+    const in2 = c.evaluateAutoscaling(g.id, { cpu: 0.1, memory: 0.2, requestsPerMinute: 10 });
+    assert.equal(in2.action, 'scale_in');
+    assert.equal(c.autoscalingCount(g.id), 1);
+    // At min → none.
+    const atMin = c.evaluateAutoscaling(g.id, { cpu: 0.1, memory: 0.2, requestsPerMinute: 10 });
+    assert.equal(atMin.action, 'none');
+    assert.equal(atMin.reason, 'at min capacity (1/1)');
+  });
+
+  it('enforces cooldown between scale actions (anti-flapping)', () => {
+    const { c, template } = setup();
+    const g = c.createAutoscalingGroup({
+      name: 'web', regionId: template.regionId, templateInstanceId: template.id,
+      min: 0, max: 3, cooldownMs: 60_000,
+    });
+    assert.equal(c.evaluateAutoscaling(g.id, 0.95).action, 'scale_out');
+    const second = c.evaluateAutoscaling(g.id, 0.95);
+    assert.equal(second.action, 'none');
+    assert.match(second.reason, /cooldown/);
+  });
+
+  it('respects legacy single-number load and the min/max bounds', () => {
+    const { c, template } = setup();
+    const g = c.createAutoscalingGroup({
+      name: 'web', regionId: template.regionId, templateInstanceId: template.id,
+      min: 1, max: 2,
+    });
+    assert.equal(c.evaluateAutoscaling(g.id, 0.99).action, 'scale_out');
+    assert.equal(c.evaluateAutoscaling(g.id, 0.99).action, 'scale_out');
+    const capped = c.evaluateAutoscaling(g.id, 0.99);
+    assert.equal(capped.action, 'none');
+    assert.match(capped.reason, /at max capacity/);
+    assert.equal(c.autoscalingCount(g.id), 2);
+  });
+
+  it('updates groups and clears/keeps history', () => {
+    const { c, template } = setup();
+    const g = c.createAutoscalingGroup({
+      name: 'web', regionId: template.regionId, templateInstanceId: template.id,
+      min: 1, max: 2,
+    });
+    const updated = c.updateAutoscalingGroup(g.id, { max: 5, cooldownMs: 30_000, cpuHighThreshold: 0.6 });
+    assert.equal(updated.max, 5);
+    assert.equal(updated.cooldownMs, 30_000);
+    assert.equal(updated.cpuHighThreshold, 0.6);
+    assert.throws(() => c.updateAutoscalingGroup(g.id, { max: 0 }), /min\/max/);
+    c.evaluateAutoscaling(g.id, 0.99);
+    assert.equal(c.autoscalingHistory(g.id).length, 1);
+  });
+
+  it('module emits cloud.autoscaling.evaluated with signals', async () => {
+    const kernel = createTestKernel();
+    try {
+      kernel.register(new StorageModule());
+      kernel.register(new DigitalMemoryModule());
+      kernel.register(new CloudModule());
+      await kernel.boot();
+      const cloud = kernel.getModule<CloudModule>('cloud');
+      const { region, vps, ubuntu } = seedCatalog(cloud.engine);
+      const template = await cloud.provisionInstance({ name: 'tpl', regionId: region.id, flavorId: vps.id, imageId: ubuntu.id });
+      const group = cloud.createAutoscalingGroup({ name: 'web', regionId: region.id, templateInstanceId: template.id, min: 1, max: 3 });
+      const events: Array<Record<string, unknown>> = [];
+      kernel.bus.on('cloud.autoscaling.evaluated', (e: Record<string, unknown>) => { events.push(e); });
+      cloud.evaluateAutoscaling(group.id, { cpu: 0.95 });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].action, 'scale_out');
+      assert.deepEqual(events[0].signals, { cpu: 0.95 });
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+});

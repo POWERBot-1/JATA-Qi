@@ -76,7 +76,7 @@ Commands:
   energy <sub>        KARIS ENERGY: assets|asset|meters|reading|tariffs|bill|stats.
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
-  maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|categories|stats.
+  maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
   cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
@@ -1434,14 +1434,79 @@ async function main() {
             console.log(r.ok ? `purchased (order ${r.orderId ?? 'local'})` : `failed: ${r.error}`);
             break;
           }
+          case 'cart': {
+            const buyer = args[2];
+            if (!buyer) { console.error('Usage: jataqi maza cart <buyerId>'); process.exit(1); }
+            const cart = marketplace.getCartForBuyer(buyer) ?? marketplace.createCart(buyer);
+            for (const i of cart.items) console.log(`- ${i.title} ×${i.quantity} = ${i.priceMinor * i.quantity} ${i.currency}`);
+            console.log(`total ${cart.totalMinor} ${cart.currency} (cart ${cart.id})`);
+            break;
+          }
+          case 'add': {
+            const cartId = args[2], listingId = args[3], qty = args[4];
+            if (!cartId || !listingId) { console.error('Usage: jataqi maza add <cartId> <listingId> [qty]'); process.exit(1); }
+            try {
+              const cart = await marketplace.addToCart(cartId, listingId, qty ? Number(qty) : 1);
+              console.log(`cart ${cart.id}: ${cart.items.length} item(s), total ${cart.totalMinor} ${cart.currency}`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'checkout': {
+            const cartId = args[2];
+            if (!cartId) { console.error('Usage: jataqi maza checkout <cartId>'); process.exit(1); }
+            try {
+              const order = await marketplace.checkout(cartId);
+              console.log(`order ${order.id} paid — ${order.totalMinor} ${order.currency} (${order.items.length} item(s))`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'orders': {
+            const orders = marketplace.listOrders({ ...(flag('buyer') ? { buyerId: flag('buyer') } : {}), ...(flag('vendor') ? { vendorId: flag('vendor') } : {}), ...(flag('status') ? { status: flag('status') as never } : {}) });
+            for (const o of orders) console.log(`- ${o.id} ${o.status} ${o.totalMinor} ${o.currency} buyer=${o.buyerId} (${o.items.length} item(s))`);
+            console.log(`${orders.length} order(s)`);
+            break;
+          }
+          case 'order': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi maza order <orderId>'); process.exit(1); }
+            const o = marketplace.getOrder(id);
+            if (!o) { console.log('order not found'); break; }
+            for (const i of o.items) console.log(`- ${i.title} ×${i.quantity} ${i.lineTotalMinor} ${i.currency}`);
+            console.log(`status=${o.status} total=${o.totalMinor} ${o.currency} commission=${o.commissionMinor}`);
+            break;
+          }
+          case 'cancel': {
+            const orderId = args[2], buyer = args[3];
+            if (!orderId || !buyer) { console.error('Usage: jataqi maza cancel <orderId> <buyerId>'); process.exit(1); }
+            try {
+              const o = await marketplace.cancelOrder(orderId, buyer);
+              console.log(`order ${o.id} ${o.status}`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'refund': {
+            const orderId = args[2];
+            if (!orderId) { console.error('Usage: jataqi maza refund <orderId>'); process.exit(1); }
+            try {
+              const o = await marketplace.refundOrder(orderId);
+              console.log(`order ${o.id} ${o.status} (stock restored)`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'payouts': {
+            const payouts = marketplace.listPayouts(flag('vendor'), flag('status') as never);
+            for (const p of payouts) console.log(`- ${p.id} ${p.status} net=${p.netMinor} ${p.currency} (order ${p.orderId.slice(0, 8)})`);
+            console.log(`${payouts.length} payout(s)`);
+            break;
+          }
           case 'categories':
             console.log(marketplace.categories().join(', '));
             break;
           case 'stats':
-            console.log(JSON.stringify(marketplace.stats(), null, 2));
+            console.log(JSON.stringify({ ...marketplace.stats(), analytics: marketplace.orderAnalytics() }, null, 2));
             break;
           default:
-            console.error('Usage: jataqi maza storefronts|storefront|listings|listing|review|purchase|categories|stats'); process.exit(1);
+            console.error('Usage: jataqi maza storefronts|storefront|listings|listing|review|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats'); process.exit(1);
         }
         break;
       }
@@ -1554,15 +1619,44 @@ async function main() {
             break;
           case 'autoscale': {
             const groupId = args[2], load = args[3];
-            if (!groupId || !load) { console.error('Usage: jataqi cloud autoscale <groupId> <load 0..1>'); process.exit(1); }
-            console.log(JSON.stringify(cloud.evaluateAutoscaling(groupId, Number(load))));
+            if (!groupId || !load) { console.error('Usage: jataqi cloud autoscale <groupId> <load 0..1> [--memory x] [--rpm n]'); process.exit(1); }
+            const signals: Record<string, number> = { cpu: Number(load) };
+            if (flag('memory')) signals.memory = Number(flag('memory'));
+            if (flag('rpm')) signals.requestsPerMinute = Number(flag('rpm'));
+            console.log(JSON.stringify(cloud.evaluateAutoscaling(groupId, signals)));
+            break;
+          }
+          case 'autoscale-groups': {
+            for (const g of cloud.listAutoscalingGroups()) console.log(`- ${g.name} (${g.id}) min=${g.min} max=${g.max} cpu${g.cpuHighThreshold}/${g.cpuLowThreshold} load=${g.currentLoad}${g.cooldownMs ? ` cooldown=${g.cooldownMs}ms` : ''}`);
+            console.log(`${cloud.listAutoscalingGroups().length} group(s)`);
+            break;
+          }
+          case 'autoscale-update': {
+            const groupId = args[2];
+            if (!groupId) { console.error('Usage: jataqi cloud autoscale-update <groupId> [--min n] [--max n] [--cpu-high x] [--cpu-low x] [--cooldown ms]'); process.exit(1); }
+            try {
+              const g = cloud.updateAutoscalingGroup(groupId, {
+                ...(flag('min') ? { min: Number(flag('min')) } : {}),
+                ...(flag('max') ? { max: Number(flag('max')) } : {}),
+                ...(flag('cpu-high') ? { cpuHighThreshold: Number(flag('cpu-high')) } : {}),
+                ...(flag('cpu-low') ? { cpuLowThreshold: Number(flag('cpu-low')) } : {}),
+                ...(flag('cooldown') ? { cooldownMs: Number(flag('cooldown')) } : {}),
+              });
+              console.log(`updated ${g.name}: min=${g.min} max=${g.max}`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'autoscale-history': {
+            const entries = cloud.autoscalingHistory(flag('group'));
+            for (const e of entries) console.log(`- ${new Date(e.ts).toISOString()} ${e.action} count=${e.count} cpu=${e.signals.cpu} reason=${e.reason}`);
+            console.log(`${entries.length} decision(s)`);
             break;
           }
           case 'stats':
             console.log(JSON.stringify(cloud.stats(), null, 2));
             break;
           default:
-            console.error('Usage: jataqi cloud regions|region|flavors|flavor|images|image|instances|instance|volumes|volume|vpcs|vpc|firewall|lbs|hosting|plans|autoscale|stats'); process.exit(1);
+            console.error('Usage: jataqi cloud regions|region|flavors|flavor|images|image|instances|instance|volumes|volume|vpcs|vpc|firewall|lbs|hosting|plans|autoscale|autoscale-groups|autoscale-update|autoscale-history|stats'); process.exit(1);
         }
         break;
       }

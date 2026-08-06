@@ -8,5 +8,6 @@ export type {
   Region, Flavor, FlavorTier, Image, Instance, InstanceStatus, Volume,
   Snapshot, Vpc, FirewallRule, FirewallAction, FirewallDirection,
   FirewallProtocol, LoadBalancer, HostingPlan, HostingTier,
-  AutoscalingGroup, CloudStats,
+  AutoscalingGroup, AutoscaleSignals, AutoscaleDecision, AutoscalingHistoryEntry,
+  AutoscaleScheduleWindow, CloudStats,
 } from './types.js';

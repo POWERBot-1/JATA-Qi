@@ -244,6 +244,7 @@ const NAV = [
   { id: 'models', label: 'Models', icon: '🧠' },
   { id: 'knowledge', label: 'Knowledge', icon: '📚' },
   { id: 'commerce', label: 'Commerce', icon: '💳' },
+  { id: 'maza', label: 'MAZA', icon: '🛒' },
   { id: 'organizations', label: 'Organizations', icon: '🏢' },
   { id: 'orgs', label: 'My Orgs', icon: '👥' },
   { id: 'notifications', label: 'Notifications', icon: '🔔' },
@@ -424,13 +425,29 @@ const VIEWS = {
     };
   },
   cloud: async () => {
-    const [stats, instances, regions] = await Promise.allSettled([
+    const [stats, instances, regions, autoscale, history] = await Promise.allSettled([
       api('GET', '/cloud/stats'), api('GET', '/cloud/instances'), api('GET', '/cloud/regions'),
+      api('GET', '/cloud/autoscaling'), api('GET', '/cloud/autoscaling/history'),
     ]);
     return {
       stats: stats.status === 'fulfilled' ? stats.value.stats : null,
       instances: instances.status === 'fulfilled' ? instances.value.instances : [],
       regions: regions.status === 'fulfilled' ? regions.value.regions : [],
+      autoscale: autoscale.status === 'fulfilled' ? autoscale.value.groups : [],
+      history: history.status === 'fulfilled' ? history.value.decisions : [],
+    };
+  },
+  maza: async () => {
+    const [stats, listings, orders, payouts] = await Promise.allSettled([
+      api('GET', '/marketplace/stats'), api('GET', '/marketplace/listings'),
+      api('GET', '/marketplace/orders'), api('GET', '/marketplace/payouts'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      analytics: stats.status === 'fulfilled' ? stats.value.analytics : null,
+      listings: listings.status === 'fulfilled' ? listings.value.listings : [],
+      orders: orders.status === 'fulfilled' ? orders.value.orders : [],
+      payouts: payouts.status === 'fulfilled' ? payouts.value.payouts : [],
     };
   },
   cdn: async () => {
@@ -704,7 +721,25 @@ function renderView(view, data) {
       ${statCard('Hosting Plans', s.hostingPlans ?? null)}
     </div>
     <div class="card"><div class="card-title">Regions</div>${tableFrom(data.regions, ['id', 'name', 'code', 'country', 'status', 'capacitySlots', 'usedSlots'])}</div>
-    <div class="card"><div class="card-title">Instances</div>${tableFrom(data.instances, ['id', 'name', 'status', 'regionId', 'flavorId', 'publicIp'])}</div>`;
+    <div class="card"><div class="card-title">Instances</div>${tableFrom(data.instances, ['id', 'name', 'status', 'regionId', 'flavorId', 'publicIp'])}</div>
+    <div class="card"><div class="card-title">Autoscaling Groups (${(data.autoscale || []).length})</div>
+      ${tableFrom(data.autoscale, ['name', 'min', 'max', 'cpuHighThreshold', 'cpuLowThreshold', 'currentLoad', 'cooldownMs'])}
+      ${(data.history || []).length ? `<div class="subtitle">Decision history (latest 10)</div>${tableFrom(data.history.slice(0, 10), ['ts', 'action', 'count', 'reason'])}` : ''}
+    </div>`;
+  } else if (view === 'maza') {
+    const s = data.stats || {};
+    const a = data.analytics || {};
+    html += `<div class="stat-grid">
+      ${statCard('Storefronts', s.storefronts ?? null)}
+      ${statCard('Listings', s.listedListings ?? null)}
+      ${statCard('Orders', a.orders ?? data.orders?.length ?? 0)}
+      ${statCard('GMV', a.gmvMinor != null ? (a.gmvMinor / 100).toFixed(2) : null)}
+      ${statCard('Pending Payouts', a.pendingPayoutsMinor != null ? (a.pendingPayoutsMinor / 100).toFixed(2) : null)}
+      ${statCard('Reviews', s.reviews ?? null)}
+    </div>
+    <div class="card"><div class="card-title">Listings (${(data.listings || []).length})</div>${tableFrom(data.listings, ['title', 'category', 'priceMinor', 'currency', 'status', 'stock', 'rating'])}</div>
+    <div class="card"><div class="card-title">Orders (${(data.orders || []).length})</div>${tableFrom(data.orders, ['id', 'buyerId', 'totalMinor', 'currency', 'status', 'createdAt'])}</div>
+    <div class="card"><div class="card-title">Payouts (${(data.payouts || []).length})</div>${tableFrom(data.payouts, ['vendorId', 'amountMinor', 'commissionMinor', 'netMinor', 'status'])}</div>`;
   } else if (view === 'cdn') {
     const s = data.stats || {};
     html += `<div class="stat-grid">

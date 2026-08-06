@@ -59,3 +59,69 @@ export interface MarketplaceStats {
   avgListingPriceMinor?: number;
   topCategory?: { category: string; count: number };
 }
+
+// ---- MAZA purchase flows (cart → checkout → orders → payouts) -------------
+
+export interface CartItem {
+  listingId: string;
+  title: string;
+  vendorId: string;
+  storefrontId: string;
+  priceMinor: number;
+  currency: string;
+  quantity: number;
+}
+
+export interface Cart {
+  id: string;
+  buyerId: string;
+  items: CartItem[];
+  totalMinor: number;
+  currency: string;
+  updatedAt: number;
+  createdAt: number;
+}
+
+export type OrderStatus = 'pending' | 'paid' | 'cancelled' | 'refunded';
+
+export interface OrderItem {
+  listingId: string;
+  title: string;
+  vendorId: string;
+  storefrontId: string;
+  priceMinor: number;
+  currency: string;
+  quantity: number;
+  lineTotalMinor: number;
+}
+
+export interface Order {
+  id: string;
+  buyerId: string;
+  items: OrderItem[];
+  totalMinor: number;
+  currency: string;
+  status: OrderStatus;
+  /** 5% platform commission (minor units, per seller). */
+  commissionMinor: number;
+  createdAt: number;
+  paidAt?: number;
+  cancelledAt?: number;
+  refundedAt?: number;
+  /** Backward-compat: quick purchases land here too. */
+  listingId?: string;
+}
+
+export interface Payout {
+  id: string;
+  vendorId: string;
+  orderId: string;
+  orderCreatedAt: number;
+  /** Gross seller share before commission. */
+  amountMinor: number;
+  currency: string;
+  commissionMinor: number;
+  netMinor: number;
+  status: 'pending' | 'paid';
+  createdAt: number;
+}
