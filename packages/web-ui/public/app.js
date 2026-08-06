@@ -828,7 +828,11 @@ function renderView(view, data) {
     <div class="card"><div class="card-title">Accept Invitation</div>
       <div style="display:flex;gap:8px"><input id="invite-token" placeholder="paste invitation token">
       <button class="btn-ghost" onclick="acceptInvite()">Accept</button></div></div>
-    <div class="card"><div class="card-title">Members</div>${tableFrom(members, ['orgId', 'userId', 'role'])}</div>`;
+    <div class="card"><div class="card-title">Members</div>${tableFrom(members, ['orgId', 'userId', 'role'])}</div>
+    <div class="card"><div class="card-title">Org Conversations</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px"><input id="org-conv-org" placeholder="org id">
+      <button class="btn-ghost" onclick="loadOrgConversations()">List</button></div>
+      <div id="org-conv-results"></div></div>`;
   } else if (view === 'notifications') {
     html += `<div class="card"><div class="card-title">Inbox (${data.unread} unread)</div>`;
     (data.notifications || []).forEach((n) => {
@@ -1023,6 +1027,21 @@ async function inviteToOrg(orgId) {
 }
 function copyOrgId(orgId) {
   navigator.clipboard?.writeText(orgId).then(() => alert('Org id copied: ' + orgId)).catch(() => alert(orgId));
+}
+async function loadOrgConversations() {
+  const orgId = $('#org-conv-org')?.value.trim();
+  if (!orgId) return;
+  const box = $('#org-conv-results');
+  if (!box) return;
+  box.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await api('GET', `/tanya/org?orgId=${encodeURIComponent(orgId)}`);
+    box.innerHTML = r.count === 0
+      ? '<p style="color:var(--text-dim)">No conversations in this org.</p>'
+      : r.conversations.map((c) => `<div class="feed-item"><span>💬</span><div><div class="feed-type">${esc(c.title)}</div><div class="feed-dim">by ${esc(c.userId)} · ${c.messageCount} msgs</div></div></div>`).join('');
+  } catch (e) {
+    box.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`;
+  }
 }
 async function acceptInvite() {
   const token = $('#invite-token')?.value.trim();
@@ -1299,6 +1318,7 @@ window.decideApproval = decideApproval;
 window.shareTanyaConversation = shareTanyaConversation;
 window.exportAudit = exportAudit;
 window.exportTanyaConversation = exportTanyaConversation;
+window.loadOrgConversations = loadOrgConversations;
 window.runQiL = runQiL;
 $('#tanya-input')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendTanya(); });
 $('#search-q')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });

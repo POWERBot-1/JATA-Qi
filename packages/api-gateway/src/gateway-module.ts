@@ -535,6 +535,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/tanya/unshare', auth('tanya:write', (req) => this.tanyaUnshare(req)));
     route('GET', '/tanya/shared', auth('tanya:read', (req) => this.tanyaShared(req)));
     route('GET', '/tanya/shares', auth('tanya:read', (req) => this.tanyaShares(req)));
+    route('GET', '/tanya/org', auth('tanya:read', (req) => this.tanyaOrg(req)));
     route('POST', '/session/revoke', auth(null, (req) => this.sessionRevoke(req)));
     // Notifications.
     route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
@@ -6154,6 +6155,18 @@ export class ApiGatewayModule implements IModule {
     if (!this.tanya) return json(501, { error: 'tanya module not registered' });
     const conversations = await this.tanya.sharedWithMe(req.principal!.userId);
     return json(200, { conversations, count: conversations.length });
+  }
+
+  private async tanyaOrg(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const orgId = req.query.orgId;
+    if (!orgId) return json(400, { error: 'query "orgId" is required' });
+    try {
+      const conversations = await this.tanya.orgConversations(orgId, req.principal!.userId, { adminOnly: req.query.adminOnly === '1' });
+      return json(200, { orgId, conversations, count: conversations.length });
+    } catch (e) {
+      return json(403, { error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   private async tanyaShares(req: GatewayRequest): Promise<GatewayResponse> {

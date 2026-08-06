@@ -13,6 +13,7 @@ import { AgentRuntimeModule, EchoLLM } from '@jataqi/agent-runtime';
 import type { ILLM, ChatMessage, LLMRequest, LLMResponse } from '@jataqi/agent-runtime';
 import { PkiModule } from '@jataqi/pki';
 import { SecurityModule } from '@jataqi/security';
+import { OrganizationsModule } from '@jataqi/organizations';
 import { TanyaModule } from '../src/index.js';
 import type { TanyaChatResult } from '../src/index.js';
 
@@ -43,6 +44,7 @@ async function bootTanya(opts: { llm?: ILLM; withPki?: boolean; withAgents?: boo
   kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
   kernel.register(new ConversationsModule());
   kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+  kernel.register(new OrganizationsModule());
   if (opts.withPki !== false) {
     kernel.register(new PkiModule({ issuer: 'https://id.jataqi.local' }));
   }
@@ -444,6 +446,42 @@ describe('TANYA AI conversational product layer', () => {
 
       // Sub-based resolution also works (console flow uses sub = userId).
       assert.deepEqual(tanya.resolveIdpIdentity({ sub: 'recipient-user-id' }), { userId: 'recipient-user-id', via: 'sub' });
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('org directory: owners see all, members only their own, non-members denied', async () => {
+    const kernel = await bootTanya();
+    try {
+      const orgs = kernel.getModule<OrganizationsModule>('organizations');
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+
+      const org = await orgs.createOrganization('DirOrg', 'owner-id', 'dirorg');
+      await orgs.addMember(org.id, 'member-id', 'member');
+
+      // Owner + member create org-scoped conversations.
+      await tanya.chat({ userId: 'owner-id', message: 'owner chat', orgId: org.id });
+      await tanya.chat({ userId: 'member-id', message: 'member chat', orgId: org.id });
+
+      // Owner (auto owner role) sees everything.
+      const ownerView = await tanya.orgConversations(org.id, 'owner-id');
+      assert.equal(ownerView.length, 2);
+      // Member sees only their own.
+      const memberView = await tanya.orgConversations(org.id, 'member-id');
+      assert.equal(memberView.length, 1);
+      assert.equal(memberView[0]!.userId, 'member-id');
+      // Non-member denied.
+      await assert.rejects(tanya.orgConversations(org.id, 'stranger'), /not a member/);
+      // adminOnly requires owner/admin.
+      await assert.rejects(tanya.orgConversations(org.id, 'member-id', { adminOnly: true }), /owner or admin role required/);
+      const ownerAdmin = await tanya.orgConversations(org.id, 'owner-id', { adminOnly: true });
+      assert.equal(ownerAdmin.length, 2);
+
+      // memberRole helper.
+      assert.equal(await tanya.memberRole(org.id, 'owner-id'), 'owner');
+      assert.equal(await tanya.memberRole(org.id, 'member-id'), 'member');
+      assert.equal(await tanya.memberRole(org.id, 'stranger'), undefined);
     } finally {
       await kernel.shutdown();
     }

@@ -1792,4 +1792,44 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     assert.equal(s.path, '/ws');
     assert.equal(s.pingIntervalMs, 30_000);
   });
+
+  it('GET /tanya/org — owner sees all org conversations, member only their own', async () => {
+    // Org for this test (fresh so counts are deterministic).
+    const org = await jsonRequest('POST', `${base}/orgs`, { name: 'Dir Org' }, token);
+    const orgId = (org.body as { organization: { id: string } }).organization.id;
+
+    // Recipient user joins.
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const recToken = (recLogin.body as { token: string }).token;
+    const inv = await jsonRequest('POST', `${base}/org`, { id: orgId, action: 'invite', target: 'tanya-recipient' }, token);
+    await jsonRequest('POST', `${base}/org`, { id: orgId, action: 'accept', token: (inv.body as { invitation: { token: string } }).invitation.token }, recToken);
+
+    // Both create org-scoped conversations.
+    await jsonRequest('POST', `${base}/tanya/chat`, { message: 'owner dir chat', orgId }, token);
+    await jsonRequest('POST', `${base}/tanya/chat`, { message: 'member dir chat', orgId }, recToken);
+
+    // Owner (auto owner role) sees both.
+    const ownerView = await jsonRequest('GET', `${base}/tanya/org?orgId=${orgId}`, undefined, token);
+    assert.equal(ownerView.status, 200);
+    assert.equal((ownerView.body as { count: number }).count, 2);
+
+    // Member sees only their own.
+    const memberView = await jsonRequest('GET', `${base}/tanya/org?orgId=${orgId}`, undefined, recToken);
+    assert.equal((memberView.body as { count: number }).count, 1);
+    const who = (await jsonRequest('GET', `${base}/whoami`, undefined, recToken)).body as { principal: { userId: string } };
+    assert.equal((memberView.body as { conversations: { userId: string }[] }).conversations[0]!.userId, who.principal.userId);
+
+    // adminOnly: member denied (403), owner allowed.
+    const memberAdmin = await jsonRequest('GET', `${base}/tanya/org?orgId=${orgId}&adminOnly=1`, undefined, recToken);
+    assert.equal(memberAdmin.status, 403);
+    const ownerAdmin = await jsonRequest('GET', `${base}/tanya/org?orgId=${orgId}&adminOnly=1`, undefined, token);
+    assert.equal(ownerAdmin.status, 200);
+    assert.equal((ownerAdmin.body as { count: number }).count, 2);
+
+    // Non-member denied.
+    await jsonRequest('POST', `${base}/auth/register`, { username: 'dir-stranger', password: 'pw', roles: ['developer'] });
+    const strangerLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'dir-stranger', password: 'pw' });
+    const strangerView = await jsonRequest('GET', `${base}/tanya/org?orgId=${orgId}`, undefined, (strangerLogin.body as { token: string }).token);
+    assert.equal(strangerView.status, 403);
+  });
 });

@@ -180,6 +180,10 @@ describe('WebUIModule', () => {
     assert.match(js, /shareTanyaConversation/, 'share action present');
     assert.match(js, /tanya-org/, 'org scope input rendered');
     assert.match(js, /recipient email \(IdP identity\)/, 'IdP-identity sharing UI present');
+    // Org conversations directory panel.
+    assert.match(js, /loadOrgConversations/, 'org directory action present');
+    assert.match(js, /\/tanya\/org\?orgId=/, 'org directory endpoint wired');
+    assert.match(js, /Org Conversations/, 'directory panel rendered');
     // Org-aware TANYA + Organizations view.
     assert.match(js, /orgs: async/, 'orgs view present');
     assert.match(js, /createOrg/, 'create-org action present');

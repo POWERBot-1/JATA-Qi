@@ -535,4 +535,36 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     // Nonexistent conversation → throws.
     await assert.rejects(client.tanya.export('nope', 'json'), /not found/);
   });
+
+  it('tanya.orgConversations: owner directory vs member scoping', async () => {
+    await client.auth.login('admin', 'admin');
+    const org = await client.org.create('Dir SDK Org', 'dir-sdk');
+    const orgId = (org.organization as { id: string }).id;
+
+    // Recipient joins via invite + accept.
+    const inv = await client.org.invite(orgId, 'sdk-recipient@example.com');
+    const recLogin = await (await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sdk-recipient', password: 'pw' }),
+    })).json() as { token: string };
+    const rec = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    rec.setToken(recLogin.token);
+    await rec.org.acceptInvitation(inv.invitation.token);
+
+    // Both chat in the org.
+    await client.tanya.chat('owner dir', { orgId });
+    await rec.tanya.chat('member dir', { orgId });
+
+    // Owner sees both.
+    const ownerView = await client.tanya.orgConversations(orgId);
+    assert.equal(ownerView.count, 2);
+    // Member sees only their own.
+    const memberView = await rec.tanya.orgConversations(orgId);
+    assert.equal(memberView.count, 1);
+    // adminOnly denied for the member.
+    await assert.rejects(rec.tanya.orgConversations(orgId, { adminOnly: true }), /owner or admin role required/);
+    // Owner adminOnly works.
+    const ownerAdmin = await client.tanya.orgConversations(orgId, { adminOnly: true });
+    assert.equal(ownerAdmin.count, 2);
+  });
 });

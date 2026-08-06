@@ -18,6 +18,7 @@ import type { ConversationsModule, ListOptions } from '@jataqi/conversations';
 import type { Conversation } from '@jataqi/conversations';
 import type { AgentRuntimeModule, AgentRunResult } from '@jataqi/agent-runtime';
 import type { PkiModule } from '@jataqi/pki';
+import type { OrganizationsModule } from '@jataqi/organizations';
 
 export interface TanyaPersona {
   id: string;
@@ -97,6 +98,7 @@ export class TanyaModule implements IModule {
   private conversations?: ConversationsModule;
   private agents?: AgentRuntimeModule;
   private pki?: PkiModule;
+  private organizations?: OrganizationsModule;
   private personas = new Map<string, TanyaPersona>([[DEFAULT_PERSONA.id, DEFAULT_PERSONA]]);
   /** IdP identity bridge index: email/preferred_username → platform userId (sub). */
   private idpIdentities = new Map<string, { userId: string; via: 'email' | 'sub' }>();
@@ -106,6 +108,7 @@ export class TanyaModule implements IModule {
     this.conversations = this.tryModule<ConversationsModule>('conversations');
     this.agents = this.tryModule<AgentRuntimeModule>('agent-runtime');
     this.pki = this.tryModule<PkiModule>('pki');
+    this.organizations = this.tryModule<OrganizationsModule>('organizations');
     kernel.container.registerValue('tanya', this);
     kernel.logger.info('tanya module initialized (TANYA AI conversational product layer)');
   }
@@ -337,6 +340,32 @@ export class TanyaModule implements IModule {
     if (!resolved) throw new Error('no platform user found for the given IdP identity');
     const share = await this.shareWith(conversationId, ownerId, resolved.userId, opts);
     return { ...share, via: resolved.via };
+  }
+
+  /**
+   * Org directory for members: conversation list for an org. Requires the
+   * caller to be an org member (org module) OR the conversation owner —
+   * admins/owners see the whole org, regular members only their own.
+   */
+  async orgConversations(orgId: string, callerUserId: string, opts: { adminOnly?: boolean } = {}): Promise<Array<{ id: string; title: string; userId: string; messageCount: number; updatedAt: number; archived: boolean }>> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const role = await this.memberRole(orgId, callerUserId);
+    if (!role) throw new Error('you are not a member of this organization');
+    if (opts.adminOnly && role !== 'owner' && role !== 'admin') throw new Error('owner or admin role required');
+    const all = await this.conversations.listByOrg(orgId);
+    if (role === 'owner' || role === 'admin') return all;
+    return all.filter((c) => c.userId === callerUserId);
+  }
+
+  /** Org membership role of a user (undefined when not a member). */
+  async memberRole(orgId: string, userId: string): Promise<'owner' | 'admin' | 'member' | undefined> {
+    if (!this.organizations) return undefined;
+    try {
+      const membership = await this.organizations.getMembership(orgId, userId);
+      return membership?.role === 'guest' ? undefined : membership?.role;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Conversations shared TO a user (multi-user inbox). */

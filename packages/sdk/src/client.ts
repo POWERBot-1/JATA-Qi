@@ -239,6 +239,13 @@ export class TanyaClient {
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
   }
+  /**
+   * Org directory: conversations in an org. Owners/admins see everything
+   * (adminOnly=1 requires owner/admin); regular members see their own.
+   */
+  async orgConversations(orgId: string, opts: { adminOnly?: boolean } = {}): Promise<{ orgId: string; conversations: Array<{ id: string; title: string; userId: string; messageCount: number; updatedAt: number }>; count: number }> {
+    return this.c.request('GET', '/tanya/org', undefined, { orgId, ...(opts.adminOnly ? { adminOnly: '1' } : {}) });
+  }
   /** Export a conversation as JSON (default), Markdown, or plain text. */
   async export(conversationId: string, format: 'json' | 'markdown' | 'text' = 'json'): Promise<string> {
     return this.c.requestText('GET', `/chat/export?format=${format}`, undefined, { id: conversationId });

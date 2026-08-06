@@ -299,6 +299,19 @@ export class ConversationsModule implements IModule {
     return all.filter((s) => s.conversationId === conversationId);
   }
 
+  /**
+   * Org-scoped directory for admins/owners: every conversation in an org
+   * with its owner, message count, and last-updated time. Used by the
+   * multi-tenant admin surface (org lead sees the org's activity).
+   */
+  async listByOrg(orgId: string): Promise<Array<{ id: string; title: string; userId: string; messageCount: number; updatedAt: number; archived: boolean }>> {
+    const all = await this.conversations.all();
+    return all
+      .filter((c) => c.orgId === orgId)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((c) => ({ id: c.id, title: c.title, userId: c.userId, messageCount: c.messages.length, updatedAt: c.updatedAt, archived: c.archived ?? false }));
+  }
+
   /** Conversations shared TO a user (not expired, not archived). */
   async listSharedWith(userId: string): Promise<Conversation[]> {
     const now = Date.now();
