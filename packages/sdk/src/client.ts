@@ -72,6 +72,8 @@ export class JataQiClient {
   readonly privacy: PrivacyClient;
   readonly review: ReviewClient;
   readonly secauto: SecautoClient;
+  readonly dlp: DlpClient;
+  readonly pqc: PqcClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -118,6 +120,8 @@ export class JataQiClient {
     this.privacy = new PrivacyClient(this);
     this.review = new ReviewClient(this);
     this.secauto = new SecautoClient(this);
+    this.dlp = new DlpClient(this);
+    this.pqc = new PqcClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -1101,4 +1105,60 @@ export class SecautoClient {
   async complianceReport(): Promise<{ report: unknown }> { return this.c.request('GET', '/security-automation/compliance-report'); }
   /** Compliance evidence export (JSON). */
   async complianceExport(): Promise<string> { return this.c.requestText('GET', '/security-automation/compliance-report/export'); }
+}
+
+// --- Data Loss Prevention -----------------------------------------------------
+
+export class DlpClient {
+  constructor(private c: JataQiClient) {}
+  async rules(): Promise<{ rules: unknown[] }> { return this.c.request('GET', '/dlp/rules'); }
+  async upsertRule(rule: Record<string, unknown>): Promise<{ rules: unknown[] }> { return this.c.request('POST', '/dlp/rules', rule); }
+  /** Scan content on a channel; returns the action, results, and optional incident. */
+  async scan(input: { content: string; channel: string; actor?: string; destination?: string }): Promise<{ results: unknown[]; incident?: unknown; action: string }> {
+    return this.c.request('POST', '/dlp/scan', input);
+  }
+  async incidents(opts: { dataType?: string; status?: string; channel?: string } = {}): Promise<{ incidents: unknown[]; count: number }> {
+    return this.c.request('GET', '/dlp/incidents', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async updateIncident(id: string, status: string): Promise<{ incident: unknown }> { return this.c.request('POST', '/dlp/incidents/update', { id, status }); }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/dlp/stats'); }
+}
+
+// --- Post-Quantum Readiness ----------------------------------------------------
+
+export class PqcClient {
+  constructor(private c: JataQiClient) {}
+  async algorithms(opts: { purpose?: string; status?: string } = {}): Promise<{ algorithms: unknown[] }> {
+    return this.c.request('GET', '/pqc/algorithms', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async deprecate(id: string): Promise<{ algorithm: unknown }> { return this.c.request('POST', '/pqc/deprecate', { id }); }
+  async generateKey(algorithm: string, purpose: string, opts: { hybridWith?: string } = {}): Promise<{ key: unknown }> {
+    return this.c.request('POST', '/pqc/keys', { algorithm, purpose, ...opts });
+  }
+  async keys(opts: { purpose?: string; hybrid?: boolean } = {}): Promise<{ keys: unknown[] }> {
+    const query: Record<string, string> = {};
+    if (opts.purpose) query.purpose = opts.purpose;
+    if (opts.hybrid) query.hybrid = '1';
+    return this.c.request('GET', '/pqc/keys', undefined, query);
+  }
+  async publicKeys(): Promise<{ keys: unknown[] }> { return this.c.request('GET', '/pqc/keys/public'); }
+  async sign(workload: string, algorithm: string, payload: string, privateKey: string): Promise<{ envelope: unknown }> {
+    return this.c.request('POST', '/pqc/sign', { workload, algorithm, payload, privateKey });
+  }
+  async verify(envelope: unknown, payload: string, publicKey: string): Promise<{ result: { verified: boolean; reason?: string } }> {
+    return this.c.request('POST', '/pqc/verify', { envelope, payload, publicKey });
+  }
+  async signatures(opts: { workload?: string; hybrid?: boolean } = {}): Promise<{ signatures: unknown[] }> {
+    const query: Record<string, string> = {};
+    if (opts.workload) query.workload = opts.workload;
+    if (opts.hybrid) query.hybrid = '1';
+    return this.c.request('GET', '/pqc/signatures', undefined, query);
+  }
+  async advancePhase(workloads: string[], force = false): Promise<{ phase: string; migration: unknown[] }> {
+    return this.c.request('POST', '/pqc/phase', { workloads, force });
+  }
+  async migration(): Promise<{ phase: string; migration: unknown[]; policy: unknown; pendingDeprecations: string[] }> {
+    return this.c.request('GET', '/pqc/migration');
+  }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/pqc/stats'); }
 }

@@ -39,6 +39,8 @@ import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering
 import type { PrivacyModule } from '@jataqi/privacy';
 import type { SecurityReviewModule } from '@jataqi/security-review';
 import type { SecurityAutomationModule } from '@jataqi/security-automation';
+import type { DlpModule } from '@jataqi/dlp';
+import type { PqcModule } from '@jataqi/pqc';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -95,6 +97,8 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  dlp <sub>            Data loss prevention: rules|scan|incidents|resolve|stats.
+  pqc <sub>            Post-quantum: algorithms|keys|key|sign|verify|signatures|phase|migration|stats.
   secauto <sub>        Security automation: rules|correlations|posture|hunt|hunts|schedule|compliance|export.
   review <sub>         Security review: schedule|start|complete|signoff|finding|findings|scan|architecture|compliance|stats.
   privacy <sub>        Privacy engineering: pia|pias|decide|processing|secure-delete|deletions|minimize|posture.
@@ -155,6 +159,8 @@ async function main() {
   const privacy = kernel.getModule<PrivacyModule>('privacy');
   const review = kernel.getModule<SecurityReviewModule>('security-review');
   const secauto = kernel.getModule<SecurityAutomationModule>('security-automation');
+  const dlp = kernel.getModule<DlpModule>('dlp');
+  const pqc = kernel.getModule<PqcModule>('pqc');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1412,6 +1418,127 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'dlp': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'rules':
+            for (const r of dlp.rules()) console.log(`- ${r.id} (${r.dataType}) ${r.action}${r.threshold ? ` threshold=${r.threshold}` : ''}${r.minEntropy ? ` entropy>${r.minEntropy}` : ''}`);
+            console.log(`${dlp.rules().length} rule(s)`);
+            break;
+          case 'scan': {
+            const content = args.slice(2).join(' '), channel = args[2] ? 'api_response' : 'log';
+            if (!content) { console.error('Usage: jataqi dlp scan <content...> [--channel email|export|upload|log|api_response]'); process.exit(1); }
+            const r = dlp.scan({ content, channel: flag('channel') as never ?? channel, ...(flag('actor') ? { actor: flag('actor') } : {}), ...(flag('to') ? { destination: flag('to') } : {}) });
+            console.log(`action: ${r.action.toUpperCase()}${r.incident ? ` — incident ${r.incident.id.slice(0, 8)} [${r.incident.severity}] ${r.incident.ruleId}` : ''}`);
+            break;
+          }
+          case 'incidents': {
+            const incidents = dlp.incidents({ ...(flag('status') ? { status: flag('status') as never } : {}), ...(flag('dataType') ? { dataType: flag('dataType') as never } : {}) });
+            for (const i of incidents) console.log(`- [${i.severity}] ${i.dataType} ${i.action} ${i.channel}${i.actor ? ` actor=${i.actor}` : ''} (${i.status})`);
+            console.log(`${incidents.length} incident(s)`);
+            break;
+          }
+          case 'resolve': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi dlp resolve <incidentId>'); process.exit(1); }
+            const i = dlp.updateIncident(id, 'resolved');
+            console.log(i ? `incident ${i.id.slice(0, 8)} resolved` : 'not found');
+            break;
+          }
+          case 'stats': {
+            const s = dlp.stats();
+            console.log(`rules: ${s.rules} · scans: ${s.scans} · incidents: ${s.incidents} (${s.openIncidents} open)`);
+            console.log(`blocked: ${s.blocked} · redacted: ${s.redacted} · quarantined: ${s.quarantined}`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi dlp rules|scan|incidents|resolve|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'pqc': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'algorithms': {
+            const all = pqc.algorithms();
+            for (const a of all) console.log(`- ${a.id} (${a.family}, ${a.purpose}) cat${a.nistCategory} [${a.status}] ${a.keySizeBytes}B`);
+            console.log(`${all.length} algorithm(s)`);
+            break;
+          }
+          case 'key': {
+            const algorithm = args[2], purpose = args[3];
+            if (!algorithm || !purpose) { console.error('Usage: jataqi pqc key <algorithm> <signature|kem> [--hybrid-with classic]'); process.exit(1); }
+            const k = pqc.generateKey({ algorithm: algorithm as never, purpose: purpose as never, ...(flag('hybrid-with') ? { hybridWith: flag('hybrid-with') as never } : {}) });
+            console.log(`key ${k.id} (${k.algorithm}, ${k.purpose}) phase=${k.phase}${k.hybridWith ? ` hybrid-with=${k.hybridWith}` : ''}`);
+            break;
+          }
+          case 'keys': {
+            const all = pqc.keys();
+            for (const k of all) console.log(`- ${k.id.slice(0, 8)} ${k.algorithm} ${k.purpose}${k.hybridWith ? ' 🔗hybrid' : ''} phase=${k.phase}`);
+            console.log(`${all.length} key(s)`);
+            break;
+          }
+          case 'sign': {
+            const workload = args[2], algorithm = args[3], payload = args[4];
+            if (!workload || !algorithm || !payload) { console.error('Usage: jataqi pqc sign <workload> <algorithm> <payload> [--key keyId]'); process.exit(1); }
+            const keys = pqc.keys();
+            const key = keys.find((k) => k.algorithm === algorithm) ?? keys[0];
+            if (!key) { console.log('no key — create one with: jataqi pqc key <algorithm> signature'); break; }
+            if (!key.privateKey) { console.log('private key unavailable'); break; }
+            const e = pqc.sign({ workload, algorithm: algorithm as never, payload, privateKey: key.privateKey });
+            console.log(`envelope ${e.id.slice(0, 8)} hybrid=${e.hybrid} signed @${new Date(e.signedAt).toISOString()}`);
+            break;
+          }
+          case 'verify': {
+            const payload = args[2];
+            if (!payload) { console.error('Usage: jataqi pqc verify <payload> [--envelope id]'); process.exit(1); }
+            const sigs = pqc.signatures();
+            const env = sigs.find((s) => s.id.startsWith(flag('envelope') ?? '')) ?? sigs[0];
+            if (!env) { console.log('no signatures to verify'); break; }
+            const keys = pqc.keys();
+            const key = keys.find((k) => k.algorithm === env.algorithm) ?? keys[0];
+            if (!key) { console.log('no key available'); break; }
+            const v = pqc.verifyEnvelope(env, payload, key.publicKey);
+            console.log(v.verified ? '✅ signature verified' : `❌ ${v.reason}`);
+            break;
+          }
+          case 'signatures': {
+            const sigs = pqc.signatures();
+            for (const s of sigs.slice(0, 10)) console.log(`- ${s.id.slice(0, 8)} ${s.workload} ${s.algorithm} hybrid=${s.hybrid}`);
+            console.log(`${sigs.length} signature(s)`);
+            break;
+          }
+          case 'phase': {
+            const workloads = (flag('workloads') ?? 'all').split(',');
+            const phase = pqc.advancePhase(workloads, args.includes('--force'));
+            console.log(`phase → ${phase}`);
+            break;
+          }
+          case 'migration': {
+            console.log(`current phase: ${pqc.phase()}`);
+            for (const s of pqc.migrationHistory()) console.log(`- ${s.phase}: ${s.migrated.join(', ')} ${s.completed ? '✅' : '…'}`);
+            console.log(`pending deprecations: ${pqc.pendingDeprecations().join(', ') || 'none'}`);
+            break;
+          }
+          case 'stats': {
+            const s = pqc.stats();
+            console.log(`algorithms: ${s.algorithms} (${s.pqAlgorithms} PQ) · keys: ${s.keys} (${s.hybridKeys} hybrid)`);
+            console.log(`signatures: ${s.signatures} (${s.hybridSignatures} hybrid) · phase: ${s.phase}`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi pqc algorithms|key|keys|sign|verify|signatures|phase|migration|stats'); process.exit(1);
         }
         break;
       }

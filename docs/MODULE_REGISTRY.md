@@ -59,6 +59,8 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
 | `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
 | `@jataqi/privacy` | `privacy` | storage | Privacy engineering — classification/retention/consent/SAR + PIA workflow, RoPA processing records, crypto-shred secure deletion, data-minimization checks |
+| `@jataqi/dlp` | `dlp` | – | Data Loss Prevention — sensitive-data policies (PII/cards/credentials/secrets/health/source), scan/redact/block/quarantine/notify, redacted-evidence incidents |
+| `@jataqi/pqc` | `pqc` | – | Post-quantum readiness — algorithm agility registry (ML-KEM/ML-DSA/SLH-DSA), hybrid signature envelopes, migration phases, deprecation scheduling |
 | `@jataqi/security-automation` | `security-automation` | – | Security automation — cross-pillar correlation (auto-incidents/bans/risk/auto-close), scheduled threat hunts, compliance evidence reports (ISO 27001) |
 | `@jataqi/security-review` | `security-review` | – | Independent Security Review — architecture/code/infra/AI-safety/compliance assessments + periodic audits, severity findings, remediation + sign-off workflows |
 | `@jataqi/resilience-engineering` | `resilience-engineering` | – | Global Resilience Engineering — multi-region topology, automated failover, human-approved failback, DR orchestration (RPO/RTO), fault-injection resilience tests, SLO/error-budget availability |

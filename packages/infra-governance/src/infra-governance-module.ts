@@ -78,6 +78,15 @@ export class InfrastructureGovernanceModule implements IModule {
   accessLog(filter?: { facility?: string; action?: PhysicalAccessRecord['action'] }) { return this.engine.accessLog(filter); }
   deniedAccessPatterns() { return this.engine.deniedAccessPatterns(); }
 
+  attestHardware(input: Parameters<InfrastructureGovernanceEngine['attestHardware']>[0]) { return this.engine.attestHardware(input); }
+  trustedStates() { return this.engine.trustedStatesList(); }
+  trustedState(serial: string) { return this.engine.trustedState(serial); }
+  rootOfTrustReport() { return this.engine.rootOfTrustReport(); }
+
+  registerConfidentialWorkload(input: Parameters<InfrastructureGovernanceEngine['registerConfidentialWorkload']>[0]) { return this.engine.registerConfidentialWorkload(input); }
+  confidentialWorkloads() { return this.engine.confidentialList(); }
+  confidentialReport() { return this.engine.confidentialReport(); }
+
   stats() { return this.engine.stats(); }
 }
 

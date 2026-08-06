@@ -8,8 +8,8 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import type {
-  ComplianceCheck, ConfigDrift, FirmwareStatus, HardwareAsset, HardwareStatus,
-  PhysicalAccessRecord, ProvisioningRecord,
+  ComplianceCheck, ConfigDrift, ConfidentialWorkload, FirmwareStatus, HardwareAsset, HardwareStatus,
+  PhysicalAccessRecord, ProvisioningRecord, TrustedHardwareState,
 } from './types.js';
 
 export const HARDENING_BASELINE: Array<{ name: string; category: 'baseline' | 'hardening' }> = [
@@ -27,6 +27,8 @@ export class InfrastructureGovernanceEngine {
   private drifts: ConfigDrift[] = [];
   private compliance: ComplianceCheck[] = [];
   private access: PhysicalAccessRecord[] = [];
+  private trustedStates = new Map<string, TrustedHardwareState>();
+  private confidential: ConfidentialWorkload[] = [];
 
   static hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
@@ -266,4 +268,82 @@ export class InfrastructureGovernanceEngine {
       accessDenials: this.access.filter((r) => r.action === 'denied').length,
     };
   }
+
+  // ---- hardware root of trust (TPM / secure boot / measured boot) ---------
+
+  /**
+   * Attest a trusted hardware state: TPM presence, Secure Boot, measured-boot
+   * hash, and hardware-backed key handle. Attestation requires a quote; when
+   * the quote is missing the state is recorded but NOT attested.
+   */
+  attestHardware(input: {
+    serial: string; tpmVersion?: string; secureBoot: boolean; measuredBootHash?: string;
+    hwKeyHandle?: string; attestationQuote?: string;
+  }): TrustedHardwareState {
+    const asset = this.assets.get(input.serial);
+    if (!asset) throw new Error(`unknown asset ${input.serial}`);
+    const state: TrustedHardwareState = {
+      id: randomUUID(), serial: input.serial,
+      ...(input.tpmVersion ? { tpmVersion: input.tpmVersion } : {}),
+      secureBoot: input.secureBoot,
+      ...(input.measuredBootHash ? { measuredBootHash: input.measuredBootHash } : {}),
+      ...(input.hwKeyHandle ? { hwKeyHandle: input.hwKeyHandle } : {}),
+      ...(input.attestationQuote ? { attestationQuote: input.attestationQuote, attestedAt: Date.now() } : {}),
+      attested: input.attestationQuote !== undefined,
+    };
+    this.trustedStates.set(input.serial, state);
+    return state;
+  }
+
+  trustedStatesList(): TrustedHardwareState[] {
+    return [...this.trustedStates.values()];
+  }
+
+  trustedState(serial: string): TrustedHardwareState | undefined {
+    return this.trustedStates.get(serial);
+  }
+
+  /** Root-of-trust posture: attested vs un-attested assets. */
+  rootOfTrustReport(): { attested: number; unAttested: number; secureBootEnabled: number; tpmPresent: number } {
+    const states = [...this.trustedStates.values()];
+    return {
+      attested: states.filter((s) => s.attested).length,
+      unAttested: states.filter((s) => !s.attested).length,
+      secureBootEnabled: states.filter((s) => s.secureBoot).length,
+      tpmPresent: states.filter((s) => s.tpmVersion !== undefined).length,
+    };
+  }
+
+  // ---- confidential computing -------------------------------------------------
+
+  registerConfidentialWorkload(input: {
+    name: string; environment: 'enclave' | 'sev-snp' | 'tdx' | 'confidential-container';
+    region: string; memoryEncryption: boolean; measurement?: string; dataResidency: string;
+  }): ConfidentialWorkload {
+    if (!input.name || !input.region || !input.dataResidency) throw new Error('name, region, and dataResidency are required');
+    const workload: ConfidentialWorkload = {
+      id: randomUUID(), name: input.name, environment: input.environment,
+      region: input.region, memoryEncryption: input.memoryEncryption,
+      ...(input.measurement ? { measurement: input.measurement } : {}),
+      dataResidency: input.dataResidency, createdAt: Date.now(),
+    };
+    this.confidential.push(workload);
+    return workload;
+  }
+
+  confidentialList(): ConfidentialWorkload[] {
+    return [...this.confidential];
+  }
+
+  /** Confidential-computing coverage by environment. */
+  confidentialReport(): { total: number; memoryEncrypted: number; byEnvironment: Record<string, number> } {
+    const byEnvironment: Record<string, number> = {};
+    for (const w of this.confidential) byEnvironment[w.environment] = (byEnvironment[w.environment] ?? 0) + 1;
+    return {
+      total: this.confidential.length,
+      memoryEncrypted: this.confidential.filter((w) => w.memoryEncryption).length,
+      byEnvironment,
+    };
+  }
+
 }

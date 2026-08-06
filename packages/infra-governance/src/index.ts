@@ -5,4 +5,5 @@ export { InfrastructureGovernanceEngine } from './engine.js';
 export type {
   HardwareStatus, FirmwareStatus, HardwareAsset,
   ProvisioningRecord, ConfigDrift, ComplianceCheck, PhysicalAccessRecord,
+  TrustedHardwareState, ConfidentialWorkload,
 } from './types.js';

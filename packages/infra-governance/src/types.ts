@@ -67,3 +67,38 @@ export interface PhysicalAccessRecord {
   reason?: string;
   ts: number;
 }
+
+// ---- Hardware root of trust + confidential computing -----------------------
+
+export interface TrustedHardwareState {
+  id: string;
+  serial: string;
+  /** TPM presence + version (e.g. '2.0'). */
+  tpmVersion?: string;
+  /** Secure Boot enabled. */
+  secureBoot: boolean;
+  /** Measured boot chain hash (PCR-0..7 aggregate). */
+  measuredBootHash?: string;
+  /** Hardware-backed key storage (TPM key handle / HSM reference). */
+  hwKeyHandle?: string;
+  /** Last attestation quote (base64). */
+  attestationQuote?: string;
+  attestedAt?: number;
+  /** Integrity of the attestation chain. */
+  attested: boolean;
+}
+
+export interface ConfidentialWorkload {
+  id: string;
+  name: string;
+  /** Execution environment: 'enclave' | 'sev-snp' | 'tdx' | 'confidential-container'. */
+  environment: string;
+  region: string;
+  /** Memory encryption active. */
+  memoryEncryption: boolean;
+  /** Enclave measurement (hash of the trusted execution image). */
+  measurement?: string;
+  /** Data residency bound to the region. */
+  dataResidency: string;
+  createdAt: number;
+}

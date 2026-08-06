@@ -48,6 +48,8 @@ import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 import type { SecurityReviewModule } from '@jataqi/security-review';
 import type { SecurityAutomationModule } from '@jataqi/security-automation';
+import type { DlpModule } from '@jataqi/dlp';
+import type { PqcModule } from '@jataqi/pqc';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -172,6 +174,8 @@ export class ApiGatewayModule implements IModule {
   private resilience?: ResilienceEngineeringModule;
   private securityReview?: SecurityReviewModule;
   private securityAutomation?: SecurityAutomationModule;
+  private dlp?: DlpModule;
+  private pqc?: PqcModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -269,6 +273,8 @@ export class ApiGatewayModule implements IModule {
     this.resilience = this.tryModule<ResilienceEngineeringModule>('resilience-engineering');
     this.securityReview = this.tryModule<SecurityReviewModule>('security-review');
     this.securityAutomation = this.tryModule<SecurityAutomationModule>('security-automation');
+    this.dlp = this.tryModule<DlpModule>('dlp');
+    this.pqc = this.tryModule<PqcModule>('pqc');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -1123,6 +1129,25 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/security-automation/hunts/schedule', auth('secauto:write', (req) => this.secautoHuntsSchedule(req)));
     route('GET', '/security-automation/compliance-report', auth('secauto:read', () => this.secautoComplianceReport()));
     route('GET', '/security-automation/compliance-report/export', auth('secauto:read', () => this.secautoComplianceExport()));
+    // Data Loss Prevention.
+    route('GET', '/dlp/rules', auth('dlp:read', () => this.dlpRules()));
+    route('POST', '/dlp/rules', auth('dlp:write', (req) => this.dlpRulesUpsert(req)));
+    route('POST', '/dlp/scan', auth('dlp:write', (req) => this.dlpScan(req)));
+    route('GET', '/dlp/incidents', auth('dlp:read', (req) => this.dlpIncidents(req)));
+    route('POST', '/dlp/incidents/update', auth('dlp:write', (req) => this.dlpIncidentsUpdate(req)));
+    route('GET', '/dlp/stats', auth('dlp:read', () => this.dlpStats()));
+    // Post-Quantum Readiness.
+    route('GET', '/pqc/algorithms', auth('pqc:read', (req) => this.pqcAlgorithms(req)));
+    route('POST', '/pqc/deprecate', auth('pqc:write', (req) => this.pqcDeprecate(req)));
+    route('POST', '/pqc/keys', auth('pqc:write', (req) => this.pqcKeysGenerate(req)));
+    route('GET', '/pqc/keys', auth('pqc:read', (req) => this.pqcKeysList(req)));
+    route('GET', '/pqc/keys/public', auth('pqc:read', () => this.pqcKeysPublic()));
+    route('POST', '/pqc/sign', auth('pqc:write', (req) => this.pqcSign(req)));
+    route('POST', '/pqc/verify', auth('pqc:read', (req) => this.pqcVerify(req)));
+    route('GET', '/pqc/signatures', auth('pqc:read', (req) => this.pqcSignatures(req)));
+    route('POST', '/pqc/phase', auth('pqc:write', (req) => this.pqcPhaseAdvance(req)));
+    route('GET', '/pqc/migration', auth('pqc:read', () => this.pqcMigration()));
+    route('GET', '/pqc/stats', auth('pqc:read', () => this.pqcStats()));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1469,7 +1494,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review', 'security-automation',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review', 'security-automation', 'dlp', 'pqc',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -6042,6 +6067,165 @@ export class ApiGatewayModule implements IModule {
       return { status: 200, body: this.securityAutomation.compliance.toMarkdown(report), contentType: 'text/markdown' };
     }
     return { status: 200, body: this.securityAutomation.compliance.toJson(report), contentType: 'application/json' };
+  }
+
+  // ---- Data Loss Prevention handlers -------------------------------------
+
+  private dlpRules(): GatewayResponse {
+    if (!this.dlp) return json(501, { error: 'dlp module not registered' });
+    return json(200, { rules: this.dlp.rules() });
+  }
+
+  private dlpRulesUpsert(req: GatewayRequest): GatewayResponse {
+    if (!this.dlp) return json(501, { error: 'dlp module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.name !== 'string' || typeof b.dataType !== 'string' || !Array.isArray(b.patterns) || typeof b.action !== 'string')
+      return json(400, { error: 'fields "id", "name", "dataType", "patterns", "action" are required' });
+    this.dlp.upsertRule({
+      id: b.id, name: b.name, dataType: b.dataType as never, patterns: b.patterns as string[], action: b.action as never,
+      ...(typeof b.minEntropy === 'number' ? { minEntropy: b.minEntropy } : {}),
+      ...(Array.isArray(b.channels) ? { channels: b.channels as never } : {}),
+      ...(typeof b.threshold === 'number' ? { threshold: b.threshold } : {}),
+      ...(typeof b.redactionMask === 'string' ? { redactionMask: b.redactionMask } : {}),
+      ...(Array.isArray(b.notifyTo) ? { notifyTo: b.notifyTo as string[] } : {}),
+    });
+    return json(200, { rules: this.dlp.rules() });
+  }
+
+  private dlpScan(req: GatewayRequest): GatewayResponse {
+    if (!this.dlp) return json(501, { error: 'dlp module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.content !== 'string' || typeof b.channel !== 'string')
+      return json(400, { error: 'fields "content" and "channel" are required' });
+    const result = this.dlp.scan({
+      content: b.content, channel: b.channel as never,
+      ...(typeof b.actor === 'string' ? { actor: b.actor } : {}),
+      ...(typeof b.destination === 'string' ? { destination: b.destination } : {}),
+    });
+    return json(200, result);
+  }
+
+  private dlpIncidents(req: GatewayRequest): GatewayResponse {
+    if (!this.dlp) return json(501, { error: 'dlp module not registered' });
+    const incidents = this.dlp.incidents({
+      ...(req.query.dataType ? { dataType: req.query.dataType as never } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.channel ? { channel: req.query.channel as never } : {}),
+    });
+    return json(200, { incidents, count: incidents.length });
+  }
+
+  private dlpIncidentsUpdate(req: GatewayRequest): GatewayResponse {
+    if (!this.dlp) return json(501, { error: 'dlp module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string')
+      return json(400, { error: 'fields "id" and "status" are required' });
+    const incident = this.dlp.updateIncident(b.id, b.status as never);
+    return incident ? json(200, { incident }) : json(404, { error: 'incident not found' });
+  }
+
+  private dlpStats(): GatewayResponse {
+    if (!this.dlp) return json(501, { error: 'dlp module not registered' });
+    return json(200, { stats: this.dlp.stats() });
+  }
+
+  // ---- Post-Quantum Readiness handlers ------------------------------------
+
+  private pqcAlgorithms(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    return json(200, { algorithms: this.pqc.algorithms({
+      ...(req.query.purpose ? { purpose: req.query.purpose as never } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    }) });
+  }
+
+  private pqcDeprecate(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const algorithm = this.pqc.deprecate(b.id as never);
+    return algorithm ? json(200, { algorithm }) : json(404, { error: 'algorithm not found' });
+  }
+
+  private pqcKeysGenerate(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.algorithm !== 'string' || typeof b.purpose !== 'string')
+      return json(400, { error: 'fields "algorithm" and "purpose" are required' });
+    try {
+      const key = this.pqc.generateKey({
+        algorithm: b.algorithm as never, purpose: b.purpose as never,
+        ...(typeof b.hybridWith === 'string' ? { hybridWith: b.hybridWith as never } : {}),
+      });
+      return json(201, { key });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private pqcKeysList(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    return json(200, { keys: this.pqc.keys({
+      ...(req.query.purpose ? { purpose: req.query.purpose as never } : {}),
+      ...(req.query.hybrid === '1' ? { hybrid: true } : {}),
+    }) });
+  }
+
+  private pqcKeysPublic(): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    return json(200, { keys: this.pqc.exportPublicKeys() });
+  }
+
+  private pqcSign(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.algorithm !== 'string' || typeof b.payload !== 'string' || typeof b.privateKey !== 'string')
+      return json(400, { error: 'fields "workload", "algorithm", "payload", "privateKey" are required' });
+    try {
+      const envelope = this.pqc.sign({ workload: b.workload, algorithm: b.algorithm as never, payload: b.payload, privateKey: b.privateKey });
+      return json(201, { envelope });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private pqcVerify(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.envelope !== 'object' || b.envelope === null || typeof b.payload !== 'string' || typeof b.publicKey !== 'string')
+      return json(400, { error: 'fields "envelope", "payload", "publicKey" are required' });
+    const result = this.pqc.verifyEnvelope(b.envelope as never, b.payload, b.publicKey);
+    return json(200, { result });
+  }
+
+  private pqcSignatures(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    return json(200, { signatures: this.pqc.signatures({
+      ...(req.query.workload ? { workload: req.query.workload } : {}),
+      ...(req.query.hybrid === '1' ? { hybrid: true } : {}),
+    }) });
+  }
+
+  private pqcPhaseAdvance(req: GatewayRequest): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    const b = this.asObject(req.body);
+    const workloads = Array.isArray(b.workloads) ? b.workloads as string[] : [];
+    try {
+      const phase = this.pqc.advancePhase(workloads, b.force === true);
+      return json(200, { phase, migration: this.pqc.migrationHistory() });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private pqcMigration(): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    return json(200, { phase: this.pqc.phase(), migration: this.pqc.migrationHistory(), policy: this.pqc.policy(), pendingDeprecations: this.pqc.pendingDeprecations() });
+  }
+
+  private pqcStats(): GatewayResponse {
+    if (!this.pqc) return json(501, { error: 'pqc module not registered' });
+    return json(200, { stats: this.pqc.stats() });
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {

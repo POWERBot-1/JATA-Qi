@@ -126,3 +126,37 @@ describe('InfrastructureGovernanceModule (kernel wiring)', () => {
     assert.equal(mod.stats().firmwareMismatch, 1);
   });
 });
+
+describe('Hardware root of trust + confidential computing', () => {
+  it('attests TPM/Secure-Boot/measured-boot state and reports posture', () => {
+    const e = new InfrastructureGovernanceEngine();
+    e.registerAsset({ serial: 'SN-200', model: 'Appliance', role: 'server', firmwareVersion: '1', firmwareSha256: 'aa'.repeat(32) });
+    const state = e.attestHardware({ serial: 'SN-200', tpmVersion: '2.0', secureBoot: true, measuredBootHash: 'pcrs-1234', hwKeyHandle: 'tpm:0x81000001', attestationQuote: 'quote-abc' });
+    assert.equal(state.attested, true);
+    assert.equal(state.tpmVersion, '2.0');
+    // Missing quote → recorded but not attested.
+    e.registerAsset({ serial: 'SN-201', model: 'X', role: 'edge', firmwareVersion: '1' });
+    e.attestHardware({ serial: 'SN-201', secureBoot: false });
+    const report = e.rootOfTrustReport();
+    assert.equal(report.attested, 1);
+    assert.equal(report.unAttested, 1);
+    assert.equal(report.secureBootEnabled, 1);
+    assert.equal(report.tpmPresent, 1);
+  });
+
+  it('registers confidential workloads with memory encryption + residency', () => {
+    const e = new InfrastructureGovernanceEngine();
+    const w = e.registerConfidentialWorkload({
+      name: 'payments-enclave', environment: 'enclave', region: 'nbo-1',
+      memoryEncryption: true, measurement: 'enclave-hash-1', dataResidency: 'KE',
+    });
+    assert.equal(w.environment, 'enclave');
+    assert.equal(w.dataResidency, 'KE');
+    e.registerConfidentialWorkload({ name: 'ml-inference', environment: 'sev-snp', region: 'lon-1', memoryEncryption: true, dataResidency: 'GB' });
+    const report = e.confidentialReport();
+    assert.equal(report.total, 2);
+    assert.equal(report.memoryEncrypted, 2);
+    assert.equal(report.byEnvironment.enclave, 1);
+    assert.equal(e.confidentialList().length, 2);
+  });
+});

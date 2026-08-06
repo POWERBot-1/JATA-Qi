@@ -47,6 +47,7 @@ const DEFAULT_EVENTS = [
   'resilience.test.completed', 'resilience.slo.violated',
   'review.scheduled', 'review.completed', 'review.signed_off', 'review.finding.critical',
   'secauto.incident.opened', 'secauto.incident.closed', 'secauto.ban.applied', 'secauto.hunt.completed', 'secauto.compliance.generated',
+  'dlp.incident.created', 'dlp.blocked', 'pqc.phase.advanced', 'pqc.algorithm.deprecated',
 ];
 
 export class RealtimeModule implements IModule {
