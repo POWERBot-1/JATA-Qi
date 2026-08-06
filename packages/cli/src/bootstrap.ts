@@ -106,6 +106,9 @@ import { SecurityReviewModule } from '@jataqi/security-review';
 import { SecurityAutomationModule } from '@jataqi/security-automation';
 import { DlpModule } from '@jataqi/dlp';
 import { PqcModule } from '@jataqi/pqc';
+import { ProductMarketplaceModule } from '@jataqi/product-marketplace';
+import { OnboardingModule } from '@jataqi/onboarding';
+import { OperationsModule } from '@jataqi/operations';
 import { ConversationsModule } from '@jataqi/conversations';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
@@ -334,6 +337,10 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Data Loss Prevention + Post-Quantum Readiness.
   kernel.register(new DlpModule());
   kernel.register(new PqcModule());
+  // Commercial rollout: product marketplace, onboarding, production operations.
+  kernel.register(new ProductMarketplaceModule('1.0.0'));
+  kernel.register(new OnboardingModule());
+  kernel.register(new OperationsModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

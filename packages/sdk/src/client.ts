@@ -74,6 +74,9 @@ export class JataQiClient {
   readonly secauto: SecautoClient;
   readonly dlp: DlpClient;
   readonly pqc: PqcClient;
+  readonly products: ProductMarketplaceClient;
+  readonly onboarding: OnboardingClient;
+  readonly ops: OperationsClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -122,6 +125,9 @@ export class JataQiClient {
     this.secauto = new SecautoClient(this);
     this.dlp = new DlpClient(this);
     this.pqc = new PqcClient(this);
+    this.products = new ProductMarketplaceClient(this);
+    this.onboarding = new OnboardingClient(this);
+    this.ops = new OperationsClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -1161,4 +1167,86 @@ export class PqcClient {
     return this.c.request('GET', '/pqc/migration');
   }
   async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/pqc/stats'); }
+}
+
+// --- Product Marketplace -----------------------------------------------------------
+
+export class ProductMarketplaceClient {
+  constructor(private c: JataQiClient) {}
+  async catalog(): Promise<{ catalog: unknown[] }> { return this.c.request('GET', '/products/catalog'); }
+  async registerProduct(input: { id: string; name: string; version: string; activates: string[]; kind?: string; description?: string; dependencies?: string[]; sizeMb?: number }): Promise<{ manifest: unknown }> {
+    return this.c.request('POST', '/products', input);
+  }
+  /** One-click install (dependencies resolved + provisioned automatically). */
+  async install(id: string): Promise<{ installed: unknown; order: string[] }> { return this.c.request('POST', '/products/install', { id }); }
+  async upgrade(id: string): Promise<{ installed: unknown }> { return this.c.request('POST', '/products/upgrade', { id }); }
+  async uninstall(id: string): Promise<{ removed: boolean; blockedBy: string[] }> { return this.c.request('POST', '/products/uninstall', { id }); }
+  async setRuntime(id: string, runtime: string): Promise<{ installed: unknown }> { return this.c.request('POST', '/products/runtime', { id, runtime }); }
+  async installed(): Promise<{ installed: unknown[] }> { return this.c.request('GET', '/products/installed'); }
+  async upgrades(): Promise<{ upgrades: unknown[] }> { return this.c.request('GET', '/products/upgrades'); }
+  async dependencies(id: string): Promise<{ graph: unknown }> { return this.c.request('GET', '/products/dependencies', undefined, { id }); }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/products/stats'); }
+}
+
+// --- Enterprise Onboarding ------------------------------------------------------------
+
+export class OnboardingClient {
+  constructor(private c: JataQiClient) {}
+  async start(orgName: string, adminEmail: string, opts: { industry?: string; region?: string } = {}): Promise<{ run: unknown }> {
+    return this.c.request('POST', '/onboarding/start', { orgName, adminEmail, ...opts });
+  }
+  async runs(): Promise<{ runs: unknown[] }> { return this.c.request('GET', '/onboarding'); }
+  async getRun(id: string): Promise<{ run: unknown; progress: unknown }> { return this.c.request('GET', '/onboarding/run', undefined, { id }); }
+  async setProfile(runId: string, profile: { name: string; slug: string; industry?: string; region?: string; sizeBand?: string }): Promise<{ run: unknown }> {
+    return this.c.request('POST', '/onboarding/profile', { runId, ...profile });
+  }
+  async completeAdmin(runId: string, adminRoles: string[] = ['admin', 'developer']): Promise<{ run: unknown }> {
+    return this.c.request('POST', '/onboarding/admin', { runId, adminRoles });
+  }
+  async provisionTenant(runId: string, opts: { region?: string; storageDriver?: string; quotas?: Record<string, number> } = {}): Promise<{ run: unknown }> {
+    return this.c.request('POST', '/onboarding/tenant', { runId, ...opts });
+  }
+  async invite(runId: string, email: string, role: string): Promise<{ invite: unknown }> { return this.c.request('POST', '/onboarding/invite', { runId, email, role }); }
+  async acceptInvite(runId: string, inviteId: string): Promise<{ invite: unknown }> { return this.c.request('POST', '/onboarding/invite/accept', { runId, inviteId }); }
+  async completeInvitations(runId: string): Promise<{ run: unknown }> { return this.c.request('POST', '/onboarding/invitations/done', { runId }); }
+  async generateSampleData(runId: string, kinds: string[], seed?: number): Promise<{ run: unknown }> {
+    return this.c.request('POST', '/onboarding/sample-data', { runId, kinds, ...(seed !== undefined ? { seed } : {}) });
+  }
+  async complete(runId: string): Promise<{ run: unknown }> { return this.c.request('POST', '/onboarding/complete', { runId }); }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/onboarding/stats'); }
+}
+
+// --- Production Operations --------------------------------------------------------------
+
+export class OperationsClient {
+  constructor(private c: JataQiClient) {}
+  async createRotation(engineers: string[], opts: { id?: string; shiftMs?: number; maxConsecutive?: number } = {}): Promise<{ rotation: unknown }> {
+    return this.c.request('POST', '/ops/rotations', { engineers, ...opts });
+  }
+  async rotations(): Promise<{ rotations: unknown[] }> { return this.c.request('GET', '/ops/rotations'); }
+  async onCall(rotationId: string): Promise<{ onCall: string }> { return this.c.request('GET', '/ops/oncall', undefined, { rotationId }); }
+  async escalationChain(rotationId: string, severity: string): Promise<{ chain: string[] }> {
+    return this.c.request('GET', '/ops/escalation-chain', undefined, { rotationId, severity });
+  }
+  async addEscalationSla(severity: string, minutes: number, level: number): Promise<{ sla: unknown }> {
+    return this.c.request('POST', '/ops/escalation-slas', { severity, minutes, level });
+  }
+  async escalationSlas(): Promise<{ slas: unknown[] }> { return this.c.request('GET', '/ops/escalation-slas'); }
+  /** Verify a backup restores correctly (content hash match). */
+  async verifyBackup(input: { backupId: string; namespace: string; entries: number; recordedHash: string; actualHash?: string }): Promise<{ verification: unknown }> {
+    return this.c.request('POST', '/ops/backup/verify', input);
+  }
+  async verifications(): Promise<{ verifications: unknown[] }> { return this.c.request('GET', '/ops/backup/verifications'); }
+  async startDrill(name: string, scope: string): Promise<{ drill: unknown }> { return this.c.request('POST', '/ops/drills', { name, scope }); }
+  async advanceDrill(id: string, stage: string, notes?: string): Promise<{ drill: unknown }> {
+    return this.c.request('POST', '/ops/drills/advance', { id, stage, ...(notes ? { notes } : {}) });
+  }
+  async failDrill(id: string, notes?: string): Promise<{ drill: unknown }> { return this.c.request('POST', '/ops/drills/fail', { id, ...(notes ? { notes } : {}) }); }
+  async drills(): Promise<{ drills: unknown[] }> { return this.c.request('GET', '/ops/drills'); }
+  /** Generate an operational health report. */
+  async healthReport(input: { checks: Array<{ name: string; status: string; detail?: string }>; uptimePct?: number; openIncidents?: number; rotationId?: string }): Promise<{ report: unknown }> {
+    return this.c.request('POST', '/ops/health', input);
+  }
+  async healthReports(): Promise<{ reports: unknown[] }> { return this.c.request('GET', '/ops/health'); }
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/ops/stats'); }
 }

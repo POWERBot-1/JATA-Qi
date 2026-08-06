@@ -66,6 +66,9 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/resilience-engineering` | `resilience-engineering` | – | Global Resilience Engineering — multi-region topology, automated failover, human-approved failback, DR orchestration (RPO/RTO), fault-injection resilience tests, SLO/error-budget availability |
 | `@jataqi/supply-chain-security` | `supply-chain-security` | – | Software supply chain governance — repo/CI validation, dependency + CVE/license audit, SLSA provenance, release signing, deployment verification, integrity monitoring |
 | `@jataqi/infra-governance` | `infra-governance` | – | Secure infrastructure governance — hardware lifecycle, trusted provisioning, firmware validation, config drift, compliance baselines, physical access |
+| `@jataqi/product-marketplace` | `product-marketplace` | – | Product marketplace — installable products (TANYA/MAZA/SOMA/Moto X/Nyumbani), one-click lifecycle, dependency resolution, version compatibility |
+| `@jataqi/onboarding` | `onboarding` | – | Enterprise onboarding — guided org setup, tenant provisioning, invitations + roles, sample data |
+| `@jataqi/operations` | `operations` | – | Production operations — on-call rotations, escalation SLAs, backup verification, DR drills, ops health reports |
 | `@jataqi/soc` | `soc` | – | Global Security Operations — telemetry pipeline + hash-chained data lake, threat hunting/intel, insider risk, abuse detection, incident command (sev/escalation/evidence), adversarial validation, security KPIs |
 | `@jataqi/active-defense` | `active-defense` | – | Active Defense & Adaptive Resilience — session risk scoring, adaptive access, approval-gated containment, honeytokens/decoys, dynamic defense, autonomous recovery, continuous improvement |
 | `@jataqi/mobile` | `mobile` | storage | TANYA Mobile Native — push devices (FCM/APNs), push payloads, offline outbox sync, home snapshot |

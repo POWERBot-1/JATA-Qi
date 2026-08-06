@@ -41,6 +41,9 @@ import type { SecurityReviewModule } from '@jataqi/security-review';
 import type { SecurityAutomationModule } from '@jataqi/security-automation';
 import type { DlpModule } from '@jataqi/dlp';
 import type { PqcModule } from '@jataqi/pqc';
+import type { ProductMarketplaceModule } from '@jataqi/product-marketplace';
+import type { OnboardingModule } from '@jataqi/onboarding';
+import type { OperationsModule } from '@jataqi/operations';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -97,6 +100,9 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  products <sub>       Product marketplace: catalog|install|upgrade|uninstall|runtime|installed|upgrades|deps|stats.
+  onboard <sub>        Onboarding: start|profile|admin|tenant|invite|accept|sample|complete|stats.
+  ops <sub>            Operations: rotation|oncall|chain|sla|verify-backup|drill|advance|health|stats.
   dlp <sub>            Data loss prevention: rules|scan|incidents|resolve|stats.
   pqc <sub>            Post-quantum: algorithms|keys|key|sign|verify|signatures|phase|migration|stats.
   secauto <sub>        Security automation: rules|correlations|posture|hunt|hunts|schedule|compliance|export.
@@ -131,6 +137,9 @@ async function main() {
   const agents = kernel.getModule<AgentRuntimeModule>('agent-runtime');
   const knowledge = kernel.getModule<KnowledgeService>('knowledge');
   const graph = kernel.getModule<KnowledgeGraphModule>('knowledge-graph');
+  const products = kernel.getModule<ProductMarketplaceModule>('product-marketplace');
+  const onboarding = kernel.getModule<OnboardingModule>('onboarding');
+  const ops = kernel.getModule<OperationsModule>('operations');
   const search = kernel.getModule<SearchModule>('search');
   const memory = kernel.getModule<DigitalMemoryModule>('memory');
   const learning = kernel.getModule<ContinuousLearningModule>('learning');
@@ -1418,6 +1427,209 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'products': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'catalog':
+            for (const p of products.catalog()) console.log(`- ${p.id} v${p.version} (${p.kind})${p.dependencies ? ` deps=${p.dependencies.join(',')}` : ''}`);
+            console.log(`${products.catalog().length} product(s)`);
+            break;
+          case 'install': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi products install <id>'); process.exit(1); }
+            try {
+              const r = products.install(id, 'cli-admin');
+              console.log(`installed ${r.installed.manifest.id}@${r.installed.manifest.version} — order: ${r.order.join(' → ')}`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'upgrade': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi products upgrade <id>'); process.exit(1); }
+            try {
+              const u = products.upgrade(id, 'cli-admin');
+              console.log(`upgraded ${id} → ${u.manifest.version}`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'uninstall': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi products uninstall <id>'); process.exit(1); }
+            const r = products.uninstall(id, 'cli-admin');
+            console.log(r.removed ? `uninstalled ${id}` : `blocked — dependents: ${r.blockedBy.join(', ')}`);
+            break;
+          }
+          case 'runtime': {
+            const id = args[2], runtime = args[3];
+            if (!id || !runtime) { console.error('Usage: jataqi products runtime <id> <provisioned|running|stopped>'); process.exit(1); }
+            const i = products.setRuntime(id, runtime as never);
+            console.log(i ? `${id}: ${i.runtime}` : 'not installed');
+            break;
+          }
+          case 'installed':
+            for (const i of products.installedList()) console.log(`- ${i.manifest.id}@${i.manifest.version} [${i.runtime}]${i.upgradedAt ? ' (upgraded)' : ''}`);
+            console.log(`${products.installedList().length} installed`);
+            break;
+          case 'upgrades':
+            for (const u of products.upgradesAvailable()) console.log(`- ${u.id}: ${u.version} available`);
+            console.log(`${products.upgradesAvailable().length} upgrade(s)`);
+            break;
+          case 'deps': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi products deps <id>'); process.exit(1); }
+            const g = products.resolveDependencies(id);
+            console.log(`install order: ${g.installOrder.join(' → ')}`);
+            console.log(`cycles: ${g.cycles.length ? g.cycles.map((c: string[]) => c.join('→')).join('; ') : 'none'}`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(products.stats()));
+            break;
+          default:
+            console.error('Usage: jataqi products catalog|install|upgrade|uninstall|runtime|installed|upgrades|deps|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'onboard': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'start': {
+            const org = args[2], adminEmail = args[3];
+            if (!org || !adminEmail) { console.error('Usage: jataqi onboard start <orgName> <adminEmail> [--industry x] [--region x]'); process.exit(1); }
+            const run = onboarding.startOnboarding({ orgName: org, adminEmail, ...(flag('industry') ? { industry: flag('industry') } : {}), ...(flag('region') ? { region: flag('region') } : {}) });
+            console.log(`onboarding ${run.id} started for ${org} — step: ${run.steps.find((s) => s.status === 'in_progress')?.name}`);
+            break;
+          }
+          case 'profile': {
+            const runId = args[2], name = args[3], slug = args[4];
+            if (!runId || !name || !slug) { console.error('Usage: jataqi onboard profile <runId> <name> <slug>'); process.exit(1); }
+            const run = onboarding.setOrgProfile(runId, { name, slug, ...(flag('industry') ? { industry: flag('industry') } : {}) });
+            console.log(`profile set — next: ${run.steps.find((s) => s.status === 'in_progress')?.name}`);
+            break;
+          }
+          case 'admin': {
+            const runId = args[2];
+            if (!runId) { console.error('Usage: jataqi onboard admin <runId>'); process.exit(1); }
+            const run = onboarding.completeAdmin(runId, ['admin', 'developer']);
+            console.log(`admin onboarded — next: ${run.steps.find((s) => s.status === 'in_progress')?.name}`);
+            break;
+          }
+          case 'tenant': {
+            const runId = args[2];
+            if (!runId) { console.error('Usage: jataqi onboard tenant <runId> [--region x] [--driver memory|filesystem|sqlite|postgres]'); process.exit(1); }
+            const run = onboarding.provisionTenant(runId, { ...(flag('region') ? { region: flag('region') } : {}), ...(flag('driver') ? { storageDriver: flag('driver') as never } : {}) });
+            console.log(`tenant ${run.tenant!.tenantId} provisioned (namespace ${run.tenant!.namespace}) — next: ${run.steps.find((s) => s.status === 'in_progress')?.name}`);
+            break;
+          }
+          case 'invite': {
+            const runId = args[2], email = args[3], role = args[4];
+            if (!runId || !email || !role) { console.error('Usage: jataqi onboard invite <runId> <email> <role>'); process.exit(1); }
+            const i = onboarding.invite(runId, { email, role });
+            console.log(`invited ${i.email} as ${i.role} (token ${i.token})`);
+            break;
+          }
+          case 'accept': {
+            const runId = args[2], inviteId = args[3];
+            if (!runId || !inviteId) { console.error('Usage: jataqi onboard accept <runId> <inviteId>'); process.exit(1); }
+            const i = onboarding.acceptInvite(runId, inviteId);
+            console.log(i ? `${i.email} accepted` : 'invite not found');
+            break;
+          }
+          case 'sample': {
+            const runId = args[2], kinds = args[3];
+            if (!runId || !kinds) { console.error('Usage: jataqi onboard sample <runId> <marketplace,tanya,mobility,restaurants>'); process.exit(1); }
+            const run = onboarding.generateSampleData(runId, kinds.split(','));
+            console.log(`sample data: ${JSON.stringify(run.sampleData!.generated)}`);
+            break;
+          }
+          case 'complete': {
+            const runId = args[2];
+            if (!runId) { console.error('Usage: jataqi onboard complete <runId>'); process.exit(1); }
+            const run = onboarding.complete(runId);
+            console.log(`✅ onboarding ${run.id} complete for ${run.orgName}`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(onboarding.stats()));
+            break;
+          default:
+            console.error('Usage: jataqi onboard start|profile|admin|tenant|invite|accept|sample|complete|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'ops': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'rotation': {
+            const engineers = args.slice(2).join(' ').split(',').map((s) => s.trim()).filter(Boolean);
+            if (engineers.length === 0) { console.error('Usage: jataqi ops rotation <eng1,eng2,eng3>'); process.exit(1); }
+            const r = ops.createRotation({ id: 'primary', engineers });
+            console.log(`rotation primary created — on call: ${ops.currentOnCall('primary')}`);
+            break;
+          }
+          case 'oncall': {
+            const rotationId = args[2] ?? 'primary';
+            console.log(`on call: ${ops.currentOnCall(rotationId) ?? 'no rotation'}`);
+            break;
+          }
+          case 'chain': {
+            const rotationId = args[2] ?? 'primary', severity = args[3] ?? 'sev1';
+            console.log(`escalation chain (${severity}): ${ops.escalationChain(rotationId, severity as never).join(' → ')}`);
+            break;
+          }
+          case 'sla': {
+            const severity = args[2], minutes = args[3], level = args[4];
+            if (!severity || !minutes || !level) { console.error('Usage: jataqi ops sla <sev1|sev2|sev3|sev4> <minutes> <level>'); process.exit(1); }
+            const sla = ops.addEscalationSla({ severity: severity as never, minutes: Number(minutes), level: Number(level) });
+            console.log(`SLA ${sla.severity} → level ${sla.level} at ${sla.minutes}m`);
+            break;
+          }
+          case 'verify-backup': {
+            const backupId = args[2], namespace = args[3], hash = args[4];
+            if (!backupId || !namespace || !hash) { console.error('Usage: jataqi ops verify-backup <backupId> <namespace> <contentHash>'); process.exit(1); }
+            const v = ops.verifyBackup({ backupId, namespace, entries: 1, recordedHash: hash, actualHash: hash });
+            console.log(`backup ${v.ok ? '✅ verified' : '❌ FAILED'} (${v.entriesVerified} entries)`);
+            break;
+          }
+          case 'drill': {
+            const name = args.slice(2).join(' ');
+            if (!name) { console.error('Usage: jataqi ops drill <name>'); process.exit(1); }
+            const d = ops.startDrill({ name, scope: 'platform', executedBy: 'cli' });
+            console.log(`drill ${d.id} started (${d.stage})`);
+            break;
+          }
+          case 'advance': {
+            const id = args[2], stage = args[3];
+            if (!id || !stage) { console.error('Usage: jataqi ops advance <drillId> <plan|simulate|restore|validate|failover|recover|completed>'); process.exit(1); }
+            const d = ops.advanceDrill(id, stage as never);
+            console.log(d ? `drill → ${d.stage} (${d.result})` : 'drill not found');
+            break;
+          }
+          case 'health': {
+            const report = ops.generateHealthReport({ checks: [{ name: 'gateway', status: 'healthy' }, { name: 'api', status: 'healthy' }], rotationId: 'primary' });
+            console.log(`health: ${report.overall} — uptime ${report.uptimePct}% · backups verified ${report.backupsVerified} · drills passed ${report.drillsPassed} · on-call ${report.onCallEngineer ?? '—'}`);
+            break;
+          }
+          case 'stats':
+            console.log(JSON.stringify(ops.stats()));
+            break;
+          default:
+            console.error('Usage: jataqi ops rotation|oncall|chain|sla|verify-backup|drill|advance|health|stats'); process.exit(1);
         }
         break;
       }

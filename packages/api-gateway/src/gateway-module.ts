@@ -50,6 +50,9 @@ import type { SecurityReviewModule } from '@jataqi/security-review';
 import type { SecurityAutomationModule } from '@jataqi/security-automation';
 import type { DlpModule } from '@jataqi/dlp';
 import type { PqcModule } from '@jataqi/pqc';
+import type { ProductMarketplaceModule } from '@jataqi/product-marketplace';
+import type { OnboardingModule } from '@jataqi/onboarding';
+import type { OperationsModule } from '@jataqi/operations';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -176,6 +179,9 @@ export class ApiGatewayModule implements IModule {
   private securityAutomation?: SecurityAutomationModule;
   private dlp?: DlpModule;
   private pqc?: PqcModule;
+  private productMarketplace?: ProductMarketplaceModule;
+  private onboarding?: OnboardingModule;
+  private operations?: OperationsModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -275,6 +281,9 @@ export class ApiGatewayModule implements IModule {
     this.securityAutomation = this.tryModule<SecurityAutomationModule>('security-automation');
     this.dlp = this.tryModule<DlpModule>('dlp');
     this.pqc = this.tryModule<PqcModule>('pqc');
+    this.productMarketplace = this.tryModule<ProductMarketplaceModule>('product-marketplace');
+    this.onboarding = this.tryModule<OnboardingModule>('onboarding');
+    this.operations = this.tryModule<OperationsModule>('operations');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -1148,6 +1157,46 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/pqc/phase', auth('pqc:write', (req) => this.pqcPhaseAdvance(req)));
     route('GET', '/pqc/migration', auth('pqc:read', () => this.pqcMigration()));
     route('GET', '/pqc/stats', auth('pqc:read', () => this.pqcStats()));
+    // Product Marketplace.
+    route('GET', '/products/catalog', auth('product:read', () => this.productsCatalog()));
+    route('POST', '/products', auth('product:write', (req) => this.productsRegister(req)));
+    route('POST', '/products/install', auth('product:write', (req) => this.productsInstall(req)));
+    route('POST', '/products/upgrade', auth('product:write', (req) => this.productsUpgrade(req)));
+    route('POST', '/products/uninstall', auth('product:write', (req) => this.productsUninstall(req)));
+    route('POST', '/products/runtime', auth('product:write', (req) => this.productsRuntime(req)));
+    route('GET', '/products/installed', auth('product:read', () => this.productsInstalled()));
+    route('GET', '/products/upgrades', auth('product:read', () => this.productsUpgrades()));
+    route('GET', '/products/dependencies', auth('product:read', (req) => this.productsDependencies(req)));
+    route('GET', '/products/stats', auth('product:read', () => this.productsStats()));
+    // Enterprise Onboarding.
+    route('POST', '/onboarding/start', auth('onboarding:write', (req) => this.onboardingStart(req)));
+    route('GET', '/onboarding', auth('onboarding:read', (req) => this.onboardingList(req)));
+    route('GET', '/onboarding/run', auth('onboarding:read', (req) => this.onboardingGet(req)));
+    route('POST', '/onboarding/profile', auth('onboarding:write', (req) => this.onboardingProfile(req)));
+    route('POST', '/onboarding/admin', auth('onboarding:write', (req) => this.onboardingAdmin(req)));
+    route('POST', '/onboarding/tenant', auth('onboarding:write', (req) => this.onboardingTenant(req)));
+    route('POST', '/onboarding/invite', auth('onboarding:write', (req) => this.onboardingInvite(req)));
+    route('POST', '/onboarding/invite/accept', auth('onboarding:write', (req) => this.onboardingInviteAccept(req)));
+    route('POST', '/onboarding/invitations/done', auth('onboarding:write', (req) => this.onboardingInvitationsDone(req)));
+    route('POST', '/onboarding/sample-data', auth('onboarding:write', (req) => this.onboardingSampleData(req)));
+    route('POST', '/onboarding/complete', auth('onboarding:write', (req) => this.onboardingComplete(req)));
+    route('GET', '/onboarding/stats', auth('onboarding:read', () => this.onboardingStats()));
+    // Production Operations.
+    route('POST', '/ops/rotations', auth('ops:write', (req) => this.opsRotationsCreate(req)));
+    route('GET', '/ops/rotations', auth('ops:read', () => this.opsRotations()));
+    route('GET', '/ops/oncall', auth('ops:read', (req) => this.opsOnCall(req)));
+    route('GET', '/ops/escalation-chain', auth('ops:read', (req) => this.opsEscalationChain(req)));
+    route('POST', '/ops/escalation-slas', auth('ops:write', (req) => this.opsEscalationSlasAdd(req)));
+    route('GET', '/ops/escalation-slas', auth('ops:read', () => this.opsEscalationSlas()));
+    route('POST', '/ops/backup/verify', auth('ops:write', (req) => this.opsBackupVerify(req)));
+    route('GET', '/ops/backup/verifications', auth('ops:read', () => this.opsBackupVerifications()));
+    route('POST', '/ops/drills', auth('ops:write', (req) => this.opsDrillsStart(req)));
+    route('POST', '/ops/drills/advance', auth('ops:write', (req) => this.opsDrillsAdvance(req)));
+    route('POST', '/ops/drills/fail', auth('ops:write', (req) => this.opsDrillsFail(req)));
+    route('GET', '/ops/drills', auth('ops:read', () => this.opsDrills()));
+    route('POST', '/ops/health', auth('ops:write', (req) => this.opsHealthGenerate(req)));
+    route('GET', '/ops/health', auth('ops:read', () => this.opsHealthReports()));
+    route('GET', '/ops/stats', auth('ops:read', () => this.opsStats()));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1494,7 +1543,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review', 'security-automation', 'dlp', 'pqc',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review', 'security-automation', 'dlp', 'pqc', 'product-marketplace', 'onboarding', 'operations',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -6226,6 +6275,320 @@ export class ApiGatewayModule implements IModule {
   private pqcStats(): GatewayResponse {
     if (!this.pqc) return json(501, { error: 'pqc module not registered' });
     return json(200, { stats: this.pqc.stats() });
+  }
+
+  // ---- Product Marketplace handlers ---------------------------------------
+
+  private productsCatalog(): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    return json(200, { catalog: this.productMarketplace.catalog() });
+  }
+
+  private productsRegister(req: GatewayRequest): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.name !== 'string' || typeof b.version !== 'string' || !Array.isArray(b.activates))
+      return json(400, { error: 'fields "id", "name", "version", "activates" are required' });
+    try {
+      const manifest = this.productMarketplace.registerProduct({
+        id: b.id, name: b.name, version: b.version, activates: b.activates as string[],
+        kind: typeof b.kind === 'string' ? b.kind as never : 'custom',
+        ...(typeof b.description === 'string' ? { description: b.description } : {}),
+        ...(Array.isArray(b.dependencies) ? { dependencies: b.dependencies as string[] } : {}),
+        ...(typeof b.minPlatformVersion === 'string' ? { minPlatformVersion: b.minPlatformVersion } : {}),
+        ...(typeof b.sizeMb === 'number' ? { sizeMb: b.sizeMb } : {}),
+      });
+      return json(201, { manifest });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private productsInstall(req: GatewayRequest): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    try {
+      return json(201, this.productMarketplace.install(b.id, this.principalUsername(req) ?? 'admin'));
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private productsUpgrade(req: GatewayRequest): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    try {
+      return json(200, { installed: this.productMarketplace.upgrade(b.id, this.principalUsername(req) ?? 'admin') });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private productsUninstall(req: GatewayRequest): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, this.productMarketplace.uninstall(b.id, this.principalUsername(req) ?? 'admin'));
+  }
+
+  private productsRuntime(req: GatewayRequest): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.runtime !== 'string')
+      return json(400, { error: 'fields "id" and "runtime" are required' });
+    const inst = this.productMarketplace.setRuntime(b.id, b.runtime as never);
+    return inst ? json(200, { installed: inst }) : json(404, { error: 'product not installed' });
+  }
+
+  private productsInstalled(): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    return json(200, { installed: this.productMarketplace.installedList() });
+  }
+
+  private productsUpgrades(): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    return json(200, { upgrades: this.productMarketplace.upgradesAvailable() });
+  }
+
+  private productsDependencies(req: GatewayRequest): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    if (!req.query.id) return json(400, { error: 'field "id" is required' });
+    return json(200, { graph: this.productMarketplace.resolveDependencies(req.query.id) });
+  }
+
+  private productsStats(): GatewayResponse {
+    if (!this.productMarketplace) return json(501, { error: 'product-marketplace module not registered' });
+    return json(200, { stats: this.productMarketplace.stats() });
+  }
+
+  // ---- Enterprise Onboarding handlers --------------------------------------
+
+  private onboardingStart(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.orgName !== 'string' || typeof b.adminEmail !== 'string')
+      return json(400, { error: 'fields "orgName" and "adminEmail" are required' });
+    try {
+      return json(201, { run: this.onboarding.startOnboarding({
+        orgName: b.orgName, adminEmail: b.adminEmail,
+        ...(typeof b.industry === 'string' ? { industry: b.industry } : {}),
+        ...(typeof b.region === 'string' ? { region: b.region } : {}),
+      }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private onboardingList(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    return json(200, { runs: this.onboarding.listRuns() });
+  }
+
+  private onboardingGet(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const run = this.onboarding.getRun(req.query.id ?? '');
+    return run ? json(200, { run, progress: this.onboarding.progress(run.id) }) : json(404, { error: 'run not found' });
+  }
+
+  private onboardingProfile(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string' || typeof b.name !== 'string' || typeof b.slug !== 'string')
+      return json(400, { error: 'fields "runId", "name", "slug" are required' });
+    try {
+      return json(200, { run: this.onboarding.setOrgProfile(b.runId, {
+        name: b.name, slug: b.slug,
+        ...(typeof b.industry === 'string' ? { industry: b.industry } : {}),
+        ...(typeof b.region === 'string' ? { region: b.region } : {}),
+        ...(typeof b.sizeBand === 'string' ? { sizeBand: b.sizeBand } : {}),
+      }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private onboardingAdmin(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string') return json(400, { error: 'field "runId" is required' });
+    return json(200, { run: this.onboarding.completeAdmin(b.runId, Array.isArray(b.adminRoles) ? b.adminRoles as string[] : undefined) });
+  }
+
+  private onboardingTenant(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string') return json(400, { error: 'field "runId" is required' });
+    return json(200, { run: this.onboarding.provisionTenant(b.runId, {
+      ...(typeof b.region === 'string' ? { region: b.region } : {}),
+      ...(typeof b.storageDriver === 'string' ? { storageDriver: b.storageDriver as never } : {}),
+      ...(b.quotas && typeof b.quotas === 'object' ? { quotas: b.quotas as Record<string, number> } : {}),
+    }) });
+  }
+
+  private onboardingInvite(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string' || typeof b.email !== 'string' || typeof b.role !== 'string')
+      return json(400, { error: 'fields "runId", "email", "role" are required' });
+    return json(201, { invite: this.onboarding.invite(b.runId, { email: b.email, role: b.role }) });
+  }
+
+  private onboardingInviteAccept(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string' || typeof b.inviteId !== 'string')
+      return json(400, { error: 'fields "runId" and "inviteId" are required' });
+    const invite = this.onboarding.acceptInvite(b.runId, b.inviteId);
+    return invite ? json(200, { invite }) : json(404, { error: 'invite not found' });
+  }
+
+  private onboardingInvitationsDone(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string') return json(400, { error: 'field "runId" is required' });
+    return json(200, { run: this.onboarding.completeInvitations(b.runId) });
+  }
+
+  private onboardingSampleData(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string' || !Array.isArray(b.kinds))
+      return json(400, { error: 'fields "runId" and "kinds" are required' });
+    return json(200, { run: this.onboarding.generateSampleData(b.runId, b.kinds as string[], typeof b.seed === 'number' ? b.seed : undefined) });
+  }
+
+  private onboardingComplete(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.runId !== 'string') return json(400, { error: 'field "runId" is required' });
+    return json(200, { run: this.onboarding.complete(b.runId) });
+  }
+
+  private onboardingStats(): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    return json(200, { stats: this.onboarding.stats() });
+  }
+
+  // ---- Production Operations handlers --------------------------------------
+
+  private opsRotationsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    if (!Array.isArray(b.engineers) || b.engineers.length === 0)
+      return json(400, { error: 'field "engineers" (non-empty array) is required' });
+    try {
+      return json(201, { rotation: this.operations.createRotation({
+        ...(typeof b.id === 'string' ? { id: b.id } : {}),
+        engineers: b.engineers as string[],
+        ...(typeof b.shiftMs === 'number' ? { shiftMs: b.shiftMs } : {}),
+        ...(Array.isArray(b.escalations) ? { escalations: b.escalations as never } : {}),
+        ...(typeof b.maxConsecutive === 'number' ? { maxConsecutive: b.maxConsecutive } : {}),
+      }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private opsRotations(): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    return json(200, { rotations: this.operations.rotations() });
+  }
+
+  private opsOnCall(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    if (!req.query.rotationId) return json(400, { error: 'field "rotationId" is required' });
+    return json(200, { onCall: this.operations.currentOnCall(req.query.rotationId) });
+  }
+
+  private opsEscalationChain(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    if (!req.query.rotationId || !req.query.severity) return json(400, { error: 'fields "rotationId" and "severity" are required' });
+    return json(200, { chain: this.operations.escalationChain(req.query.rotationId, req.query.severity as never) });
+  }
+
+  private opsEscalationSlasAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.severity !== 'string' || typeof b.minutes !== 'number' || typeof b.level !== 'number')
+      return json(400, { error: 'fields "severity", "minutes", "level" are required' });
+    return json(201, { sla: this.operations.addEscalationSla({ severity: b.severity as never, minutes: b.minutes, level: b.level }) });
+  }
+
+  private opsEscalationSlas(): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    return json(200, { slas: this.operations.escalationSlas() });
+  }
+
+  private opsBackupVerify(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.backupId !== 'string' || typeof b.namespace !== 'string' || typeof b.entries !== 'number' || typeof b.recordedHash !== 'string')
+      return json(400, { error: 'fields "backupId", "namespace", "entries", "recordedHash" are required' });
+    return json(200, { verification: this.operations.verifyBackup({
+      backupId: b.backupId, namespace: b.namespace, entries: b.entries, recordedHash: b.recordedHash,
+      ...(typeof b.actualHash === 'string' ? { actualHash: b.actualHash } : {}),
+      ...(typeof b.durationMs === 'number' ? { durationMs: b.durationMs } : {}),
+    }) });
+  }
+
+  private opsBackupVerifications(): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    return json(200, { verifications: this.operations.verifications() });
+  }
+
+  private opsDrillsStart(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.scope !== 'string')
+      return json(400, { error: 'fields "name" and "scope" are required' });
+    return json(201, { drill: this.operations.startDrill({ name: b.name, scope: b.scope, executedBy: this.principalUsername(req) ?? 'ops' }) });
+  }
+
+  private opsDrillsAdvance(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.stage !== 'string')
+      return json(400, { error: 'fields "id" and "stage" are required' });
+    const drill = this.operations.advanceDrill(b.id, b.stage as never, typeof b.notes === 'string' ? b.notes : undefined);
+    return drill ? json(200, { drill }) : json(404, { error: 'drill not found' });
+  }
+
+  private opsDrillsFail(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const drill = this.operations.failDrill(b.id, typeof b.notes === 'string' ? b.notes : undefined);
+    return drill ? json(200, { drill }) : json(404, { error: 'drill not found' });
+  }
+
+  private opsDrills(): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    return json(200, { drills: this.operations.drills() });
+  }
+
+  private opsHealthGenerate(req: GatewayRequest): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    const b = this.asObject(req.body);
+    const checks = Array.isArray(b.checks) ? b.checks as Array<{ name: string; status: never; detail?: string }> : [];
+    if (checks.length === 0) return json(400, { error: 'field "checks" is required' });
+    return json(201, { report: this.operations.generateHealthReport({
+      checks,
+      ...(typeof b.uptimePct === 'number' ? { uptimePct: b.uptimePct } : {}),
+      ...(typeof b.openIncidents === 'number' ? { openIncidents: b.openIncidents } : {}),
+      ...(typeof b.rotationId === 'string' ? { rotationId: b.rotationId } : {}),
+    }) });
+  }
+
+  private opsHealthReports(): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    return json(200, { reports: this.operations.reports() });
+  }
+
+  private opsStats(): GatewayResponse {
+    if (!this.operations) return json(501, { error: 'operations module not registered' });
+    return json(200, { stats: this.operations.stats() });
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {
