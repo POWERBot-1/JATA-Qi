@@ -42,6 +42,7 @@ import type { TracingModule } from '@jataqi/tracing';
 import type { Span } from '@jataqi/tracing';
 import type { RealtimeModule } from '@jataqi/realtime';
 import type { ActiveDefenseModule } from '@jataqi/active-defense';
+import type { SocModule } from '@jataqi/soc';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -160,6 +161,7 @@ export class ApiGatewayModule implements IModule {
   private ipam?: IpamModule;
   private tanya?: TanyaModule;
   private activeDefense?: ActiveDefenseModule;
+  private soc?: SocModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -251,6 +253,7 @@ export class ApiGatewayModule implements IModule {
     this.ipam = this.tryModule<IpamModule>('ipam');
     this.tanya = this.tryModule<TanyaModule>('tanya');
     this.activeDefense = this.tryModule<ActiveDefenseModule>('active-defense');
+    this.soc = this.tryModule<SocModule>('soc');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -979,6 +982,41 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/defense/integrity', auth('defense:write', (req) => this.defenseIntegrityValidate(req)));
     route('POST', '/defense/crypto/rotate', auth('defense:write', (req) => this.defenseCryptoRotate(req)));
     route('GET', '/defense/report', auth('defense:read', () => this.defenseReport()));
+    // Global Security Operations (SOC).
+    route('GET', '/soc/report', auth('soc:read', () => this.socReport()));
+    route('GET', '/soc/kpis', auth('soc:read', () => this.socKpis()));
+    route('GET', '/soc/lake', auth('soc:read', (req) => this.socLake(req)));
+    route('GET', '/soc/lake/status', auth('soc:read', () => this.socLakeStatus()));
+    route('GET', '/soc/lake/export', auth('soc:read', (req) => this.socLakeExport(req)));
+    route('POST', '/soc/telemetry', auth('soc:write', (req) => this.socTelemetry(req)));
+    route('GET', '/soc/incidents', auth('soc:read', (req) => this.socIncidentsList(req)));
+    route('POST', '/soc/incidents', auth('soc:write', (req) => this.socIncidentsOpen(req)));
+    route('POST', '/soc/incidents/transition', auth('soc:write', (req) => this.socIncidentsTransition(req)));
+    route('POST', '/soc/incidents/evidence', auth('soc:write', (req) => this.socIncidentsEvidence(req)));
+    route('POST', '/soc/incidents/communicate', auth('soc:write', (req) => this.socIncidentsCommunicate(req)));
+    route('POST', '/soc/incidents/review', auth('soc:write', (req) => this.socIncidentsReview(req)));
+    route('POST', '/soc/escalate', auth('soc:write', () => this.socEscalate()));
+    route('POST', '/soc/hunt', auth('soc:write', (req) => this.socHunt(req)));
+    route('GET', '/soc/hunts', auth('soc:read', () => this.socHuntsList()));
+    route('GET', '/soc/playbooks', auth('soc:read', () => this.socPlaybooks()));
+    route('GET', '/soc/hunt-correlation', auth('soc:read', () => this.socHuntCorrelation()));
+    route('POST', '/soc/intel', auth('soc:write', (req) => this.socIntelIngest(req)));
+    route('GET', '/soc/intel', auth('soc:read', (req) => this.socIntelList(req)));
+    route('POST', '/soc/intel/match', auth('soc:write', (req) => this.socIntelMatch(req)));
+    route('GET', '/soc/intel/matches', auth('soc:read', () => this.socIntelMatches()));
+    route('GET', '/soc/intel/correlation', auth('soc:read', () => this.socIntelCorrelation()));
+    route('GET', '/soc/intel/health', auth('soc:read', () => this.socIntelHealth()));
+    route('GET', '/soc/insider/alerts', auth('soc:read', () => this.socInsiderAlerts()));
+    route('POST', '/soc/insider/observe', auth('soc:write', (req) => this.socInsiderObserve(req)));
+    route('GET', '/soc/insider/posture', auth('soc:read', (req) => this.socInsiderPosture(req)));
+    route('GET', '/soc/abuse/alerts', auth('soc:read', () => this.socAbuseAlerts()));
+    route('POST', '/soc/abuse/observe', auth('soc:write', (req) => this.socAbuseObserve(req)));
+    route('GET', '/soc/abuse/coordinated', auth('soc:read', () => this.socAbuseCoordinated()));
+    route('POST', '/soc/campaigns', auth('soc:write', (req) => this.socCampaignsRun(req)));
+    route('GET', '/soc/campaigns', auth('soc:read', () => this.socCampaignsList()));
+    route('GET', '/soc/validation', auth('soc:read', () => this.socValidationScore()));
+    route('POST', '/soc/tabletops', auth('soc:write', (req) => this.socTabletopsAdd(req)));
+    route('GET', '/soc/tabletops', auth('soc:read', () => this.socTabletopsList()));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1325,7 +1363,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -4933,6 +4971,299 @@ export class ApiGatewayModule implements IModule {
   private defenseReport(): GatewayResponse {
     if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
     return json(200, { report: this.activeDefense.report() });
+  }
+
+  // ---- Global Security Operations handlers ---------------------------------
+
+  private socReport(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { report: this.soc.report() });
+  }
+
+  private socKpis(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { kpis: this.soc.kpis() });
+  }
+
+  private socLake(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const entries = this.soc.query({
+      ...(req.query.type ? { type: req.query.type } : {}),
+      ...(req.query.actor ? { actor: req.query.actor } : {}),
+      ...(req.query.origin ? { origin: req.query.origin } : {}),
+      ...(req.query.limit ? { limit: Number(req.query.limit) } : {}),
+    });
+    return json(200, { entries: entries.slice(-50), count: this.soc.lake.count(), analytics: this.soc.lakeAnalytics() });
+  }
+
+  private socLakeStatus(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { entries: this.soc.lake.count(), chainValid: this.soc.verifyLake().valid, integrity: this.soc.verifyLake() });
+  }
+
+  private socLakeExport(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const format = req.query.format === 'csv' ? 'csv' : 'jsonl';
+    const body = format === 'csv' ? this.soc.exportCsv() : this.soc.exportJsonl();
+    return { status: 200, body, contentType: format === 'csv' ? 'text/csv' : 'application/x-ndjson' };
+  }
+
+  private socTelemetry(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.type !== 'string' || typeof b.source !== 'string')
+      return json(400, { error: 'fields "type" and "source" are required' });
+    const entry = this.soc.ingest({
+      source: b.source as never,
+      type: b.type,
+      ...(typeof b.actor === 'string' ? { actor: b.actor } : {}),
+      ...(typeof b.origin === 'string' ? { origin: b.origin } : {}),
+      ...(typeof b.severity === 'string' ? { severity: b.severity as never } : {}),
+      ...(typeof b.detail === 'string' ? { detail: b.detail } : {}),
+      ...(b.data && typeof b.data === 'object' ? { data: b.data as Record<string, unknown> } : {}),
+    });
+    return json(201, { entry });
+  }
+
+  private socIncidentsList(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const incidents = this.soc.listIncidents({
+      ...(req.query.severity ? { severity: req.query.severity } : {}),
+      ...(req.query.status ? { status: req.query.status } : {}),
+    });
+    return json(200, { incidents, count: incidents.length });
+  }
+
+  private socIncidentsOpen(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.title !== 'string' || typeof b.severity !== 'string')
+      return json(400, { error: 'fields "title" and "severity" are required' });
+    const incident = this.soc.openIncident({
+      title: b.title, severity: b.severity,
+      ...(typeof b.commander === 'string' ? { commander: b.commander } : {}),
+      ...(Array.isArray(b.responders) ? { responders: b.responders as string[] } : {}),
+    });
+    return json(201, { incident });
+  }
+
+  private socIncidentsTransition(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.status !== 'string' || typeof b.by !== 'string')
+      return json(400, { error: 'fields "id", "status", and "by" are required' });
+    try {
+      const incident = this.soc.transitionIncident(b.id, b.status, b.by, typeof b.note === 'string' ? b.note : '');
+      return incident ? json(200, { incident }) : json(404, { error: 'incident not found' });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private socIncidentsEvidence(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.description !== 'string' || typeof b.preservedBy !== 'string')
+      return json(400, { error: 'fields "id", "description", and "preservedBy" are required' });
+    const evidence = this.soc.preserveEvidence(b.id, {
+      description: b.description,
+      preservedBy: b.preservedBy,
+      ...(typeof b.artifactHash === 'string' ? { artifactHash: b.artifactHash } : {}),
+    });
+    return evidence ? json(201, { evidence }) : json(404, { error: 'incident not found' });
+  }
+
+  private socIncidentsCommunicate(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.channel !== 'string' || typeof b.message !== 'string' || typeof b.by !== 'string')
+      return json(400, { error: 'fields "id", "channel", "message", and "by" are required' });
+    const comm = this.soc.communicateIncident(b.id, {
+      channel: b.channel, message: b.message, by: b.by,
+      ...(typeof b.to === 'string' ? { to: b.to } : {}),
+    });
+    return comm ? json(201, { communication: comm }) : json(404, { error: 'incident not found' });
+  }
+
+  private socIncidentsReview(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.rca !== 'string' || typeof b.by !== 'string')
+      return json(400, { error: 'fields "id", "rca", and "by" are required' });
+    const incident = this.soc.reviewIncident(b.id, {
+      rca: b.rca, by: b.by,
+      lessons: Array.isArray(b.lessons) ? b.lessons as string[] : [],
+    });
+    return incident ? json(200, { incident }) : json(404, { error: 'incident not found' });
+  }
+
+  private socEscalate(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { results: this.soc.sweepEscalations() });
+  }
+
+  private socHunt(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.playbook !== 'string') return json(400, { error: 'field "playbook" is required' });
+    try {
+      const session = this.soc.hunt(b.playbook, {
+        ...(typeof b.since === 'number' ? { since: b.since } : {}),
+        ...(typeof b.limit === 'number' ? { limit: b.limit } : {}),
+      });
+      return json(200, { session });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private socHuntsList(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { hunts: this.soc.huntSessions() });
+  }
+
+  private socPlaybooks(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { playbooks: this.soc.huntPlaybooks() });
+  }
+
+  private socHuntCorrelation(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { actors: this.soc.huntCorrelation() });
+  }
+
+  private socIntelIngest(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.type !== 'string' || typeof b.value !== 'string' || typeof b.confidence !== 'number' || typeof b.severity !== 'string' || typeof b.source !== 'string')
+      return json(400, { error: 'fields "type", "value", "confidence", "severity", and "source" are required' });
+    try {
+      const indicator = this.soc.ingestIntel({
+        type: b.type, value: b.value, confidence: b.confidence, severity: b.severity, source: b.source,
+        ...(typeof b.tlp === 'string' ? { tlp: b.tlp } : {}),
+        ...(typeof b.expiresAt === 'number' ? { expiresAt: b.expiresAt } : {}),
+        ...(Array.isArray(b.tags) ? { tags: b.tags as string[] } : {}),
+      });
+      return json(201, { indicator });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private socIntelList(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { indicators: this.soc.listIntel({
+      ...(req.query.type ? { type: req.query.type } : {}),
+      ...(req.query.severity ? { severity: req.query.severity } : {}),
+      ...(req.query.source ? { source: req.query.source } : {}),
+    }) });
+  }
+
+  private socIntelMatch(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    const observations = Array.isArray(b.observations) ? b.observations as Array<{ value: string; context?: Record<string, unknown> }> : [];
+    if (observations.length === 0) return json(400, { error: 'field "observations" (array of {value}) is required' });
+    return json(200, { matches: this.soc.matchIntel(observations) });
+  }
+
+  private socIntelMatches(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { matches: this.soc.intelMatches() });
+  }
+
+  private socIntelCorrelation(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { correlation: this.soc.intelCorrelation() });
+  }
+
+  private socIntelHealth(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { health: this.soc.intelFeedHealth() });
+  }
+
+  private socInsiderAlerts(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { alerts: this.soc.insiderAlerts() });
+  }
+
+  private socInsiderObserve(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.actor !== 'string' || typeof b.action !== 'string' || typeof b.sensitivity !== 'string')
+      return json(400, { error: 'fields "actor", "action", and "sensitivity" are required' });
+    const alert = this.soc.observeInsider({
+      actor: b.actor, action: b.action, sensitivity: b.sensitivity,
+      ...(typeof b.detail === 'string' ? { detail: b.detail } : {}),
+    });
+    return json(200, { alert });
+  }
+
+  private socInsiderPosture(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    const principals = Array.isArray(b.principals) ? b.principals as Array<{ principal: string; roles: string[] }> : [];
+    return json(200, { posture: this.soc.insiderPosture(principals) });
+  }
+
+  private socAbuseAlerts(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { alerts: this.soc.abuseAlerts() });
+  }
+
+  private socAbuseObserve(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.kind !== 'string') return json(400, { error: 'field "kind" is required' });
+    const alert = this.soc.observeAbuse({
+      kind: b.kind,
+      ...(typeof b.actor === 'string' ? { actor: b.actor } : {}),
+      ...(typeof b.origin === 'string' ? { origin: b.origin } : {}),
+      ...(typeof b.value === 'string' ? { value: b.value } : {}),
+    });
+    return json(200, { alert });
+  }
+
+  private socAbuseCoordinated(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { clusters: this.soc.abuseCoordinated() });
+  }
+
+  private socCampaignsRun(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.kind !== 'string') return json(400, { error: 'field "kind" is required' });
+    try {
+      return json(201, { campaign: this.soc.runCampaign(b.kind) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private socCampaignsList(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { campaigns: this.soc.campaigns() });
+  }
+
+  private socValidationScore(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { score: this.soc.validationScore(), campaigns: this.soc.campaigns().length });
+  }
+
+  private socTabletopsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.title !== 'string' || typeof b.description !== 'string' || !Array.isArray(b.injects))
+      return json(400, { error: 'fields "title", "description", and "injects" are required' });
+    return json(201, { scenario: this.soc.addTabletop({
+      title: b.title, description: b.description, injects: b.injects as string[],
+      ...(Array.isArray(b.facilitatorNotes) ? { facilitatorNotes: b.facilitatorNotes as string[] } : {}),
+    }) });
+  }
+
+  private socTabletopsList(): GatewayResponse {
+    if (!this.soc) return json(501, { error: 'soc module not registered' });
+    return json(200, { scenarios: this.soc.tabletops() });
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {

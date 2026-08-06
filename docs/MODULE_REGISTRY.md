@@ -58,6 +58,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/crypto` | `crypto` | – | KRT digital asset platform — tokens, NFTs, staking, exchange, custody |
 | `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
 | `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
+| `@jataqi/soc` | `soc` | – | Global Security Operations — telemetry pipeline + hash-chained data lake, threat hunting/intel, insider risk, abuse detection, incident command (sev/escalation/evidence), adversarial validation, security KPIs |
 | `@jataqi/active-defense` | `active-defense` | – | Active Defense & Adaptive Resilience — session risk scoring, adaptive access, approval-gated containment, honeytokens/decoys, dynamic defense, autonomous recovery, continuous improvement |
 | `@jataqi/mobile` | `mobile` | storage | TANYA Mobile Native — push devices (FCM/APNs), push payloads, offline outbox sync, home snapshot |
 | `@jataqi/mobile-app` | – | – | TANYA Mobile Reference App — platform-neutral mobile controller over the SDK (auth persistence, device heartbeat, home snapshot, streaming chat, offline outbox, push feed, silent IdP rotation) + Expo/React Native reference app in examples/react-native-app |

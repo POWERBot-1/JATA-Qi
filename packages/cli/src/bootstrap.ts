@@ -98,6 +98,7 @@ import { IpamModule } from '@jataqi/ipam';
 import { TanyaModule } from '@jataqi/tanya';
 import { MobileModule } from '@jataqi/mobile';
 import { ActiveDefenseModule } from '@jataqi/active-defense';
+import { SocModule } from '@jataqi/soc';
 import { ConversationsModule } from '@jataqi/conversations';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
@@ -311,6 +312,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Active Defense & Adaptive Resilience Layer — risk scoring, containment,
   // deception, recovery, and continuous improvement.
   kernel.register(new ActiveDefenseModule());
+  // Global Security Operations — SOC, telemetry lake, threat hunting/intel,
+  // insider risk, abuse detection, incident command, adversarial validation.
+  kernel.register(new SocModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

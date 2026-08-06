@@ -32,6 +32,17 @@ import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
 import type { ActiveDefenseModule } from '@jataqi/active-defense';
+import type { SocModule } from '@jataqi/soc';
+
+/** SOC incident severity → escalation SLA in minutes (mirrors the module). */
+function severityToSlaMin(severity: string): number {
+  switch (severity) {
+    case 'sev1': case 'critical': return 15;
+    case 'sev2': case 'high': return 60;
+    case 'sev3': case 'medium': return 480;
+    default: return 1440;
+  }
+}
 import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
@@ -78,6 +89,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  soc <sub>           Security Operations: report|kpis|lake|telemetry|incidents|incident|escalate|hunt|hunts|playbooks|intel|match|insider|abuse|campaign|validation|tabletop.
   defense <sub>       Active Defense: posture|findings|risk|signal|bans|ban|lift|contain|actions|approve|deny|honeytokens|honeytoken|decoys|decoy|touches|incidents|incident|review|recover|report|integrity|rotate.
   cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
@@ -124,6 +136,7 @@ async function main() {
   const marketplace = kernel.getModule<MarketplaceModule>('marketplace');
   const cloud = kernel.getModule<CloudModule>('cloud');
   const defense = kernel.getModule<ActiveDefenseModule>('active-defense');
+  const soc = kernel.getModule<SocModule>('soc');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1381,6 +1394,125 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'soc': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'report': {
+            const r = soc.report();
+            console.log(`SOC report @ ${new Date(r.generatedAt).toISOString()}`);
+            console.log(`  incidents: ${r.kpis.openIncidents} open / ${r.kpis.incidents} total (sev1: ${r.kpis.sev1Incidents})`);
+            console.log(`  MTTA ${r.kpis.avgTimeToTriageMin}m · MTTC ${r.kpis.avgTimeToContainMin}m · MTTR ${r.kpis.avgTimeToResolveMin}m`);
+            console.log(`  lake: ${r.kpis.lakeEntries} entries (chain ${r.lakeIntegrity.chainValid ? 'valid' : 'BROKEN'})`);
+            console.log(`  intel: ${r.kpis.intelIndicators} indicators / ${r.kpis.intelMatches} matches · hunts: ${r.kpis.huntsRun}`);
+            console.log(`  insider alerts: ${r.kpis.insiderAlerts} · abuse alerts: ${r.kpis.abuseAlerts}`);
+            console.log(`  validation: ${Math.round(r.kpis.validationScore * 100)}% coverage across ${r.kpis.campaignsRun} campaign(s)`);
+            break;
+          }
+          case 'kpis':
+            console.log(JSON.stringify(soc.kpis(), null, 2));
+            break;
+          case 'lake': {
+            const entries = soc.query({ ...(flag('type') ? { type: flag('type') } : {}), ...(flag('actor') ? { actor: flag('actor') } : {}), ...(flag('limit') ? { limit: Number(flag('limit')) } : {}) });
+            for (const e of entries.slice(-10)) console.log(`- ${new Date(e.ts).toISOString()} [${e.source}] ${e.type}${e.actor ? ` actor=${e.actor}` : ''}${e.origin ? ` from=${e.origin}` : ''}`);
+            console.log(`${entries.length} event(s) in window · lake total ${soc.lake.count()} · chain ${soc.verifyLake().valid ? 'valid' : 'BROKEN'}`);
+            break;
+          }
+          case 'telemetry': {
+            const type = args[2], source = args[3];
+            if (!type || !source) { console.error('Usage: jataqi soc telemetry <type> <source> [--actor x] [--origin ip]'); process.exit(1); }
+            const e = soc.ingest({ type, source: source as never, ...(flag('actor') ? { actor: flag('actor') } : {}), ...(flag('origin') ? { origin: flag('origin') } : {}) });
+            console.log(`ingested ${e.id} (${e.type}) — chain entry ${e.hash.slice(0, 12)}`);
+            break;
+          }
+          case 'incidents': {
+            const incidents = soc.listIncidents({ ...(flag('severity') ? { severity: flag('severity') } : {}), ...(flag('status') ? { status: flag('status') } : {}) });
+            for (const i of incidents) console.log(`- [${i.severity}] ${i.title} (${i.status})${i.commander ? ` IC=${i.commander}` : ''} escalated=${i.escalations}`);
+            console.log(`${incidents.length} incident(s)`);
+            break;
+          }
+          case 'incident': {
+            const title = args[2], severity = args[3];
+            if (!title || !severity) { console.error('Usage: jataqi soc incident <title> <sev1|sev2|sev3|sev4|low|medium|high|critical> [--commander x]'); process.exit(1); }
+            const i = soc.openIncident({ title, severity, ...(flag('commander') ? { commander: flag('commander') } : {}) });
+            console.log(`incident ${i.id} [${i.severity}] ${i.status} — escalation SLA ${severityToSlaMin(i.severity)}m`);
+            break;
+          }
+          case 'escalate': {
+            const results = soc.sweepEscalations();
+            for (const r of results) if (r.escalated) console.log(`escalated ${r.id}: ${r.reason}`);
+            console.log(`${results.filter((r) => r.escalated).length} escalated`);
+            break;
+          }
+          case 'hunt': {
+            const playbook = args[2];
+            if (!playbook) { console.error('Usage: jataqi soc hunt <playbookId>'); process.exit(1); }
+            const s = soc.hunt(playbook);
+            for (const h of s.hits.slice(0, 10)) console.log(`- hit ${h.eventId.slice(0, 8)} ${h.actor ?? ''} ${h.origin ?? ''} ${h.detail ?? ''}`);
+            console.log(s.summary);
+            break;
+          }
+          case 'hunts':
+            for (const s of soc.huntSessions()) console.log(`- ${s.playbookName}: ${s.hits.length} hit(s) @${new Date(s.startedAt).toISOString()}`);
+            break;
+          case 'playbooks':
+            for (const p of soc.huntPlaybooks()) console.log(`- ${p.id} (${p.severity}): ${p.description}`);
+            break;
+          case 'intel': {
+            const type = args[2], value = args[3], confidence = args[4], severity = args[5], source = args[6];
+            if (!type || !value || !confidence || !severity || !source) { console.error('Usage: jataqi soc intel <type> <value> <confidence 0-1> <severity> <source> [--tlp x]'); process.exit(1); }
+            const i = soc.ingestIntel({ type: type as never, value, confidence: Number(confidence), severity: severity as never, source, ...(flag('tlp') ? { tlp: flag('tlp') as never } : {}) });
+            console.log(`indicator ${i.id} (${i.tlp}) ${i.value} conf=${i.confidence}`);
+            break;
+          }
+          case 'match': {
+            const value = args[2];
+            if (!value) { console.error('Usage: jataqi soc match <value>'); process.exit(1); }
+            const matches = soc.matchIntel([{ value }]);
+            for (const m of matches) console.log(`- MATCH ${m.indicator.value} (${m.indicator.severity}, conf ${m.indicator.confidence}, ${m.indicator.source})`);
+            console.log(`${matches.length} match(es)`);
+            break;
+          }
+          case 'insider': {
+            const actor = args[2], action = args[3], sensitivity = args[4];
+            if (!actor || !action || !sensitivity) { console.error('Usage: jataqi soc insider <actor> <action> <standard|privileged|critical>'); process.exit(1); }
+            const alert = soc.observeInsider({ actor, action, sensitivity: sensitivity as never });
+            console.log(alert ? `ALERT [${alert.severity}] ${alert.message}` : 'no alert (within baseline)');
+            break;
+          }
+          case 'abuse': {
+            const kind = args[2];
+            if (!kind) { console.error('Usage: jataqi soc abuse <registration|login|api_call|content|invite> [--actor x] [--origin ip] [--value v]'); process.exit(1); }
+            const alert = soc.observeAbuse({ kind: kind as never, ...(flag('actor') ? { actor: flag('actor') } : {}), ...(flag('origin') ? { origin: flag('origin') } : {}), ...(flag('value') ? { value: flag('value') } : {}) });
+            console.log(alert ? `ALERT [${alert.severity}] ${alert.message}` : 'no abuse detected');
+            break;
+          }
+          case 'campaign': {
+            const kind = args[2];
+            if (!kind) { console.error('Usage: jataqi soc campaign <credential_stuffing|phishing_lure|privilege_escalation|data_exfiltration|lateral_movement|supply_chain_tamper>'); process.exit(1); }
+            const c = soc.runCampaign(kind as never);
+            for (const r of c.results) console.log(`- ${r.step}: ${r.detected ? 'DETECTED' : 'MISSED'} (${r.control})`);
+            console.log(`campaign "${c.name}" score ${Math.round(c.score * 100)}%`);
+            break;
+          }
+          case 'validation':
+            console.log(`detection coverage: ${Math.round(soc.validationScore() * 100)}% across ${soc.campaigns().length} campaign(s)`);
+            break;
+          case 'tabletop': {
+            const title = args.slice(2).join(' ');
+            if (!title) { console.error('Usage: jataqi soc tabletop <title> [--injects a,b]'); process.exit(1); }
+            const s = soc.addTabletop({ title, description: 'tabletop exercise', injects: (flag('injects') ?? 'detect,contain,recover').split(',') });
+            console.log(`scenario ${s.id} ready (${s.injects.length} injects)`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi soc report|kpis|lake|telemetry|incidents|incident|escalate|hunt|hunts|playbooks|intel|match|insider|abuse|campaign|validation|tabletop'); process.exit(1);
         }
         break;
       }

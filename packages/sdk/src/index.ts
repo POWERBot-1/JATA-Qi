@@ -28,5 +28,5 @@ export {
   SimulateClient, TeamClient, CommerceClient, CommerceStatsClient,
   OrgClient, NotificationsClient, FlagsClient, GovClient,
   MediaClient, MFAClient, PkiClient, AuditClient, TanyaClient, AlertsClient, MobileClient,
-  MarketplaceClient, CloudClient, DefenseClient,
+  MarketplaceClient, CloudClient, DefenseClient, SocClient,
 } from './client.js';

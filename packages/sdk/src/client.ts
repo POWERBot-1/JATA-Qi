@@ -65,6 +65,7 @@ export class JataQiClient {
   readonly marketplace: MarketplaceClient;
   readonly cloud: CloudClient;
   readonly defense: DefenseClient;
+  readonly soc: SocClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -104,6 +105,7 @@ export class JataQiClient {
     this.marketplace = new MarketplaceClient(this);
     this.cloud = new CloudClient(this);
     this.defense = new DefenseClient(this);
+    this.soc = new SocClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -778,4 +780,81 @@ export class DefenseClient {
   }
   /** Executive security report. */
   async report(): Promise<{ report: unknown }> { return this.c.request('GET', '/defense/report'); }
+}
+
+// --- Global Security Operations (SOC) ------------------------------------------
+
+export class SocClient {
+  constructor(private c: JataQiClient) {}
+  /** Executive SOC report: KPIs, open incidents, alerts, intel, lake integrity. */
+  async report(): Promise<{ report: unknown }> { return this.c.request('GET', '/soc/report'); }
+  async kpis(): Promise<{ kpis: unknown }> { return this.c.request('GET', '/soc/kpis'); }
+  async lakeStatus(): Promise<{ entries: number; chainValid: boolean; integrity: { valid: boolean; brokenAt?: string } }> {
+    return this.c.request('GET', '/soc/lake/status');
+  }
+  async lake(opts: { type?: string; actor?: string; limit?: number } = {}): Promise<{ entries: unknown[]; count: number; analytics: unknown }> {
+    return this.c.request('GET', '/soc/lake', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  /** Ingest a security telemetry event into the pipeline + data lake. */
+  async ingestEvent(input: { source: string; type: string; actor?: string; origin?: string; severity?: string; detail?: string; data?: Record<string, unknown> }): Promise<{ entry: unknown }> {
+    return this.c.request('POST', '/soc/telemetry', input);
+  }
+  async incidents(opts: { severity?: string; status?: string } = {}): Promise<{ incidents: unknown[]; count: number }> {
+    return this.c.request('GET', '/soc/incidents', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async openIncident(title: string, severity: string, opts: { commander?: string; responders?: string[] } = {}): Promise<{ incident: unknown }> {
+    return this.c.request('POST', '/soc/incidents', { title, severity, ...opts });
+  }
+  async transition(incidentId: string, status: string, by: string, note = ''): Promise<{ incident: unknown }> {
+    return this.c.request('POST', '/soc/incidents/transition', { id: incidentId, status, by, note });
+  }
+  async preserveEvidence(incidentId: string, input: { description: string; artifactHash?: string; preservedBy: string }): Promise<{ evidence: unknown }> {
+    return this.c.request('POST', '/soc/incidents/evidence', { id: incidentId, ...input });
+  }
+  async communicate(incidentId: string, input: { channel: string; message: string; by: string; to?: string }): Promise<{ communication: unknown }> {
+    return this.c.request('POST', '/soc/incidents/communicate', { id: incidentId, ...input });
+  }
+  async reviewIncident(incidentId: string, rca: string, by: string, lessons: string[] = []): Promise<{ incident: unknown }> {
+    return this.c.request('POST', '/soc/incidents/review', { id: incidentId, rca, by, lessons });
+  }
+  async escalate(): Promise<{ results: unknown[] }> { return this.c.request('POST', '/soc/escalate'); }
+  /** Run a threat hunt playbook against the lake. */
+  async hunt(playbook: string, opts: { since?: number; limit?: number } = {}): Promise<{ session: unknown }> {
+    return this.c.request('POST', '/soc/hunt', { playbook, ...opts });
+  }
+  async hunts(): Promise<{ hunts: unknown[] }> { return this.c.request('GET', '/soc/hunts'); }
+  async playbooks(): Promise<{ playbooks: unknown[] }> { return this.c.request('GET', '/soc/playbooks'); }
+  async huntCorrelation(): Promise<{ actors: unknown[] }> { return this.c.request('GET', '/soc/hunt-correlation'); }
+  async ingestIntel(input: { type: string; value: string; confidence: number; severity: string; source: string; tlp?: string; expiresAt?: number; tags?: string[] }): Promise<{ indicator: unknown }> {
+    return this.c.request('POST', '/soc/intel', input);
+  }
+  async intel(opts: { type?: string; severity?: string; source?: string } = {}): Promise<{ indicators: unknown[] }> {
+    return this.c.request('GET', '/soc/intel', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async matchIntel(observations: Array<{ value: string; context?: Record<string, unknown> }>): Promise<{ matches: unknown[] }> {
+    return this.c.request('POST', '/soc/intel/match', { observations });
+  }
+  async intelMatches(): Promise<{ matches: unknown[] }> { return this.c.request('GET', '/soc/intel/matches'); }
+  async intelCorrelation(): Promise<{ correlation: unknown[] }> { return this.c.request('GET', '/soc/intel/correlation'); }
+  async intelHealth(): Promise<{ health: unknown }> { return this.c.request('GET', '/soc/intel/health'); }
+  async insiderAlerts(): Promise<{ alerts: unknown[] }> { return this.c.request('GET', '/soc/insider/alerts'); }
+  async observeInsider(input: { actor: string; action: string; sensitivity: string; detail?: string }): Promise<{ alert: unknown }> {
+    return this.c.request('POST', '/soc/insider/observe', input);
+  }
+  async insiderPosture(principals: Array<{ principal: string; roles: string[] }>): Promise<{ posture: unknown[] }> {
+    return this.c.request('POST', '/soc/insider/posture', { principals });
+  }
+  async abuseAlerts(): Promise<{ alerts: unknown[] }> { return this.c.request('GET', '/soc/abuse/alerts'); }
+  async observeAbuse(input: { kind: string; actor?: string; origin?: string; value?: string }): Promise<{ alert: unknown }> {
+    return this.c.request('POST', '/soc/abuse/observe', input);
+  }
+  async abuseCoordinated(): Promise<{ clusters: unknown[] }> { return this.c.request('GET', '/soc/abuse/coordinated'); }
+  /** Run an adversarial validation campaign (red/purple team). */
+  async runCampaign(kind: string): Promise<{ campaign: unknown }> { return this.c.request('POST', '/soc/campaigns', { kind }); }
+  async campaigns(): Promise<{ campaigns: unknown[] }> { return this.c.request('GET', '/soc/campaigns'); }
+  async validationScore(): Promise<{ score: number; campaigns: number }> { return this.c.request('GET', '/soc/validation'); }
+  async addTabletop(input: { title: string; description: string; injects: string[]; facilitatorNotes?: string[] }): Promise<{ scenario: unknown }> {
+    return this.c.request('POST', '/soc/tabletops', input);
+  }
+  async tabletops(): Promise<{ scenarios: unknown[] }> { return this.c.request('GET', '/soc/tabletops'); }
 }
