@@ -106,6 +106,7 @@ export class TanyaModule implements IModule {
   private agents?: AgentRuntimeModule;
   private pki?: PkiModule;
   private organizations?: OrganizationsModule;
+  private memory?: { record: (input: { category: string; summary: string; data?: Record<string, unknown>; tags?: string[] }) => Promise<unknown> };
   private modelRuntime?: { complete: (req: { messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string }> }) => Promise<{ message: { content: string }; usage?: { promptTokens: number; completionTokens: number } }> };
   private personas = new Map<string, TanyaPersona>([[DEFAULT_PERSONA.id, DEFAULT_PERSONA]]);
   /** IdP identity bridge index: email/preferred_username → platform userId (sub). */
@@ -121,6 +122,11 @@ export class TanyaModule implements IModule {
       this.modelRuntime = kernel.getModule('model-runtime') as unknown as NonNullable<TanyaModule['modelRuntime']>;
     } catch {
       this.modelRuntime = undefined;
+    }
+    try {
+      this.memory = kernel.getModule('memory') as unknown as NonNullable<TanyaModule['memory']>;
+    } catch {
+      this.memory = undefined;
     }
     kernel.container.registerValue('tanya', this);
     kernel.logger.info('tanya module initialized (TANYA AI conversational product layer)');
@@ -321,6 +327,25 @@ export class TanyaModule implements IModule {
     await this.api.bus.emit(TanyaEvents.ChatCompleted, {
       conversationId: conv.id, userId: input.userId, persona: persona.id, messageCount: (await this.conversations.get(conv.id))?.messages.length ?? 0,
     });
+
+    // Digital Memory Engine integration: every conversational turn lands in
+    // the governed memory stream (searchable, learnable, tenant-scoped).
+    if (this.memory) {
+      try {
+        await this.memory.record({
+          category: 'tanya_chat',
+          summary: `TANYA ${persona.id}: ${input.message.slice(0, 140)}`,
+          data: {
+            conversationId: conv.id,
+            persona: persona.id,
+            reply: reply.slice(0, 280),
+            ...(input.orgId ? { orgId: input.orgId } : {}),
+            toolCalls: toolCalls.map((t) => t.name),
+          },
+          tags: ['tanya', persona.id, ...(input.orgId ? [input.orgId] : [])],
+        });
+      } catch { /* memory is best-effort */ }
+    }
 
     return {
       conversationId: conv.id,

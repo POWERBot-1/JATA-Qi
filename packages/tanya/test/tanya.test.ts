@@ -540,4 +540,37 @@ describe('TANYA AI conversational product layer', () => {
       await k2.shutdown();
     }
   });
+
+  it('records conversational turns into the Digital Memory Engine when present', async () => {
+    const kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new ConversationsModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    kernel.register(new OrganizationsModule());
+    const { DigitalMemoryModule } = await import('@jataqi/memory');
+    kernel.register(new DigitalMemoryModule());
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new TanyaModule());
+    await kernel.boot();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const memory = kernel.getModule('memory') as unknown as { query: (q: { category?: string; limit?: number }) => Array<{ category: string; summary: string; data?: Record<string, unknown> }> };
+
+      await tanya.chat({ userId: 'u1', message: 'Remember this conversation', orgId: 'mem-org' });
+      await tanya.chat({ userId: 'u1', message: 'And this follow-up' });
+
+      const events = memory.query({ category: 'tanya_chat' });
+      assert.ok(events.length >= 2, 'each turn recorded');
+      assert.ok(events.some((e) => e.summary.includes('Remember this conversation')));
+      assert.ok(events.some((e) => e.summary.includes('And this follow-up')));
+      const withOrg = events.find((e) => e.data?.orgId === 'mem-org');
+      assert.ok(withOrg, 'orgId captured in memory data');
+      assert.ok(events.some((e) => e.data?.conversationId), 'conversationId captured');
+    } finally {
+      await kernel.shutdown();
+    }
+  });
 });
