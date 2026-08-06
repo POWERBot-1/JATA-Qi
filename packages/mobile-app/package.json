@@ -1,0 +1,29 @@
+{
+  "name": "@jataqi/mobile-app",
+  "version": "0.1.0",
+  "description": "JATA Qi TANYA Mobile Reference App — mobile-first controller over the SDK: auth persistence, device heartbeat, home snapshot, streaming chat, offline outbox, push event subscription, silent session rotation",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/test/*.test.js",
+    "pretest": "npm run build"
+  },
+  "files": ["dist", "src"],
+  "license": "MIT",
+  "dependencies": {
+    "@jataqi/sdk": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}

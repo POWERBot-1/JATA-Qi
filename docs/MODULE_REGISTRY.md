@@ -59,6 +59,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
 | `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
 | `@jataqi/mobile` | `mobile` | storage | TANYA Mobile Native — push devices (FCM/APNs), push payloads, offline outbox sync, home snapshot |
+| `@jataqi/mobile-app` | – | – | TANYA Mobile Reference App — platform-neutral mobile controller over the SDK (auth persistence, device heartbeat, home snapshot, streaming chat, offline outbox, push feed, silent IdP rotation) + Expo/React Native reference app in examples/react-native-app |
 | `@jataqi/sdk` | – | – | typed HTTP client (26 namespaces incl. pki, audit, tanya, alerts) + WebSocket StreamingClient (/ws: tanya.chat, qil.run, chat) |
 | `@jataqi/cli` | – | all | bootstrap (`createJataQi`) + CLI binary |
 

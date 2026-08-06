@@ -178,9 +178,16 @@ export class StreamingClient {
   }
 
   /** TANYA conversational streaming — tanya.chunk… → tanya.done. */
-  tanyaChat(message: string, opts: { persona?: string; conversationId?: string } & StreamHandlers = {}): Promise<StreamResult> {
-    const { persona, conversationId, ...handlers } = opts;
-    return this.run({ type: 'tanya.chat', message, ...(persona ? { persona } : {}), ...(conversationId ? { conversationId } : {}) }, 'tanya.done', handlers);
+  tanyaChat(message: string, opts: { persona?: string; conversationId?: string; orgId?: string; modelRouting?: boolean } & StreamHandlers = {}): Promise<StreamResult> {
+    const { persona, conversationId, orgId, modelRouting, ...handlers } = opts;
+    return this.run({
+      type: 'tanya.chat',
+      message,
+      ...(persona ? { persona } : {}),
+      ...(conversationId ? { conversationId } : {}),
+      ...(orgId ? { orgId } : {}),
+      ...(modelRouting ? { modelRouting: true } : {}),
+    }, 'tanya.done', handlers);
   }
 
   /** QiL live plan execution — qil.step… → qil.done. */

@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "TANYA",
+    "slug": "tanya-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0b1220",
+    "splash": {
+      "backgroundColor": "#0b1220",
+      "resizeMode": "contain"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.jataqi.tanya"
+    },
+    "android": {
+      "package": "ai.jataqi.tanya",
+      "adaptiveIcon": {
+        "backgroundColor": "#0b1220"
+      }
+    },
+    "extra": {
+      "apiUrl": "http://localhost:7400"
+    }
+  }
+}

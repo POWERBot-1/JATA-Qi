@@ -1,0 +1,27 @@
+{
+  "name": "tanya-mobile-reference-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TANYA Mobile — Expo/React Native reference app for the JATA Qi mobile surface (SDK mobile namespace + StreamingClient + @jataqi/mobile-app controller)",
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit"
+  },
+  "dependencies": {
+    "@jataqi/mobile-app": "file:../../packages/mobile-app",
+    "@jataqi/sdk": "file:../../packages/sdk",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "expo": "~52.0.0",
+    "expo-status-bar": "~2.0.0",
+    "react": "18.3.1",
+    "react-native": "0.76.5"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.12",
+    "typescript": "^5.4.0"
+  },
+  "license": "MIT"
+}

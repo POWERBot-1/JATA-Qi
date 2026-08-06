@@ -35,6 +35,9 @@ const DEFAULT_EVENTS = [
   'memory.recorded', 'memory.expired', 'memory.purged',
   'tool.registered', 'tool.invoked', 'tool.failed', 'tool.approval.requested', 'tool.approval.decided',
   'tanya.chat.completed',
+  // Mobile native: push delivery observability, in-app notifications, and
+  // conversation shares — consumed by the reference mobile app's live feed.
+  'mobile.push.sent', 'notification.created', 'conversation.shared_to',
 ];
 
 export class RealtimeModule implements IModule {

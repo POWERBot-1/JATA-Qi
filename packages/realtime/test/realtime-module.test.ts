@@ -125,7 +125,7 @@ describe('RealtimeModule', () => {
     assert.ok(mod.clientCount <= before + 1);
   });
 
-  it('default event set covers the platform bus (memory, tools, tanya)', async () => {
+  it('default event set covers the platform bus (memory, tools, tanya, mobile push, notifications, shares)', async () => {
     // Boot a second module WITHOUT an eventTypes override → DEFAULT_EVENTS.
     const k2 = createTestKernel();
     const mod2 = new RealtimeModule();
@@ -138,22 +138,28 @@ describe('RealtimeModule', () => {
 
     const c = await wsClient(port2, '/ws', 'valid');
     await c.recv(); // connected
-    c.send(JSON.stringify({ op: 'subscribe', topics: ['memory', 'tool', 'tanya'] }));
+    c.send(JSON.stringify({ op: 'subscribe', topics: ['memory', 'tool', 'tanya', 'mobile', 'notification', 'conversation'] }));
     await new Promise((r) => setTimeout(r, 100));
 
     // Emit platform bus events → they should broadcast automatically.
     await k2.bus.emit('memory.recorded', { id: 'm1', category: 'feature_usage' });
     await k2.bus.emit('tool.invoked', { toolId: 't1', status: 'success' });
     await k2.bus.emit('tanya.chat.completed', { conversationId: 'c1', persona: 'main' });
+    await k2.bus.emit('mobile.push.sent', { userId: 'u1', event: 'demo.bridge', devices: 2 });
+    await k2.bus.emit('notification.created', { id: 'n1', recipientId: 'u1', type: 'info', title: 'Hello' });
+    await k2.bus.emit('conversation.shared_to', { conversationId: 'c2', recipientUserId: 'u1', title: 'Shared with you' });
 
     const got: string[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
       const msg = JSON.parse(await c.recv()) as { type: string };
       got.push(msg.type);
     }
     assert.ok(got.includes('memory.recorded'), 'memory.recorded broadcast');
     assert.ok(got.includes('tool.invoked'), 'tool.invoked broadcast');
     assert.ok(got.includes('tanya.chat.completed'), 'tanya.chat.completed broadcast');
+    assert.ok(got.includes('mobile.push.sent'), 'mobile.push.sent broadcast');
+    assert.ok(got.includes('notification.created'), 'notification.created broadcast');
+    assert.ok(got.includes('conversation.shared_to'), 'conversation.shared_to broadcast');
     c.close();
     await k2.shutdown();
     server2.closeAllConnections?.();
