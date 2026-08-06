@@ -202,8 +202,8 @@ export class TanyaClient {
   }> {
     return this.c.request('POST', '/tanya/chat', { message, ...opts });
   }
-  /** List conversations (org-scoped filter supported). */
-  async listConversations(opts: { orgId?: string; search?: string; limit?: number; offset?: number } = {}): Promise<{ conversations: Array<{ id: string; title: string; updatedAt: number; pinned: boolean; messageCount: number; persona?: string }>; total: number }> {
+  /** List conversations (org/folder-scoped filters supported). */
+  async listConversations(opts: { orgId?: string; folderId?: string; search?: string; limit?: number; offset?: number } = {}): Promise<{ conversations: Array<{ id: string; title: string; updatedAt: number; pinned: boolean; messageCount: number; persona?: string }>; total: number }> {
     return this.c.request('GET', '/tanya/conversations', undefined, this.q(opts));
   }
   async getConversation(id: string): Promise<{ id: string; title: string; messages: Array<{ id: string; role: string; content: string; createdAt: number; toolCalls?: unknown[] }>; orgId?: string }> {
@@ -238,6 +238,18 @@ export class TanyaClient {
   /** Share grants of a conversation (owner view). */
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
+  }
+  /** Create a folder. */
+  async createFolder(name: string, color?: string): Promise<{ folder: { id: string; name: string; color?: string } }> {
+    return this.c.request('POST', '/chat/folder', { name, ...(color ? { color } : {}) });
+  }
+  /** List the caller's folders. */
+  async listFolders(): Promise<{ folders: Array<{ id: string; name: string; color?: string }> }> {
+    return this.c.request('GET', '/chat/folders');
+  }
+  /** Move a conversation into a folder (or clear it with undefined). */
+  async moveToFolder(conversationId: string, folderId?: string): Promise<{ ok: boolean }> {
+    return this.c.request('POST', '/chat/folder/move', { id: conversationId, ...(folderId ? { folderId } : {}) });
   }
   /** Archive or restore a conversation (owner only; archived hidden from lists). */
   async setArchived(conversationId: string, archived: boolean): Promise<{ archived: boolean }> {

@@ -82,7 +82,7 @@ Commands:
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
   realtime <sub>      Realtime: stats.
-  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin|archive|restore.
+  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin|archive|restore|folders|folder.
   org <sub>           Organizations: create|invite|accept|list|members.
   tools <sub>         Tool governance: sync|list|stats|alerts|invoke|approvals|approve.
   repl                Start an interactive REPL.
@@ -2031,6 +2031,32 @@ async function main() {
             }
             break;
           }
+          case 'folders': {
+            const conversationsMod = kernel.getModule('conversations') as unknown as { listFolders: (userId: string) => Promise<Array<{ id: string; name: string; color?: string }>> };
+            const folders = await conversationsMod.listFolders('cli');
+            for (const f of folders) console.log(`- ${f.id} ${f.name}${f.color ? ` (${f.color})` : ''}`);
+            console.log(`${folders.length} folder(s)`);
+            break;
+          }
+          case 'folder': {
+            const action = args[2];
+            const convId = args[3];
+            const folderName = args[4];
+            if (action === 'create' && folderName) {
+              const conversationsMod = kernel.getModule('conversations') as unknown as { createFolder: (userId: string, name: string) => Promise<{ id: string }> };
+              const folder = await conversationsMod.createFolder('cli', folderName);
+              console.log(`created folder ${folder.id} (${folderName})`);
+              break;
+            }
+            if (action === 'move' && convId) {
+              const conversationsMod = kernel.getModule('conversations') as unknown as { moveToFolder: (id: string, folderId: string | undefined) => Promise<void> };
+              const folderId = args[4] ?? flag('folder');
+              await conversationsMod.moveToFolder(convId, folderId || undefined);
+              console.log(`moved ${convId}${folderId ? ` into ${folderId}` : ' out of folder'}`);
+              break;
+            }
+            console.error('Usage: jataqi tanya folder create <name> | folder move <convId> [folderId]'); process.exit(1);
+          }
           case 'archive':
           case 'restore': {
             const convId = args[2];
@@ -2113,7 +2139,7 @@ async function main() {
             break;
           }
           default:
-            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin|archive|restore'); process.exit(1);
+            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin|archive|restore|folders|folder'); process.exit(1);
         }
         break;
       }

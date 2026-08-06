@@ -519,6 +519,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/chat/share', auth('agent:run', (req) => this.chatShare(req)));
     route('GET', '/chat/shared', (req) => this.chatShared(req));
     route('POST', '/chat/folder', auth('agent:run', (req) => this.chatFolder(req)));
+    route('POST', '/chat/folder/move', auth('agent:run', (req) => this.chatFolderMove(req)));
     route('GET', '/chat/folders', auth('agent:run', (req) => this.chatFolders(req)));
     route('GET', '/chat/export', auth('agent:run', (req) => this.chatExport(req)));
     route('GET', '/chat/search', auth('agent:run', (req) => this.chatSearch(req)));
@@ -5832,6 +5833,16 @@ export class ApiGatewayModule implements IModule {
     return json(201, { folder });
   }
 
+  private async chatFolderMove(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.conversations) return json(501, { error: 'conversations module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const conv = await this.conversations.get(b.id);
+    if (!conv || conv.userId !== req.principal!.userId) return json(404, { error: 'conversation not found' });
+    await this.conversations.moveToFolder(b.id, typeof b.folderId === 'string' ? b.folderId : undefined);
+    return json(200, { ok: true });
+  }
+
   private async chatFolders(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.conversations) return json(501, { error: 'conversations module not registered' });
     const folders = await this.conversations.listFolders(req.principal!.userId);
@@ -6048,6 +6059,7 @@ export class ApiGatewayModule implements IModule {
     const result = await this.tanya.listConversations(req.principal!.userId, {
       ...(typeof q.search === 'string' ? { search: q.search } : {}),
       ...(typeof q.orgId === 'string' ? { orgId: q.orgId } : {}),
+      ...(typeof q.folderId === 'string' ? { folderId: q.folderId } : {}),
       ...(q.limit ? { limit: Number(q.limit) } : {}),
       ...(q.offset ? { offset: Number(q.offset) } : {}),
     });

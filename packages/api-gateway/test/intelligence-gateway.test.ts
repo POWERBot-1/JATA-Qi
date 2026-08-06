@@ -1924,4 +1924,33 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const missing = await jsonRequest('POST', `${base}/tanya/conversation/archive`, { id: convId }, token);
     assert.equal(missing.status, 400);
   });
+
+  it('conversation folders: create, list, move, filter', async () => {
+    // Create a folder.
+    const folder = await jsonRequest('POST', `${base}/chat/folder`, { name: 'Work', color: 'blue' }, token);
+    assert.equal(folder.status, 201);
+    const folderId = (folder.body as { folder: { id: string } }).folder.id;
+
+    // Create a conversation + move it into the folder.
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'folder chat' }, token);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+    const move = await jsonRequest('POST', `${base}/chat/folder/move`, { id: convId, folderId }, token);
+    assert.equal(move.status, 200);
+
+    // Folder-filtered list shows it.
+    const listed = await jsonRequest('GET', `${base}/tanya/conversations?folderId=${folderId}`, undefined, token);
+    const convs = (listed.body as { conversations: { id: string }[] }).conversations;
+    assert.ok(convs.some((c) => c.id === convId), 'conversation appears under the folder filter');
+
+    // Move out.
+    const out = await jsonRequest('POST', `${base}/chat/folder/move`, { id: convId }, token);
+    assert.equal(out.status, 200);
+    const after = await jsonRequest('GET', `${base}/tanya/conversations?folderId=${folderId}`, undefined, token);
+    assert.ok(!(after.body as { conversations: { id: string }[] }).conversations.some((c) => c.id === convId), 'removed from folder');
+
+    // Cross-user move → 404.
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const denied = await jsonRequest('POST', `${base}/chat/folder/move`, { id: convId, folderId }, (recLogin.body as { token: string }).token);
+    assert.equal(denied.status, 404);
+  });
 });

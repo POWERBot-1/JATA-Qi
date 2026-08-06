@@ -644,4 +644,23 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const after = await client.tanya.listConversations({ limit: 20 });
     assert.ok(after.conversations.some((c) => c.id === chat.conversationId), 'restored visible');
   });
+
+  it('tanya folders: create, move, filter, list', async () => {
+    await client.auth.login('admin', 'admin');
+    const { folder } = await client.tanya.createFolder('SDK Work', 'green');
+    assert.ok(folder.id);
+
+    const chat = await client.tanya.chat('folder via sdk');
+    await client.tanya.moveToFolder(chat.conversationId, folder.id);
+
+    const filtered = await client.tanya.listConversations({ folderId: folder.id });
+    assert.ok(filtered.conversations.some((c) => c.id === chat.conversationId), 'folder-filtered list contains the conversation');
+
+    const folders = await client.tanya.listFolders();
+    assert.ok(folders.folders.some((f) => f.id === folder.id));
+
+    await client.tanya.moveToFolder(chat.conversationId);
+    const after = await client.tanya.listConversations({ folderId: folder.id });
+    assert.ok(!after.conversations.some((c) => c.id === chat.conversationId), 'moved out of folder');
+  });
 });

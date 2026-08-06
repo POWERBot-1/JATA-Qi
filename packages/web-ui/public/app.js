@@ -539,6 +539,7 @@ function renderView(view, data) {
       <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">
         <select id="tanya-persona" style="max-width:200px"><option value="main">main</option></select>
         <select id="tanya-conv" style="flex:1;min-width:220px"><option value="">— new conversation —</option></select>
+        <select id="tanya-folder" style="max-width:180px"><option value="">— folder —</option></select>
         <select id="tanya-org" style="max-width:220px"><option value="">— no org scope —</option></select>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim)"><input type="checkbox" id="tanya-model-routing"> model router</label>
         <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
@@ -582,6 +583,13 @@ function renderView(view, data) {
       (state.personas || []).forEach((p) => {
         if (p.id !== 'main') pSel.insertAdjacentHTML('beforeend', `<option value="${esc(p.id)}">${esc(p.name)}</option>`);
       });
+      // Folders for the current conversation.
+      api('GET', '/chat/folders').then((r) => {
+        const fSel = $('#tanya-folder');
+        if (!fSel) return;
+        (r.folders || []).forEach((f) => fSel.insertAdjacentHTML('beforeend', `<option value="${esc(f.id)}">${esc(f.name)}</option>`));
+        fSel.insertAdjacentHTML('afterend', '<button class="btn-ghost" style="font-size:12px" onclick="moveTanyaFolder()">Move</button>');
+      }).catch(() => {});
       // Org-aware TANYA: populate the org selector from my orgs and default
       // to the first org (org-scoped conversations surface automatically).
       const oSel = $('#tanya-org');
@@ -1080,6 +1088,17 @@ async function exportAudit(format) {
     a.download = `audit-${scope}-${Date.now()}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
+}
+async function moveTanyaFolder() {
+  const convId = $('#tanya-conv')?.value;
+  const folderId = $('#tanya-folder')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  try {
+    const body = { id: convId };
+    if (folderId) body.folderId = folderId;
+    await api('POST', '/chat/folder/move', body);
+    alert(folderId ? `Moved into folder ${folderId}` : 'Removed from folder');
   } catch (e) { alert(e.message); }
 }
 async function archiveTanyaConversation(archived) {

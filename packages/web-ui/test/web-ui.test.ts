@@ -169,6 +169,10 @@ describe('WebUIModule', () => {
     assert.match(js, /scheduleRefresh\('alerts', 15_000\)/, 'alerts auto-refresh scheduled');
     assert.match(js, /scheduleRefresh\('approvals', 10_000\)/, 'approvals auto-refresh scheduled');
     assert.match(js, /refreshTimers\[view\]/, 'refresh throttled per view');
+    // Conversation folders.
+    assert.match(js, /moveTanyaFolder/, 'folder-move action present');
+    assert.match(js, /\/chat\/folder\/move/, 'folder-move endpoint wired');
+    assert.match(js, /tanya-folder/, 'folder selector rendered');
     // Conversation archival.
     assert.match(js, /archiveTanyaConversation/, 'archive action present');
     assert.match(js, /\/tanya\/conversation\/archive/, 'archive endpoint wired');

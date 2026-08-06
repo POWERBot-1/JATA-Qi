@@ -315,4 +315,9 @@ describe('jataqi CLI — intelligence commands', () => {
     const out = await jataqi('tanya', 'archive', 'nope');
     assert.match(out, /not found/);
   });
+
+  it('tanya folders lists zero folders on a fresh OS', async () => {
+    const out = await jataqi('tanya', 'folders');
+    assert.match(out, /0 folder\(s\)/);
+  });
 });
