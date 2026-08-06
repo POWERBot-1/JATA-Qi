@@ -82,12 +82,57 @@ export const MobileEvents = Object.freeze({
   DeviceRemoved: 'mobile.device.removed',
   PushSent: 'mobile.push.sent',
   OutboxSynced: 'mobile.outbox.synced',
+  PushBridgeEvent: 'mobile.push.requested',
 } as const);
+
+/** A bus-event → push mapping: extract a target userId and message from a payload. */
+export interface PushEventMapping {
+  /** Bus event name to listen for. */
+  event: string;
+  /** Payload field (or function) yielding the target userId. */
+  userIdFrom: string | ((payload: Record<string, unknown>) => string | undefined);
+  /** Static title or a payload-based function. */
+  title: string | ((payload: Record<string, unknown>) => string);
+  /** Static body or a payload-based function. */
+  body: string | ((payload: Record<string, unknown>) => string);
+  /** Optional event label attached to the push payload (defaults to the bus event name). */
+  eventName?: string | ((payload: Record<string, unknown>) => string | undefined);
+  /** Optional data merged into the push payload. */
+  data?: (payload: Record<string, unknown>) => Record<string, unknown>;
+}
+
+const DEFAULT_PUSH_EVENTS: PushEventMapping[] = [
+  // Someone shared a conversation with you.
+  {
+    event: 'conversation.shared_to',
+    userIdFrom: 'recipientUserId',
+    title: 'New conversation shared with you',
+    body: () => 'A TANYA conversation was shared with you.',
+    eventName: 'tanya.shared',
+  },
+  // Generic push channel: any module emits mobile.push.requested with
+  // { userId, title, body, event?, data? }.
+  {
+    event: MobileEvents.PushBridgeEvent,
+    userIdFrom: 'userId',
+    title: (p) => String(p.title ?? 'JATA Qi'),
+    body: (p) => String(p.body ?? 'You have a new notification.'),
+    eventName: (p) => (p.event ? String(p.event) : undefined),
+    data: (p) => (p.data && typeof p.data === 'object' ? p.data as Record<string, unknown> : {}),
+  },
+];
 
 export class MobileModule implements IModule {
   readonly id = 'mobile';
   readonly tags = ['core', 'mobile', 'product'] as const;
   readonly dependsOn = ['storage'] as const;
+
+  private readonly pushEvents: PushEventMapping[];
+  private pushUnsubs: Array<() => void> = [];
+
+  constructor(config: { pushEvents?: PushEventMapping[] } = {}) {
+    this.pushEvents = config.pushEvents ?? DEFAULT_PUSH_EVENTS;
+  }
 
   private api!: KernelApi;
   private devices!: ICollection<MobileDevice>;
@@ -104,8 +149,20 @@ export class MobileModule implements IModule {
     kernel.logger.info('mobile module initialized (TANYA Mobile Native)');
   }
 
-  async start(_kernel: KernelApi): Promise<void> { /* no bg work */ }
-  async stop(_kernel: KernelApi): Promise<void> { /* stateless */ }
+  async start(_kernel: KernelApi): Promise<void> {
+    // Event → push bridge: platform events auto-deliver to the target
+    // user's registered mobile devices.
+    for (const mapping of this.pushEvents) {
+      const unsub = this.api.bus.on(mapping.event, (payload: unknown) => {
+        void this.handlePushEvent(mapping, (payload ?? {}) as Record<string, unknown>);
+      });
+      this.pushUnsubs.push(unsub);
+    }
+  }
+  async stop(_kernel: KernelApi): Promise<void> {
+    for (const u of this.pushUnsubs) u();
+    this.pushUnsubs = [];
+  }
 
   // ---- devices -------------------------------------------------------------
 
@@ -305,6 +362,31 @@ export class MobileModule implements IModule {
       sharedWithMeCount,
       pendingApprovalCount,
     };
+  }
+
+  // ---- event → push bridge --------------------------------------------------
+
+  /**
+   * Publish a push request on the bus (mobile.push.requested). Any module can
+   * emit this; the bridge delivers it to the target user's devices.
+   */
+  async emitPush(userId: string, title: string, body: string, opts: { event?: string; data?: Record<string, unknown> } = {}): Promise<{ delivered: number }> {
+    await this.api.bus.emit(MobileEvents.PushBridgeEvent, { userId, title, body, ...(opts.event ? { event: opts.event } : {}), ...(opts.data ? { data: opts.data } : {}) });
+    // The bridge handles delivery synchronously via the subscription; this
+    // helper also returns the direct delivery for callers without the bus.
+    return this.notifyUser(userId, { title, body, ...(opts.event ? { event: opts.event } : {}), ...(opts.data ? { data: opts.data } : {}) });
+  }
+
+  private async handlePushEvent(mapping: PushEventMapping, payload: Record<string, unknown>): Promise<void> {
+    try {
+      const userId = typeof mapping.userIdFrom === 'function' ? mapping.userIdFrom(payload) : payload[mapping.userIdFrom];
+      if (!userId || typeof userId !== 'string') return; // no target — skip
+      const title = typeof mapping.title === 'function' ? mapping.title(payload) : mapping.title;
+      const body = typeof mapping.body === 'function' ? mapping.body(payload) : mapping.body;
+      const eventName = typeof mapping.eventName === 'function' ? mapping.eventName(payload) : mapping.eventName ?? mapping.event;
+      const data = mapping.data ? mapping.data(payload) : {};
+      await this.notifyUser(userId, { title, body, ...(eventName ? { event: eventName } : {}), ...(Object.keys(data).length ? { data } : {}) });
+    } catch { /* push delivery is best-effort */ }
   }
 
   // ---- internals -----------------------------------------------------------

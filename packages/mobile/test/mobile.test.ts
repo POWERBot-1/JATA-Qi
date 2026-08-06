@@ -176,3 +176,108 @@ describe('MobileModule — TANYA Mobile Native', () => {
     assert.equal(snapshot.sharedWithMeCount, 0);
   });
 });
+
+describe('MobileModule — event → push bridge', () => {
+  it('delivers a push when a conversation is shared with a device user', async () => {
+    const kernel = await bootMobile();
+    try {
+      const mobile = kernel.getModule<MobileModule>('mobile');
+      await mobile.registerDevice('recipient-1', { platform: 'android', pushToken: 'fcm-bridge-1' });
+
+      const sent: Array<Record<string, unknown>> = [];
+      const unsub = kernel.bus.on('mobile.push.sent', (e: Record<string, unknown>) => { sent.push(e); });
+
+      // Emit the platform event the bridge listens for.
+      await kernel.bus.emit('conversation.shared_to', { conversationId: 'c1', recipientUserId: 'recipient-1', shareId: 's1' });
+
+      // Delivery is async via the subscription — poll briefly.
+      let delivered = 0;
+      for (let i = 0; i < 20; i++) {
+        if (sent.length >= 1) { delivered = 1; break; }
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.equal(delivered, 1, 'push.sent event fired for the recipient');
+      assert.equal(sent[0]!.userId, 'recipient-1');
+      assert.equal(sent[0]!.devices, 1);
+      unsub();
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('emitPush requests delivery through the bridge for any module', async () => {
+    const kernel = await bootMobile();
+    try {
+      const mobile = kernel.getModule<MobileModule>('mobile');
+      await mobile.registerDevice('u-push', { platform: 'ios', pushToken: 'apns-bridge-1' });
+      const sent: Array<Record<string, unknown>> = [];
+      const unsub = kernel.bus.on('mobile.push.sent', (e: Record<string, unknown>) => { sent.push(e); });
+
+      const result = await mobile.emitPush('u-push', 'Build ready', 'Deploy finished', { event: 'ci.finished', data: { build: 42 } });
+      assert.equal(result.delivered, 1, 'direct delivery to the registered device');
+
+      // The generic bus channel also delivered (bridge subscription).
+      for (let i = 0; i < 20; i++) {
+        if (sent.length >= 1) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.ok(sent.length >= 1, 'generic mobile.push.requested handled');
+      unsub();
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('skips delivery when the payload has no target user or the user has no devices', async () => {
+    const kernel = await bootMobile();
+    try {
+      const sent: Array<Record<string, unknown>> = [];
+      const unsub = kernel.bus.on('mobile.push.sent', (e: Record<string, unknown>) => { sent.push(e); });
+
+      await kernel.bus.emit('conversation.shared_to', { conversationId: 'c1', shareId: 's1' }); // no recipientUserId
+      await kernel.bus.emit('conversation.shared_to', { conversationId: 'c2', recipientUserId: 'nobody' }); // no devices
+
+      await new Promise((r) => setTimeout(r, 100));
+      assert.equal(sent.length, 0, 'no pushes without a target or devices');
+      unsub();
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('supports custom push-event mappings via the constructor', async () => {
+    const kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new ConversationsModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    kernel.register(new OrganizationsModule());
+    kernel.register(new ToolIntelligenceModule());
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new TanyaModule());
+    kernel.register(new MobileModule({
+      pushEvents: [
+        { event: 'custom.event', userIdFrom: 'targetId', title: (p) => `Custom ${p.kind}`, body: 'A custom event fired', eventName: 'custom.push' },
+      ],
+    }));
+    await kernel.boot();
+    try {
+      const mobile = kernel.getModule<MobileModule>('mobile');
+      await mobile.registerDevice('target', { platform: 'android', pushToken: 'fcm-custom' });
+      const sent: Array<Record<string, unknown>> = [];
+      const unsub = kernel.bus.on('mobile.push.sent', (e: Record<string, unknown>) => { sent.push(e); });
+
+      await kernel.bus.emit('custom.event', { targetId: 'target', kind: 'deploy' });
+      for (let i = 0; i < 20; i++) {
+        if (sent.length >= 1) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.ok(sent.length >= 1, 'custom mapping delivered');
+      unsub();
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+});

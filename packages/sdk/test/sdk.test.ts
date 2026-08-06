@@ -691,4 +691,12 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     assert.equal(unreg.removed, true);
     assert.equal((await client.mobile.listDevices()).count, 0);
   });
+
+  it('mobile.emitPush publishes through the bridge', async () => {
+    await client.auth.login('admin', 'admin');
+    await client.mobile.registerDevice('android', { pushToken: 'fcm-sdk-bridge' });
+    const who = await client.auth.whoami();
+    const delivered = await client.mobile.emitPush(who.principal.userId, 'SDK Bridge', 'From the SDK', { event: 'sdk.push' });
+    assert.equal(delivered.delivered, 1);
+  });
 });

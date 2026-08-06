@@ -542,6 +542,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/mobile/outbox', auth('mobile:write', (req) => this.mobileOutbox(req)));
     route('GET', '/mobile/snapshot', auth('mobile:read', (req) => this.mobileSnapshot(req)));
     route('POST', '/mobile/notify', auth('mobile:write', (req) => this.mobileNotify(req)));
+    route('POST', '/mobile/push', auth('mobile:write', (req) => this.mobilePushEmit(req)));
     route('POST', '/tanya/share', auth('tanya:write', (req) => this.tanyaShare(req)));
     route('POST', '/tanya/unshare', auth('tanya:write', (req) => this.tanyaUnshare(req)));
     route('GET', '/tanya/shared', auth('tanya:read', (req) => this.tanyaShared(req)));
@@ -6298,6 +6299,18 @@ export class ApiGatewayModule implements IModule {
     if (!this.mobile) return json(501, { error: 'mobile module not registered' });
     const snapshot = await this.mobile.snapshot(req.principal!.userId);
     return json(200, snapshot);
+  }
+
+  private async mobilePushEmit(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.userId !== 'string' || typeof b.title !== 'string' || typeof b.body !== 'string')
+      return json(400, { error: 'fields "userId", "title", and "body" are required' });
+    const result = await this.mobile.emitPush(b.userId, b.title, b.body, {
+      ...(typeof b.event === 'string' ? { event: b.event } : {}),
+      ...(b.data && typeof b.data === 'object' ? { data: b.data as Record<string, unknown> } : {}),
+    });
+    return json(200, result);
   }
 
   private async mobileNotify(req: GatewayRequest): Promise<GatewayResponse> {

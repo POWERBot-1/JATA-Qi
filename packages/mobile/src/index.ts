@@ -9,4 +9,5 @@ export type {
   OutboxMessageInput,
   OutboxResult,
   MobileSnapshot,
+  PushEventMapping,
 } from './mobile-module.js';

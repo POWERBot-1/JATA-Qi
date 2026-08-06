@@ -329,6 +329,10 @@ export class MobileClient {
   async notify(title: string, body: string, opts: { event?: string; data?: Record<string, unknown> } = {}): Promise<{ delivered: number; payloads: Array<{ apns: Record<string, unknown>; fcm: Record<string, unknown> }> }> {
     return this.c.request('POST', '/mobile/notify', { title, body, ...opts });
   }
+  /** Publish a push through the event bridge to any user's devices. */
+  async emitPush(userId: string, title: string, body: string, opts: { event?: string; data?: Record<string, unknown> } = {}): Promise<{ delivered: number }> {
+    return this.c.request('POST', '/mobile/push', { userId, title, body, ...opts });
+  }
 }
 
 // --- PKI / IdP ------------------------------------------------------------------

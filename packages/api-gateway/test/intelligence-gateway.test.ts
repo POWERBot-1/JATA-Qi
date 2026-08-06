@@ -2013,4 +2013,19 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const bad = await jsonRequest('POST', `${base}/mobile/devices`, { platform: 'nope' }, token);
     assert.equal(bad.status, 400);
   });
+
+  it('POST /mobile/push publishes through the event bridge', async () => {
+    // Register a device for the admin user.
+    await jsonRequest('POST', `${base}/mobile/devices`, { platform: 'android', pushToken: 'fcm-bridge-e2e' }, token);
+    const who = (await jsonRequest('GET', `${base}/whoami`, undefined, token)).body as { principal: { userId: string } };
+    const uid = who.principal.userId;
+
+    const push = await jsonRequest('POST', `${base}/mobile/push`, { userId: uid, title: 'Bridge', body: 'Event push', event: 'e2e.push' }, token);
+    assert.equal(push.status, 200);
+    assert.equal((push.body as { delivered: number }).delivered, 1);
+
+    // Missing fields → 400.
+    const missing = await jsonRequest('POST', `${base}/mobile/push`, { userId: uid }, token);
+    assert.equal(missing.status, 400);
+  });
 });
