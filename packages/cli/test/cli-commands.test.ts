@@ -283,4 +283,10 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(out, /"pingIntervalMs": 30000/);
     assert.match(out, /"uptimeSec": 0/);
   });
+
+  it('tanya sharelink validates ownership cleanly', async () => {
+    // Fresh OS: 'cli' owns nothing, so a sharelink request fails cleanly.
+    const out = await jataqi('tanya', 'sharelink', 'nope');
+    assert.match(out, /not found or not owned/);
+  });
 });

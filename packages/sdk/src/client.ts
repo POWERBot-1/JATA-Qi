@@ -239,6 +239,15 @@ export class TanyaClient {
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
   }
+  /** Public share link for a conversation (anyone with the share id can read). */
+  async createShareLink(conversationId: string): Promise<{ shareId: string }> {
+    return this.c.request('POST', '/chat/share', { id: conversationId });
+  }
+  /** Read a publicly shared conversation by its share id (no auth required). */
+  async getShared(shareId: string): Promise<{ title: string; messages: Array<{ id: string; role: string; content: string; createdAt: number }> }> {
+    const r = await this.c.request<{ conversation: { title: string; messages: Array<{ id: string; role: string; content: string; createdAt: number }> } }>('GET', '/chat/shared', undefined, { id: shareId });
+    return r.conversation;
+  }
   /**
    * Org directory: conversations in an org. Owners/admins see everything
    * (adminOnly=1 requires owner/admin); regular members see their own.

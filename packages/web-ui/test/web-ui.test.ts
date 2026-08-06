@@ -169,6 +169,10 @@ describe('WebUIModule', () => {
     assert.match(js, /scheduleRefresh\('alerts', 15_000\)/, 'alerts auto-refresh scheduled');
     assert.match(js, /scheduleRefresh\('approvals', 10_000\)/, 'approvals auto-refresh scheduled');
     assert.match(js, /refreshTimers\[view\]/, 'refresh throttled per view');
+    // Public share links.
+    assert.match(js, /createTanyaShareLink/, 'share-link action present');
+    assert.match(js, /\/chat\/share/, 'share endpoint wired');
+    assert.match(js, /Public share link/, 'link UI rendered');
     // Conversation export + governance feed topic.
     assert.match(js, /exportTanyaConversation/, 'tanya export action present');
     assert.match(js, /\/chat\/export\?id=/, 'chat export endpoint wired');

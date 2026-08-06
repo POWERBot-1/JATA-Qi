@@ -563,7 +563,9 @@ function renderView(view, data) {
           <input id="tanya-share-email" placeholder="recipient email (IdP identity)" style="flex:1;min-width:200px">
           <input id="tanya-share-user" placeholder="or platform userId" style="flex:1;min-width:200px">
           <button class="btn-ghost" onclick="shareTanyaConversation()">Share</button>
+          <button class="btn-ghost" onclick="createTanyaShareLink()">🔗 Public link</button>
         </div>
+        <div id="tanya-sharelink" style="margin-top:8px;font-size:12px"></div>
         <div id="tanya-shared" style="margin-top:10px"></div>
       </div>
     </div>`;
@@ -1088,6 +1090,18 @@ async function exportTanyaConversation(format) {
     a.download = `conversation-${convId.slice(0, 8)}.${format === 'markdown' ? 'md' : format}`;
     a.click();
     URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
+}
+async function createTanyaShareLink() {
+  const convId = $('#tanya-conv')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  try {
+    const r = await api('POST', '/chat/share', { id: convId });
+    const box = $('#tanya-sharelink');
+    if (box) {
+      const url = `${location.origin}/chat/shared?id=${r.shareId}`;
+      box.innerHTML = `Public share link: <code>${esc(url)}</code> <button class="btn-ghost" onclick="navigator.clipboard.writeText('${esc(url)}').then(()=>alert('copied'))">Copy</button>`;
+    }
   } catch (e) { alert(e.message); }
 }
 async function shareTanyaConversation() {

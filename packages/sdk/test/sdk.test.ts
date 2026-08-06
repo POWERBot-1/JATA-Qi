@@ -567,4 +567,20 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const ownerAdmin = await client.tanya.orgConversations(orgId, { adminOnly: true });
     assert.equal(ownerAdmin.count, 2);
   });
+
+  it('public share links: create + read without auth', async () => {
+    await client.auth.login('admin', 'admin');
+    const chat = await client.tanya.chat('share-link me');
+    const { shareId } = await client.tanya.createShareLink(chat.conversationId);
+    assert.ok(shareId);
+
+    // Readable by an unauthenticated SDK client (public share).
+    const anon = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    const shared = await anon.tanya.getShared(shareId);
+    assert.ok(shared.messages.length >= 2, 'user + assistant messages visible');
+    assert.equal(shared.title.length > 0, true);
+
+    // Unknown share id → error.
+    await assert.rejects(anon.tanya.getShared('nope'), /not found/);
+  });
 });
