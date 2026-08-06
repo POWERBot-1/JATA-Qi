@@ -68,6 +68,7 @@ export class JataQiClient {
   readonly soc: SocClient;
   readonly supplyChain: SupplyChainClient;
   readonly infra: InfraClient;
+  readonly resilience: ResilienceClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -110,6 +111,7 @@ export class JataQiClient {
     this.soc = new SocClient(this);
     this.supplyChain = new SupplyChainClient(this);
     this.infra = new InfraClient(this);
+    this.resilience = new ResilienceClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -942,5 +944,59 @@ export class InfraClient {
   }
   async accessLog(opts: { facility?: string; action?: string } = {}): Promise<{ log: unknown[]; count: number; patterns: unknown[] }> {
     return this.c.request('GET', '/infra/access', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+}
+
+// --- Global Resilience Engineering ------------------------------------------------
+
+export class ResilienceClient {
+  constructor(private c: JataQiClient) {}
+  async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/resilience/stats'); }
+  async regions(): Promise<{ regions: unknown[] }> { return this.c.request('GET', '/resilience/regions'); }
+  async registerRegion(input: { name: string; location: string; role: string; priority: number }): Promise<{ region: unknown }> {
+    return this.c.request('POST', '/resilience/regions', input);
+  }
+  async setRegionRole(name: string, role: string): Promise<{ region: unknown }> { return this.c.request('POST', '/resilience/regions/role', { name, role }); }
+  async health(): Promise<{ regions: Record<string, string> }> { return this.c.request('GET', '/resilience/health'); }
+  /** Record a readiness probe for a workload in a region. */
+  async probe(workload: string, region: string, ok: boolean, latencyMs?: number, detail?: string): Promise<{ probe: unknown }> {
+    return this.c.request('POST', '/resilience/probe', { workload, region, ok, ...(latencyMs !== undefined ? { latencyMs } : {}), ...(detail ? { detail } : {}) });
+  }
+  /** Evaluate automated failover for a workload (primary down → promote standby). */
+  async failover(workload: string): Promise<{ run: unknown }> { return this.c.request('POST', '/resilience/failover', { workload }); }
+  async failback(workload: string, approver: string): Promise<{ run: unknown }> { return this.c.request('POST', '/resilience/failback', { workload, approver }); }
+  async failovers(): Promise<{ failovers: unknown[] }> { return this.c.request('GET', '/resilience/failovers'); }
+  async createPlan(workload: string, rpoMs: number, rtoMs: number, createdBy: string): Promise<{ plan: unknown }> {
+    return this.c.request('POST', '/resilience/plans', { workload, rpoMs, rtoMs, createdBy });
+  }
+  async plans(): Promise<{ plans: unknown[] }> { return this.c.request('GET', '/resilience/plans'); }
+  async executePlan(planId: string, opts: { snapshotAgeMs?: number; failStep?: string } = {}): Promise<{ execution: unknown }> {
+    return this.c.request('POST', '/resilience/plans/execute', { planId, ...opts });
+  }
+  async executions(): Promise<{ executions: unknown[] }> { return this.c.request('GET', '/resilience/executions'); }
+  async compliance(): Promise<{ compliance: unknown }> { return this.c.request('GET', '/resilience/compliance'); }
+  async injectFault(input: { workload: string; kind: string; target: string; intensity: number; durationMs: number }): Promise<{ fault: unknown }> {
+    return this.c.request('POST', '/resilience/faults', input);
+  }
+  async endFault(id: string): Promise<{ fault: unknown }> { return this.c.request('POST', '/resilience/faults/end', { id }); }
+  async faults(opts: { active?: boolean } = {}): Promise<{ faults: unknown[] }> {
+    return this.c.request('GET', '/resilience/faults', undefined, opts.active ? { active: '1' } : undefined);
+  }
+  /** Run a full resilience test: inject fault → recover within RTO → survived? */
+  async runTest(input: { workload: string; kind: string; target: string; intensity: number; durationMs: number; planId: string; snapshotAgeMs?: number; failStep?: string }): Promise<{ fault: unknown; execution: unknown; survived: boolean }> {
+    return this.c.request('POST', '/resilience/tests', input);
+  }
+  async recordAvailability(workload: string, windowMs: number, uptime: number, slo: number): Promise<{ availability: unknown }> {
+    return this.c.request('POST', '/resilience/availability', { workload, windowMs, uptime, slo });
+  }
+  async availability(): Promise<{ availability: Array<{ workload: string; healthy: boolean }>; records: unknown[] }> {
+    return this.c.request('GET', '/resilience/availability');
+  }
+  async probes(opts: { workload?: string; region?: string; ok?: boolean } = {}): Promise<{ probes: unknown[]; count: number }> {
+    const query: Record<string, string> = {};
+    if (opts.workload) query.workload = opts.workload;
+    if (opts.region) query.region = opts.region;
+    if (opts.ok !== undefined) query.ok = opts.ok ? '1' : '0';
+    return this.c.request('GET', '/resilience/probes', undefined, query);
   }
 }

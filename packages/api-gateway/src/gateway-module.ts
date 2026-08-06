@@ -45,6 +45,7 @@ import type { ActiveDefenseModule } from '@jataqi/active-defense';
 import type { SocModule } from '@jataqi/soc';
 import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
+import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -166,6 +167,7 @@ export class ApiGatewayModule implements IModule {
   private soc?: SocModule;
   private supplyChain?: SupplyChainSecurityModule;
   private infraGovernance?: InfrastructureGovernanceModule;
+  private resilience?: ResilienceEngineeringModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -260,6 +262,7 @@ export class ApiGatewayModule implements IModule {
     this.soc = this.tryModule<SocModule>('soc');
     this.supplyChain = this.tryModule<SupplyChainSecurityModule>('supply-chain-security');
     this.infraGovernance = this.tryModule<InfrastructureGovernanceModule>('infra-governance');
+    this.resilience = this.tryModule<ResilienceEngineeringModule>('resilience-engineering');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -1058,6 +1061,28 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/infra/compliance', auth('infra:read', () => this.infraComplianceReport()));
     route('POST', '/infra/access', auth('infra:write', (req) => this.infraAccessLog(req)));
     route('GET', '/infra/access', auth('infra:read', (req) => this.infraAccessList(req)));
+    // Global Resilience Engineering.
+    route('GET', '/resilience/stats', auth('resilience:read', () => this.resilienceStats()));
+    route('GET', '/resilience/regions', auth('resilience:read', () => this.resilienceRegions()));
+    route('POST', '/resilience/regions', auth('resilience:write', (req) => this.resilienceRegionsAdd(req)));
+    route('POST', '/resilience/regions/role', auth('resilience:write', (req) => this.resilienceRegionsRole(req)));
+    route('GET', '/resilience/health', auth('resilience:read', () => this.resilienceHealth()));
+    route('POST', '/resilience/probe', auth('resilience:write', (req) => this.resilienceProbe(req)));
+    route('POST', '/resilience/failover', auth('resilience:write', (req) => this.resilienceFailover(req)));
+    route('POST', '/resilience/failback', auth('resilience:write', (req) => this.resilienceFailback(req)));
+    route('GET', '/resilience/failovers', auth('resilience:read', () => this.resilienceFailovers()));
+    route('POST', '/resilience/plans', auth('resilience:write', (req) => this.resiliencePlansCreate(req)));
+    route('GET', '/resilience/plans', auth('resilience:read', () => this.resiliencePlansList()));
+    route('POST', '/resilience/plans/execute', auth('resilience:write', (req) => this.resiliencePlansExecute(req)));
+    route('GET', '/resilience/executions', auth('resilience:read', () => this.resilienceExecutions()));
+    route('GET', '/resilience/compliance', auth('resilience:read', () => this.resilienceCompliance()));
+    route('POST', '/resilience/faults', auth('resilience:write', (req) => this.resilienceFaultsInject(req)));
+    route('POST', '/resilience/faults/end', auth('resilience:write', (req) => this.resilienceFaultsEnd(req)));
+    route('GET', '/resilience/faults', auth('resilience:read', (req) => this.resilienceFaultsList(req)));
+    route('POST', '/resilience/tests', auth('resilience:write', (req) => this.resilienceTestsRun(req)));
+    route('POST', '/resilience/availability', auth('resilience:write', (req) => this.resilienceAvailabilityRecord(req)));
+    route('GET', '/resilience/availability', auth('resilience:read', () => this.resilienceAvailability()));
+    route('GET', '/resilience/probes', auth('resilience:read', (req) => this.resilienceProbesList(req)));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1404,7 +1429,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -5596,6 +5621,182 @@ export class ApiGatewayModule implements IModule {
       ...(req.query.action ? { action: req.query.action as never } : {}),
     });
     return json(200, { log, count: log.length, patterns: this.infraGovernance.deniedAccessPatterns() });
+  }
+
+  // ---- Global Resilience Engineering handlers --------------------------------
+
+  private resilienceStats(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { stats: this.resilience.stats() });
+  }
+
+  private resilienceRegions(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { regions: this.resilience.regionsList() });
+  }
+
+  private resilienceRegionsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.location !== 'string' || typeof b.role !== 'string' || typeof b.priority !== 'number')
+      return json(400, { error: 'fields "name", "location", "role", "priority" are required' });
+    try {
+      return json(201, { region: this.resilience.registerRegion({ name: b.name, location: b.location, role: b.role as never, priority: b.priority }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private resilienceRegionsRole(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.role !== 'string')
+      return json(400, { error: 'fields "name" and "role" are required' });
+    const region = this.resilience.setRegionRole(b.name, b.role as never);
+    return region ? json(200, { region }) : json(404, { error: 'region not found' });
+  }
+
+  private resilienceHealth(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { regions: this.resilience.regionHealth() });
+  }
+
+  private resilienceProbe(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.region !== 'string' || typeof b.ok !== 'boolean')
+      return json(400, { error: 'fields "workload", "region", "ok" are required' });
+    const probe = this.resilience.recordProbe(b.workload, b.region, b.ok, typeof b.latencyMs === 'number' ? b.latencyMs : 0, typeof b.detail === 'string' ? b.detail : undefined);
+    return json(200, { probe });
+  }
+
+  private resilienceFailover(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string') return json(400, { error: 'field "workload" is required' });
+    const run = this.resilience.evaluateFailover(b.workload);
+    return run ? json(200, { run }) : json(200, { run: null, note: 'no failover required' });
+  }
+
+  private resilienceFailback(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.approver !== 'string')
+      return json(400, { error: 'fields "workload" and "approver" are required' });
+    const run = this.resilience.failback(b.workload, b.approver);
+    return run ? json(200, { run }) : json(404, { error: 'failback not possible' });
+  }
+
+  private resilienceFailovers(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { failovers: this.resilience.failoverHistory() });
+  }
+
+  private resiliencePlansCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.rpoMs !== 'number' || typeof b.rtoMs !== 'number' || typeof b.createdBy !== 'string')
+      return json(400, { error: 'fields "workload", "rpoMs", "rtoMs", "createdBy" are required' });
+    try {
+      return json(201, { plan: this.resilience.createPlan({ workload: b.workload, rpoMs: b.rpoMs, rtoMs: b.rtoMs, createdBy: b.createdBy }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private resiliencePlansList(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { plans: this.resilience.plansList() });
+  }
+
+  private resiliencePlansExecute(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.planId !== 'string') return json(400, { error: 'field "planId" is required' });
+    try {
+      return json(200, { execution: this.resilience.executePlan(b.planId, {
+        ...(typeof b.snapshotAgeMs === 'number' ? { snapshotAgeMs: b.snapshotAgeMs } : {}),
+        ...(typeof b.failStep === 'string' ? { failStep: b.failStep } : {}),
+      }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private resilienceExecutions(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { executions: this.resilience.executionsList() });
+  }
+
+  private resilienceCompliance(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { compliance: this.resilience.drCompliance() });
+  }
+
+  private resilienceFaultsInject(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.kind !== 'string' || typeof b.target !== 'string' || typeof b.intensity !== 'number' || typeof b.durationMs !== 'number')
+      return json(400, { error: 'fields "workload", "kind", "target", "intensity", "durationMs" are required' });
+    try {
+      return json(201, { fault: this.resilience.injectFault({ workload: b.workload, kind: b.kind as never, target: b.target, intensity: b.intensity, durationMs: b.durationMs }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private resilienceFaultsEnd(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const fault = this.resilience.endFault(b.id);
+    return fault ? json(200, { fault }) : json(404, { error: 'fault not found' });
+  }
+
+  private resilienceFaultsList(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    if (req.query.active === '1') return json(200, { faults: this.resilience.activeFaults() });
+    return json(200, { faults: this.resilience.faultsList() });
+  }
+
+  private resilienceTestsRun(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.kind !== 'string' || typeof b.target !== 'string' || typeof b.intensity !== 'number' || typeof b.durationMs !== 'number' || typeof b.planId !== 'string')
+      return json(400, { error: 'fields "workload", "kind", "target", "intensity", "durationMs", "planId" are required' });
+    try {
+      return json(201, this.resilience.runResilienceTest({
+        workload: b.workload, kind: b.kind as never, target: b.target, intensity: b.intensity,
+        durationMs: b.durationMs, planId: b.planId,
+        ...(typeof b.snapshotAgeMs === 'number' ? { snapshotAgeMs: b.snapshotAgeMs } : {}),
+        ...(typeof b.failStep === 'string' ? { failStep: b.failStep } : {}),
+      }));
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private resilienceAvailabilityRecord(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.workload !== 'string' || typeof b.windowMs !== 'number' || typeof b.uptime !== 'number' || typeof b.slo !== 'number')
+      return json(400, { error: 'fields "workload", "windowMs", "uptime", "slo" are required' });
+    return json(201, { availability: this.resilience.recordAvailability({ workload: b.workload, windowMs: b.windowMs, uptime: b.uptime, slo: b.slo }) });
+  }
+
+  private resilienceAvailability(): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    return json(200, { availability: this.resilience.availabilitySummary(), records: this.resilience.availabilityList() });
+  }
+
+  private resilienceProbesList(req: GatewayRequest): GatewayResponse {
+    if (!this.resilience) return json(501, { error: 'resilience-engineering module not registered' });
+    const probes = this.resilience.probesList({
+      ...(req.query.workload ? { workload: req.query.workload } : {}),
+      ...(req.query.region ? { region: req.query.region } : {}),
+      ...(req.query.ok === '1' ? { ok: true } : req.query.ok === '0' ? { ok: false } : {}),
+    });
+    return json(200, { probes: probes.slice(-50), count: probes.length });
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {

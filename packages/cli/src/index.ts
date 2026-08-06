@@ -35,6 +35,7 @@ import type { ActiveDefenseModule } from '@jataqi/active-defense';
 import type { SocModule } from '@jataqi/soc';
 import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
+import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -91,6 +92,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  resilience <sub>    Global resilience: stats|regions|probe|failover|failback|plan|execute|fault|test|availability|compliance.
   supplychain <sub>   Supply chain security: stats|repo|pipeline|audit|provenance|release|deploy|integrity|monitor.
   infra <sub>         Infra governance: stats|assets|asset|provision|approve|firmware|drift|compliance|access.
   soc <sub>           Security Operations: report|kpis|lake|telemetry|incidents|incident|escalate|hunt|hunts|playbooks|intel|match|insider|abuse|campaign|validation|tabletop.
@@ -143,6 +145,7 @@ async function main() {
   const soc = kernel.getModule<SocModule>('soc');
   const supplyChain = kernel.getModule<SupplyChainSecurityModule>('supply-chain-security');
   const infra = kernel.getModule<InfrastructureGovernanceModule>('infra-governance');
+  const resilience = kernel.getModule<ResilienceEngineeringModule>('resilience-engineering');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1400,6 +1403,98 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'resilience': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'stats': {
+            const s = resilience.stats();
+            console.log(`regions: ${s.regions} (primary=${s.primary ?? '—'}, standbys=${s.standbys}, down=${s.regionsDown})`);
+            console.log(`failovers: ${s.failovers} · DR plans: ${s.recoveryPlans} · compliant executions: ${s.drCompliant}/${s.drExecutions}`);
+            console.log(`faults: ${s.activeFaults} active / ${s.faultsInjected} injected · probes: ${s.failedProbes}/${s.probes} failed`);
+            console.log(`availability: ${s.healthyWorkloads}/${s.workloadsTracked} workloads within SLO`);
+            break;
+          }
+          case 'regions': {
+            for (const r of resilience.regionsList()) console.log(`- ${r.name} (${r.location}) [${r.role}] health=${r.health} latency=${r.latencyMs}ms priority=${r.priority}`);
+            break;
+          }
+          case 'probe': {
+            const workload = args[2], region = args[3], ok = args[4];
+            if (!workload || !region || !ok) { console.error('Usage: jataqi resilience probe <workload> <region> <ok:true|false> [--latency ms]'); process.exit(1); }
+            const p = resilience.recordProbe(workload, region, ok === 'true', flag('latency') ? Number(flag('latency')) : 0);
+            console.log(`probe ${p.region}: ${p.ok ? 'OK' : 'FAIL'} (${p.latencyMs}ms)`);
+            console.log(JSON.stringify(resilience.regionHealth()));
+            break;
+          }
+          case 'failover': {
+            const workload = args[2];
+            if (!workload) { console.error('Usage: jataqi resilience failover <workload>'); process.exit(1); }
+            const run = resilience.evaluateFailover(workload);
+            console.log(run ? `FAILED OVER ${run.fromRegion} → ${run.toRegion} (${run.reason})` : 'no failover required (primary healthy)');
+            break;
+          }
+          case 'failback': {
+            const workload = args[2], approver = args[3];
+            if (!workload || !approver) { console.error('Usage: jataqi resilience failback <workload> <approver>'); process.exit(1); }
+            const run = resilience.failback(workload, approver);
+            console.log(run ? `failback approved by ${run.approvedBy}: ${run.fromRegion} → ${run.toRegion}` : 'failback not possible');
+            break;
+          }
+          case 'plan': {
+            const workload = args[2], rpoMin = args[3], rtoMin = args[4];
+            if (!workload || !rpoMin || !rtoMin) { console.error('Usage: jataqi resilience plan <workload> <rpoMinutes> <rtoMinutes> [--by user]'); process.exit(1); }
+            const plan = resilience.createPlan({ workload, rpoMs: Number(rpoMin) * 60_000, rtoMs: Number(rtoMin) * 60_000, createdBy: flag('by') ?? 'cli' });
+            console.log(`plan ${plan.id} for ${plan.workload}: RPO ${plan.rpoMs / 60_000}m / RTO ${plan.rtoMs / 60_000}m, ${plan.steps.length} steps`);
+            break;
+          }
+          case 'execute': {
+            const planId = args[2];
+            if (!planId) { console.error('Usage: jataqi resilience execute <planId> [--snapshot-age-min n] [--fail-step name]'); process.exit(1); }
+            const e = resilience.executePlan(planId, {
+              ...(flag('snapshot-age-min') ? { snapshotAgeMs: Number(flag('snapshot-age-min')) * 60_000 } : {}),
+              ...(flag('fail-step') ? { failStep: flag('fail-step') } : {}),
+            });
+            console.log(`execution ${e.id}: ${e.status}${e.rtoMet === true ? ' (RTO met)' : e.rtoMet === false ? ' (RTO VIOLATED)' : ''}${e.dataLossMs !== undefined ? ` dataLoss=${e.dataLossMs / 60_000}m` : ''}`);
+            break;
+          }
+          case 'fault': {
+            const workload = args[2], kind = args[3], target = args[4], intensity = args[5], durationMin = args[6];
+            if (!workload || !kind || !target || !intensity || !durationMin) { console.error('Usage: jataqi resilience fault <workload> <kind> <target> <intensity 0-1> <durationMin>'); process.exit(1); }
+            const f = resilience.injectFault({ workload, kind: kind as never, target, intensity: Number(intensity), durationMs: Number(durationMin) * 60_000 });
+            console.log(`fault ${f.id} injected: ${f.kind} on ${f.target} (${f.intensity})`);
+            break;
+          }
+          case 'test': {
+            const workload = args[2], kind = args[3], target = args[4], planId = args[5];
+            if (!workload || !kind || !target || !planId) { console.error('Usage: jataqi resilience test <workload> <kind> <target> <planId> [--intensity 0-1]'); process.exit(1); }
+            const r = resilience.runResilienceTest({
+              workload, kind: kind as never, target, planId,
+              intensity: flag('intensity') ? Number(flag('intensity')) : 1, durationMs: 60_000,
+            });
+            console.log(`resilience test: ${r.survived ? 'SURVIVED ✅' : 'FAILED ❌'} (execution ${r.execution.status})`);
+            break;
+          }
+          case 'availability': {
+            const workload = args[2], uptime = args[3], slo = args[4];
+            if (!workload || !uptime || !slo) { console.error('Usage: jataqi resilience availability <workload> <uptime 0-1> <slo 0-1>'); process.exit(1); }
+            const a = resilience.recordAvailability({ workload, windowMs: 30 * 86_400_000, uptime: Number(uptime), slo: Number(slo) });
+            console.log(`${a.workload}: ${a.uptimeLabel} vs SLO ${a.slo * 100}% — error budget ${(a.errorBudget * 100).toFixed(0)}% ${a.uptime >= a.slo ? '✅' : '❌ EXHAUSTED'}`);
+            break;
+          }
+          case 'compliance': {
+            const c = resilience.drCompliance();
+            console.log(`DR compliance: ${c.compliant}/${c.total} compliant (RTO met ${c.rtoMet}, RPO met ${c.rpoMet})`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi resilience stats|regions|probe|failover|failback|plan|execute|fault|test|availability|compliance'); process.exit(1);
         }
         break;
       }

@@ -101,6 +101,7 @@ import { ActiveDefenseModule } from '@jataqi/active-defense';
 import { SocModule } from '@jataqi/soc';
 import { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
+import { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 import { ConversationsModule } from '@jataqi/conversations';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
@@ -320,6 +321,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // Software supply chain + secure infrastructure governance.
   kernel.register(new SupplyChainSecurityModule());
   kernel.register(new InfrastructureGovernanceModule());
+  // Global Resilience Engineering — multi-region, failover, DR, chaos, SLOs.
+  kernel.register(new ResilienceEngineeringModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

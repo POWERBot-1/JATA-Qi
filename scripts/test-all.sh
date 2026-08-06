@@ -13,7 +13,7 @@ PKGS=(
   design-system icons branding dashboard memory learning ai-learning search universal-wallet crypto fx pki mobility logistics agriculture circular energy border restaurants accreditation marketplace cloud cdn email ipam dns registry registrar game-engine game-world game-physics game-architect game-ai game-net game-economy game-audio game-esports game-publish game-liveops
   agent-runtime
   automation model-registry model-runtime compute teams tanya
-  orchestrator multimedia evals finance communication research education health self-evolution link-intelligence multimodal-intelligence supply-chain environment cyberdefense active-defense soc supply-chain-security infra-governance iot smart-cities cloud-devops localization enterprise mfa disaster-recovery optimization synthetic-data business-intelligence mobile api-gateway sdk mobile-app web-ui multimodal sovereign llm-gateway cli
+  orchestrator multimedia evals finance communication research education health self-evolution link-intelligence multimodal-intelligence supply-chain environment cyberdefense active-defense soc supply-chain-security infra-governance resilience-engineering iot smart-cities cloud-devops localization enterprise mfa disaster-recovery optimization synthetic-data business-intelligence mobile api-gateway sdk mobile-app web-ui multimodal sovereign llm-gateway cli
 )
 
 failed=0

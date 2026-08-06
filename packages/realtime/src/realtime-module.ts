@@ -43,6 +43,8 @@ const DEFAULT_EVENTS = [
   'soc.incident.opened', 'soc.abuse.alert', 'soc.insider.alert', 'soc.intel.matched', 'soc.hunt.complete',
   'supplychain.dependency.vulnerable', 'supplychain.deployment.mismatch', 'supplychain.integrity.drift',
   'infra.firmware.mismatch', 'infra.config.drift', 'infra.physical.access.denied',
+  'resilience.failover.completed', 'resilience.dr.executed', 'resilience.fault.injected',
+  'resilience.test.completed', 'resilience.slo.violated',
 ];
 
 export class RealtimeModule implements IModule {
