@@ -82,7 +82,7 @@ Commands:
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
   realtime <sub>      Realtime: stats.
-  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary.
+  tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin.
   org <sub>           Organizations: create|invite|accept|list|members.
   tools <sub>         Tool governance: sync|list|stats|alerts|invoke|approvals|approve.
   repl                Start an interactive REPL.
@@ -2031,6 +2031,19 @@ async function main() {
             }
             break;
           }
+          case 'pin':
+          case 'unpin': {
+            const convId = args[2];
+            const pinned = sub === 'pin';
+            if (!convId) { console.error(`Usage: jataqi tanya ${sub} <convId>`); process.exit(1); }
+            try {
+              await tanya.setPinned(convId, 'cli', pinned);
+              console.log(`${pinned ? 'pinned' : 'unpinned'} ${convId}`);
+            } catch (err) {
+              console.log((err as Error).message);
+            }
+            break;
+          }
           case 'summary': {
             const convId = args[2];
             if (!convId) { console.error('Usage: jataqi tanya summary <convId>'); process.exit(1); }
@@ -2087,7 +2100,7 @@ async function main() {
             break;
           }
           default:
-            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary'); process.exit(1);
+            console.error('Usage: jataqi tanya chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin'); process.exit(1);
         }
         break;
       }

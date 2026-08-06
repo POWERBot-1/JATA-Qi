@@ -1871,4 +1871,28 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const missing = await jsonRequest('POST', `${base}/tanya/summarize`, {}, token);
     assert.equal(missing.status, 400);
   });
+
+  it('POST /tanya/conversation/pin pins with ownership enforcement', async () => {
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'pin via gateway' }, token);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+
+    const pin = await jsonRequest('POST', `${base}/tanya/conversation/pin`, { id: convId, pinned: true }, token);
+    assert.equal(pin.status, 200);
+    assert.equal((pin.body as { pinned: boolean }).pinned, true);
+
+    // Pinned first in the list.
+    const listed = await jsonRequest('GET', `${base}/tanya/conversations`, undefined, token);
+    const convs = (listed.body as { conversations: { id: string; pinned: boolean }[] }).conversations;
+    assert.equal(convs[0]!.id, convId);
+    assert.equal(convs[0]!.pinned, true);
+
+    // Non-owner → 403.
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const denied = await jsonRequest('POST', `${base}/tanya/conversation/pin`, { id: convId, pinned: true }, (recLogin.body as { token: string }).token);
+    assert.equal(denied.status, 403);
+
+    // Missing field → 400.
+    const missing = await jsonRequest('POST', `${base}/tanya/conversation/pin`, { id: convId }, token);
+    assert.equal(missing.status, 400);
+  });
 });

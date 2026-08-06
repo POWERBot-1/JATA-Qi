@@ -303,4 +303,10 @@ describe('jataqi CLI — intelligence commands', () => {
     assert.match(out, /\[main@tanya-main\] Echo: Hello streaming CLI/);
     assert.match(out, /conversation [0-9a-f-]{36} \(2 messages\)/);
   });
+
+  it('tanya pin validates ownership cleanly', async () => {
+    // Fresh OS: 'cli' owns nothing → clear error.
+    const out = await jataqi('tanya', 'pin', 'nope');
+    assert.match(out, /not found/);
+  });
 });

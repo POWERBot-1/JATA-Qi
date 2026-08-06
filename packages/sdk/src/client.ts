@@ -239,6 +239,10 @@ export class TanyaClient {
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
   }
+  /** Pin or unpin a conversation (owner only). */
+  async setPinned(conversationId: string, pinned: boolean): Promise<{ pinned: boolean }> {
+    return this.c.request('POST', '/tanya/conversation/pin', { id: conversationId, pinned });
+  }
   /** Rollup summary of a conversation (owned by the caller). */
   async summarize(conversationId: string): Promise<{ summary: { conversationId: string; title: string; messageCount: number; userMessages: number; assistantMessages: number; firstMessage?: string; lastReply?: string; toolCalls: string[]; orgId?: string } }> {
     return this.c.request('POST', '/tanya/summarize', { conversationId });

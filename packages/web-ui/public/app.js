@@ -542,6 +542,8 @@ function renderView(view, data) {
         <select id="tanya-org" style="max-width:220px"><option value="">— no org scope —</option></select>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-dim)"><input type="checkbox" id="tanya-model-routing"> model router</label>
         <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
+        <button class="btn-ghost" onclick="pinTanyaConversation(true)">📌 Pin</button>
+        <button class="btn-ghost" onclick="pinTanyaConversation(false)">Unpin</button>
       </div>
       <div id="tanya-messages" class="chat-log">
         <p style="color:var(--text-dim)">Send a message to start chatting with TANYA.</p>
@@ -1076,6 +1078,14 @@ async function exportAudit(format) {
     a.download = `audit-${scope}-${Date.now()}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
+}
+async function pinTanyaConversation(pinned) {
+  const convId = $('#tanya-conv')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  try {
+    await api('POST', '/tanya/conversation/pin', { id: convId, pinned });
+    alert(pinned ? '📌 Pinned' : 'Unpinned');
   } catch (e) { alert(e.message); }
 }
 async function summarizeTanyaConversation() {

@@ -445,6 +445,15 @@ export class TanyaModule implements IModule {
     return (await this.conversations.sharesFor(conversationId)).map((s) => ({ id: s.id, ...(s.recipientUserId ? { recipientUserId: s.recipientUserId } : {}), createdAt: s.createdAt, ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}) }));
   }
 
+  /** Pin or unpin a conversation (owner only). */
+  async setPinned(conversationId: string, ownerId: string, pinned: boolean): Promise<void> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const conv = await this.conversations.get(conversationId);
+    if (!conv) throw new Error(`conversation ${conversationId} not found`);
+    if (conv.userId !== ownerId) throw new Error('conversation does not belong to this user');
+    await this.conversations.setPinned(conversationId, pinned);
+  }
+
   /**
    * Rollup summary of a conversation: title, message counts by role, first
    * user message, last assistant reply excerpt, tool calls used, org, and

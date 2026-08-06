@@ -617,4 +617,18 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     rec.setToken(recLogin.token);
     await assert.rejects(rec.tanya.summarize(chat.conversationId), /does not belong/);
   });
+
+  it('tanya.setPinned pins and surfaces pinned-first ordering', async () => {
+    await client.auth.login('admin', 'admin');
+    const a = await client.tanya.chat('pin candidate a');
+    const b = await client.tanya.chat('pin candidate b');
+
+    await client.tanya.setPinned(b.conversationId, true);
+    const listed = await client.tanya.listConversations({ limit: 10 });
+    assert.equal(listed.conversations[0]!.id, b.conversationId);
+    assert.equal(listed.conversations[0]!.pinned, true);
+
+    await client.tanya.setPinned(b.conversationId, false);
+    void a;
+  });
 });

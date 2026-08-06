@@ -617,4 +617,30 @@ describe('TANYA AI conversational product layer', () => {
       await kernel.shutdown();
     }
   });
+
+  it('setPinned pins/unpins conversations with ownership enforcement', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const result = await tanya.chat({ userId: 'u1', message: 'pin me' });
+      const convId = result.conversationId;
+
+      await tanya.setPinned(convId, 'u1', true);
+      const pinned = await tanya.getConversation(convId);
+      assert.equal(pinned!.pinned, true);
+
+      // Pinned conversations sort first in the list.
+      const listed = await tanya.listConversations('u1');
+      assert.equal(listed.conversations[0]!.id, convId);
+
+      await tanya.setPinned(convId, 'u1', false);
+      assert.equal((await tanya.getConversation(convId))!.pinned, false);
+
+      // Ownership enforced.
+      await assert.rejects(tanya.setPinned(convId, 'stranger', true), /does not belong/);
+      await assert.rejects(tanya.setPinned('nope', 'u1', true), /not found/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
 });

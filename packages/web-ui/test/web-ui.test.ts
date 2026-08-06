@@ -169,6 +169,10 @@ describe('WebUIModule', () => {
     assert.match(js, /scheduleRefresh\('alerts', 15_000\)/, 'alerts auto-refresh scheduled');
     assert.match(js, /scheduleRefresh\('approvals', 10_000\)/, 'approvals auto-refresh scheduled');
     assert.match(js, /refreshTimers\[view\]/, 'refresh throttled per view');
+    // Conversation pinning.
+    assert.match(js, /pinTanyaConversation/, 'pin action present');
+    assert.match(js, /\/tanya\/conversation\/pin/, 'pin endpoint wired');
+    assert.match(js, /📌 Pin/, 'pin button rendered');
     // Conversation summarization.
     assert.match(js, /summarizeTanyaConversation/, 'summarize action present');
     assert.match(js, /\/tanya\/summarize/, 'summarize endpoint wired');
