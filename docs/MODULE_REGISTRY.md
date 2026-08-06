@@ -58,6 +58,7 @@ through `@jataqi/core-kernel` and wired by `@jataqi/cli` (`createJataQi`).
 | `@jataqi/crypto` | `crypto` | – | KRT digital asset platform — tokens, NFTs, staking, exchange, custody |
 | `@jataqi/link-intelligence` | `link-intelligence` | knowledge, memory | link classification → extraction → gap analysis → evolution |
 | `@jataqi/multimodal-intelligence` | `multimodal-intelligence` | knowledge, memory | cross-modality knowledge acquisition framework |
+| `@jataqi/privacy` | `privacy` | storage | Privacy engineering — classification/retention/consent/SAR + PIA workflow, RoPA processing records, crypto-shred secure deletion, data-minimization checks |
 | `@jataqi/resilience-engineering` | `resilience-engineering` | – | Global Resilience Engineering — multi-region topology, automated failover, human-approved failback, DR orchestration (RPO/RTO), fault-injection resilience tests, SLO/error-budget availability |
 | `@jataqi/supply-chain-security` | `supply-chain-security` | – | Software supply chain governance — repo/CI validation, dependency + CVE/license audit, SLSA provenance, release signing, deployment verification, integrity monitoring |
 | `@jataqi/infra-governance` | `infra-governance` | – | Secure infrastructure governance — hardware lifecycle, trusted provisioning, firmware validation, config drift, compliance baselines, physical access |

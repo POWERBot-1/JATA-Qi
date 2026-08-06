@@ -592,6 +592,17 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/privacy/consent', auth('audit:read', (req) => this.privacyConsentList(req)));
     route('POST', '/privacy/sar', auth('audit:read', (req) => this.privacySAR(req)));
     route('GET', '/privacy/sar', auth('audit:read', (req) => this.privacySARList(req)));
+    // Privacy engineering: PIA / RoPA / secure deletion / minimization.
+    route('POST', '/privacy/pia', auth('audit:read', (req) => this.privacyPiaSubmit(req)));
+    route('GET', '/privacy/pia', auth('audit:read', (req) => this.privacyPiaList(req)));
+    route('POST', '/privacy/pia/decide', auth('audit:read', (req) => this.privacyPiaDecide(req)));
+    route('POST', '/privacy/processing', auth('audit:read', (req) => this.privacyProcessingRegister(req)));
+    route('GET', '/privacy/processing', auth('audit:read', (req) => this.privacyProcessingList(req)));
+    route('POST', '/privacy/secure-delete', auth('audit:read', (req) => this.privacySecureDelete(req)));
+    route('GET', '/privacy/deletions', auth('audit:read', (req) => this.privacyDeletionsList(req)));
+    route('POST', '/privacy/minimize', auth('audit:read', (req) => this.privacyMinimizeCheck(req)));
+    route('GET', '/privacy/minimize', auth('audit:read', () => this.privacyMinimizeList()));
+    route('GET', '/privacy/posture', auth('audit:read', () => this.privacyPosture()));
     // Policy & governance registry.
     route('GET', '/gov/policies', auth('policy:read', (req) => this.govList(req)));
     route('POST', '/gov/policies', auth('policy:read', (req) => this.govCreate(req)));
@@ -6894,6 +6905,109 @@ export class ApiGatewayModule implements IModule {
   private async privacySARList(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.privacy) return json(501, { error: 'privacy module not registered' });
     return json(200, { requests: await this.privacy.listSARs(req.query.subjectId ?? req.principal!.userId) });
+  }
+
+  // ---- privacy engineering handlers --------------------------------------
+
+  private async privacyPiaSubmit(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.title !== 'string' || typeof b.flow !== 'string' || !Array.isArray(b.dataFlows) || typeof b.assessedBy !== 'string')
+      return json(400, { error: 'fields "title", "flow", "dataFlows", "assessedBy" are required' });
+    try {
+      const pia = await this.privacy.submitPia({
+        title: b.title, flow: b.flow,
+        dataFlows: b.dataFlows as never,
+        assessedBy: b.assessedBy,
+      });
+      return json(201, { pia });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async privacyPiaList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { pias: await this.privacy.listPias(req.query.status as never) });
+  }
+
+  private async privacyPiaDecide(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || (b.decision !== 'approved' && b.decision !== 'rejected') || typeof b.approver !== 'string')
+      return json(400, { error: 'fields "id", "decision" (approved|rejected), "approver" are required' });
+    try {
+      const pia = await this.privacy.decidePia(b.id, b.decision, b.approver, typeof b.reason === 'string' ? b.reason : undefined);
+      return pia ? json(200, { pia }) : json(404, { error: 'PIA not found' });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async privacyProcessingRegister(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.activity !== 'string' || typeof b.controller !== 'string' || !Array.isArray(b.dataKinds) || typeof b.legalBasis !== 'string')
+      return json(400, { error: 'fields "activity", "controller", "dataKinds", "legalBasis" are required' });
+    try {
+      const record = await this.privacy.registerProcessing({
+        activity: b.activity, controller: b.controller,
+        dataKinds: b.dataKinds as string[],
+        purposes: Array.isArray(b.purposes) ? b.purposes as string[] : [],
+        legalBasis: b.legalBasis,
+        recipients: Array.isArray(b.recipients) ? b.recipients as string[] : [],
+        ...(Array.isArray(b.transfers) ? { transfers: b.transfers as string[] } : {}),
+        ...(typeof b.retentionDays === 'number' ? { retentionDays: b.retentionDays } : {}),
+      });
+      return json(201, { record });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async privacyProcessingList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { records: await this.privacy.listProcessing(req.query.controller) });
+  }
+
+  private async privacySecureDelete(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.target !== 'string' || typeof b.dataKind !== 'string' || typeof b.performedBy !== 'string')
+      return json(400, { error: 'fields "target", "dataKind", "performedBy" are required' });
+    try {
+      const deletion = await this.privacy.secureDelete({
+        target: b.target, dataKind: b.dataKind, performedBy: b.performedBy,
+        ...(typeof b.method === 'string' ? { method: b.method as never } : {}),
+        ...(typeof b.keyDestroyed === 'boolean' ? { keyDestroyed: b.keyDestroyed } : {}),
+      });
+      return json(201, { deletion });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async privacyDeletionsList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { deletions: await this.privacy.listDeletions(req.query.target) });
+  }
+
+  private async privacyMinimizeCheck(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.purpose !== 'string' || !Array.isArray(b.collected) || !Array.isArray(b.necessary))
+      return json(400, { error: 'fields "purpose", "collected", "necessary" are required' });
+    return json(200, { check: await this.privacy.minimizeCheck({ purpose: b.purpose, collected: b.collected as string[], necessary: b.necessary as string[] }) });
+  }
+
+  private async privacyMinimizeList(): Promise<GatewayResponse> {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { checks: await this.privacy.minimizationChecks() });
+  }
+
+  private privacyPosture(): GatewayResponse {
+    if (!this.privacy) return json(501, { error: 'privacy module not registered' });
+    return json(200, { posture: this.privacy.privacyPosture() });
   }
 
   // --- policy & governance registry ---------------------------------------

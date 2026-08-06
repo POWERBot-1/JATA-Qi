@@ -36,6 +36,7 @@ import type { SocModule } from '@jataqi/soc';
 import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
+import type { PrivacyModule } from '@jataqi/privacy';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -92,6 +93,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  privacy <sub>        Privacy engineering: pia|pias|decide|processing|secure-delete|deletions|minimize|posture.
   resilience <sub>    Global resilience: stats|regions|probe|failover|failback|plan|execute|fault|test|availability|compliance.
   supplychain <sub>   Supply chain security: stats|repo|pipeline|audit|provenance|release|deploy|integrity|monitor.
   infra <sub>         Infra governance: stats|assets|asset|provision|approve|firmware|drift|compliance|access.
@@ -146,6 +148,7 @@ async function main() {
   const supplyChain = kernel.getModule<SupplyChainSecurityModule>('supply-chain-security');
   const infra = kernel.getModule<InfrastructureGovernanceModule>('infra-governance');
   const resilience = kernel.getModule<ResilienceEngineeringModule>('resilience-engineering');
+  const privacy = kernel.getModule<PrivacyModule>('privacy');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1403,6 +1406,93 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'privacy': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'pia': {
+            const title = args[2], flow = args[3];
+            if (!title || !flow) { console.error('Usage: jataqi privacy pia <title> <flow> [--kinds a,b] [--recipients r1,r2] [--retention-days n] [--by assessor]'); process.exit(1); }
+            const pia = await privacy.submitPia({
+              title, flow,
+              dataFlows: [{
+                flow,
+                dataKinds: (flag('kinds') ?? 'pii').split(','),
+                recipients: (flag('recipients') ?? 'internal').split(','),
+                ...(flag('retention-days') ? { retentionDays: Number(flag('retention-days')) } : {}),
+              }],
+              assessedBy: flag('by') ?? 'dpo',
+            });
+            console.log(`PIA ${pia.id}: design ${pia.designScore}/100 risk=${pia.risk} status=${pia.status}`);
+            for (const m of pia.mitigations) console.log(`  ! ${m.risk} → ${m.mitigation} (residual ${m.residual})`);
+            break;
+          }
+          case 'pias': {
+            const all = await privacy.listPias(flag('status') as never);
+            for (const p of all) console.log(`- ${p.title} [${p.flow}] design=${p.designScore} risk=${p.risk} status=${p.status}`);
+            console.log(`${all.length} PIA(s)`);
+            break;
+          }
+          case 'decide': {
+            const id = args[2], decision = args[3], approver = args[4];
+            if (!id || !decision || !approver) { console.error('Usage: jataqi privacy decide <piaId> <approved|rejected> <approver>'); process.exit(1); }
+            try {
+              const pia = await privacy.decidePia(id, decision as never, approver);
+              console.log(`PIA ${pia!.id}: ${pia!.status} (by ${pia!.approvedBy})`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'processing': {
+            const activity = args[2], controller = args[3], kinds = args[4], basis = args[5];
+            if (!activity || !controller || !kinds || !basis) { console.error('Usage: jataqi privacy processing <activity> <controller> <kinds,a,b> <legalBasis>'); process.exit(1); }
+            const r = await privacy.registerProcessing({
+              activity, controller, dataKinds: kinds.split(','),
+              purposes: [activity], legalBasis: basis, recipients: ['internal'],
+            });
+            console.log(`processing record ${r.id} registered (${r.activity})`);
+            break;
+          }
+          case 'secure-delete': {
+            const target = args[2], kind = args[3], by = args[4];
+            if (!target || !kind || !by) { console.error('Usage: jataqi privacy secure-delete <target> <dataKind> <performedBy> [--method crypto_shred|overwrite|physical_destroy]'); process.exit(1); }
+            try {
+              const d = await privacy.secureDelete({
+                target, dataKind: kind, performedBy: by,
+                ...(flag('method') ? { method: flag('method') as never } : {}),
+                ...(flag('method') === 'crypto_shred' ? { keyDestroyed: true } : {}),
+              });
+              console.log(`deletion ${d.id}: ${d.method} evidence=${d.evidenceHash.slice(0, 16)} verified=${d.verified}`);
+            } catch (err) { console.log((err as Error).message); }
+            break;
+          }
+          case 'deletions': {
+            const all = await privacy.listDeletions(flag('target'));
+            for (const d of all) console.log(`- ${d.target} [${d.dataKind}] ${d.method} ${d.verified ? 'verified' : 'UNVERIFIED'} @${new Date(d.createdAt).toISOString()}`);
+            console.log(`${all.length} deletion(s)`);
+            break;
+          }
+          case 'minimize': {
+            const purpose = args[2], collected = args[3], necessary = args[4];
+            if (!purpose || !collected || !necessary) { console.error('Usage: jataqi privacy minimize <purpose> <collected,a,b> <necessary,a,b>'); process.exit(1); }
+            const c = await privacy.minimizeCheck({ purpose, collected: collected.split(','), necessary: necessary.split(',') });
+            console.log(c.compliant ? '✅ minimization compliant' : `❌ excess fields: ${c.excess.join(', ')}`);
+            break;
+          }
+          case 'posture': {
+            const p = privacy.privacyPosture();
+            console.log(`PIAs: ${p.pias} (approved ${p.approvedPias}, high-risk ${p.highRiskPias})`);
+            console.log(`processing records: ${p.processingRecords} · secure deletions: ${p.secureDeletions} (${p.cryptoShreds} crypto-shred)`);
+            console.log(`minimization: ${p.minimizationViolations}/${p.minimizationChecks} violations`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi privacy pia|pias|decide|processing|secure-delete|deletions|minimize|posture'); process.exit(1);
         }
         break;
       }

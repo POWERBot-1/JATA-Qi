@@ -69,6 +69,7 @@ export class JataQiClient {
   readonly supplyChain: SupplyChainClient;
   readonly infra: InfraClient;
   readonly resilience: ResilienceClient;
+  readonly privacy: PrivacyClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -112,6 +113,7 @@ export class JataQiClient {
     this.supplyChain = new SupplyChainClient(this);
     this.infra = new InfraClient(this);
     this.resilience = new ResilienceClient(this);
+    this.privacy = new PrivacyClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -999,4 +1001,36 @@ export class ResilienceClient {
     if (opts.ok !== undefined) query.ok = opts.ok ? '1' : '0';
     return this.c.request('GET', '/resilience/probes', undefined, query);
   }
+}
+
+// --- Privacy Engineering (PIA / RoPA / secure deletion / minimization) -----------
+
+export class PrivacyClient {
+  constructor(private c: JataQiClient) {}
+  async submitPia(input: { title: string; flow: string; dataFlows: Array<{ flow: string; dataKinds: string[]; recipients: string[]; storage?: string; retentionDays?: number }>; assessedBy: string }): Promise<{ pia: unknown }> {
+    return this.c.request('POST', '/privacy/pia', input);
+  }
+  async pias(opts: { status?: string } = {}): Promise<{ pias: unknown[] }> {
+    return this.c.request('GET', '/privacy/pia', undefined, opts.status ? { status: opts.status } : undefined);
+  }
+  async decidePia(id: string, decision: 'approved' | 'rejected', approver: string, reason?: string): Promise<{ pia: unknown }> {
+    return this.c.request('POST', '/privacy/pia/decide', { id, decision, approver, ...(reason ? { reason } : {}) });
+  }
+  async registerProcessing(input: { activity: string; controller: string; dataKinds: string[]; purposes: string[]; legalBasis: string; recipients: string[]; transfers?: string[]; retentionDays?: number }): Promise<{ record: unknown }> {
+    return this.c.request('POST', '/privacy/processing', input);
+  }
+  async processing(controller?: string): Promise<{ records: unknown[] }> {
+    return this.c.request('GET', '/privacy/processing', undefined, controller ? { controller } : undefined);
+  }
+  async secureDelete(target: string, dataKind: string, performedBy: string, opts: { method?: string; keyDestroyed?: boolean } = {}): Promise<{ deletion: unknown }> {
+    return this.c.request('POST', '/privacy/secure-delete', { target, dataKind, performedBy, ...opts });
+  }
+  async deletions(target?: string): Promise<{ deletions: unknown[] }> {
+    return this.c.request('GET', '/privacy/deletions', undefined, target ? { target } : undefined);
+  }
+  async minimizeCheck(purpose: string, collected: string[], necessary: string[]): Promise<{ check: unknown }> {
+    return this.c.request('POST', '/privacy/minimize', { purpose, collected, necessary });
+  }
+  async minimizationChecks(): Promise<{ checks: unknown[] }> { return this.c.request('GET', '/privacy/minimize'); }
+  async posture(): Promise<{ posture: unknown }> { return this.c.request('GET', '/privacy/posture'); }
 }
