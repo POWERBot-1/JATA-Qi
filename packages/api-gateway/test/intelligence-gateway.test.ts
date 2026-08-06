@@ -1832,4 +1832,20 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const strangerView = await jsonRequest('GET', `${base}/tanya/org?orgId=${orgId}`, undefined, (strangerLogin.body as { token: string }).token);
     assert.equal(strangerView.status, 403);
   });
+
+  it('POST /tanya/shares/prune expires stale share grants', async () => {
+    const res = await jsonRequest('POST', `${base}/tanya/shares/prune`, {}, token);
+    assert.equal(res.status, 200);
+    const body2 = res.body as { removed: number };
+    assert.ok(body2.removed >= 0, 'prune runs without error');
+
+    // A fresh share with no expiry survives pruning.
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'prune survivor' }, token);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+    const who = (await jsonRequest('GET', `${base}/whoami`, undefined, token)).body as { principal: { userId: string } };
+    await jsonRequest('POST', `${base}/tanya/share`, { conversationId: convId, recipientUserId: who.principal.userId }, token);
+    await jsonRequest('POST', `${base}/tanya/shares/prune`, {}, token);
+    const grants = (await jsonRequest('GET', `${base}/tanya/shares?id=${convId}`, undefined, token)).body as { count: number };
+    assert.equal(grants.count, 1, 'live grant survives pruning');
+  });
 });

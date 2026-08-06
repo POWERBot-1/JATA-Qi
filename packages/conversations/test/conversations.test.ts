@@ -261,4 +261,29 @@ describe('ConversationsModule', () => {
     await assert.rejects(mod.shareTo('nope', 'r'), /not found/);
     await assert.rejects(mod.shareTo((await mod.create('u', { title: 'x' })).id, ''), /recipientUserId is required/);
   });
+
+  it('pruneExpiredShares removes expired grants and emits an event', async () => {
+    const conv = await mod.create('owner-p', { title: 'Prune Me' });
+    await mod.shareTo(conv.id, 'recipient-p', { sharedBy: 'owner-p' });
+    // Insert an already-expired grant directly.
+    const { randomUUID } = await import('node:crypto');
+    const expired = { id: randomUUID(), conversationId: conv.id, recipientUserId: 'recipient-expired', createdAt: Date.now() - 10_000, expiresAt: Date.now() - 5_000 };
+    const storage = kernel.getModule('storage') as unknown as { collection: <T extends { id: string }>(n: string) => Promise<{ put: (v: T) => Promise<void>; all: () => Promise<T[]>; delete: (id: string) => Promise<boolean> }> };
+    const sharesCol = await storage.collection<{ id: string }>('conversations.shares');
+    await sharesCol.put(expired as never);
+    assert.equal((await mod.sharesFor(conv.id)).length, 2);
+
+    const events: string[] = [];
+    const unsub = kernel.bus.on('conversation.share.expired', () => { events.push('expired'); });
+    const removed = await mod.pruneExpiredShares();
+    assert.ok(removed >= 1, 'at least the explicitly expired grant pruned');
+    assert.equal((await mod.sharesFor(conv.id)).length, 1, 'live grant untouched');
+    assert.equal((await mod.listSharedWith('recipient-expired')).length, 0);
+    assert.ok(events.includes('expired'), 'expiry event emitted');
+    unsub();
+
+    // Idempotent: nothing left to prune (any grants expired before this test
+    // were already removed by the first call).
+    assert.equal(await mod.pruneExpiredShares(), 0);
+  });
 });

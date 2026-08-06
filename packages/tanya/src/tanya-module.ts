@@ -383,6 +383,12 @@ export class TanyaModule implements IModule {
     return (await this.conversations.sharesFor(conversationId)).map((s) => ({ id: s.id, ...(s.recipientUserId ? { recipientUserId: s.recipientUserId } : {}), createdAt: s.createdAt, ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}) }));
   }
 
+  /** Delete expired share grants platform-wide (housekeeping). */
+  async pruneExpiredShares(): Promise<number> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    return this.conversations.pruneExpiredShares();
+  }
+
   /** Remove a recipient-scoped share (owner only). */
   async unshareFrom(conversationId: string, ownerId: string, recipientUserId: string): Promise<boolean> {
     if (!this.conversations) throw new Error('conversations module not registered on this kernel');

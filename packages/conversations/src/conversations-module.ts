@@ -326,6 +326,23 @@ export class ConversationsModule implements IModule {
     return out;
   }
 
+  /** Delete expired share grants (housekeeping). Returns the count removed. */
+  async pruneExpiredShares(): Promise<number> {
+    const now = Date.now();
+    const all = await this.shares.all();
+    let removed = 0;
+    for (const s of all) {
+      if (s.expiresAt && s.expiresAt <= now) {
+        await this.shares.delete(s.id);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      await this.api.bus.emit('conversation.share.expired', { removed });
+    }
+    return removed;
+  }
+
   // --- export ---------------------------------------------------------------
 
   async export(conversationId: string, format: 'json' | 'markdown' | 'text' = 'json'): Promise<string> {
