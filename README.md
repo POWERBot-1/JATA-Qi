@@ -163,6 +163,12 @@ Run the SDK platform tour (TanyaClient / OrgClient / AlertsClient / AuditClient 
 node examples/sdk-platform.mjs http://localhost:7400 admin admin
 ```
 
+Run the TANYA Mobile Native demo (devices → snapshot → push → outbox → bridge):
+
+```bash
+node examples/mobile-app.mjs http://localhost:7400 admin admin
+```
+
 Serve the HTTP API gateway:
 
 ```bash
