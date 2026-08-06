@@ -110,6 +110,14 @@ const DEFAULT_PUSH_EVENTS: PushEventMapping[] = [
     body: () => 'A TANYA conversation was shared with you.',
     eventName: 'tanya.shared',
   },
+  // In-app notifications (notifications module) forward to push devices.
+  {
+    event: 'notification.created',
+    userIdFrom: 'recipientId',
+    title: (p) => (p.title ? String(p.title) : 'JATA Qi'),
+    body: (p) => (p.body ? String(p.body) : 'You have a new notification.'),
+    eventName: 'notification.created',
+  },
   // Generic push channel: any module emits mobile.push.requested with
   // { userId, title, body, event?, data? }.
   {

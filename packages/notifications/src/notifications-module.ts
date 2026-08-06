@@ -125,7 +125,9 @@ export class NotificationsModule implements IModule {
     };
     // Store in inbox (in-app) regardless of channel set, then dispatch to selected channels.
     await this.inbox.put(notification);
-    await this.api.bus.emit(NotificationEvents.NotificationCreated, { id: notification.id, recipientId, type: payload.type });
+    // Payload carries title/body so consumers (e.g. the mobile push bridge)
+    // can forward the in-app notification to push devices without another lookup.
+    await this.api.bus.emit(NotificationEvents.NotificationCreated, { id: notification.id, recipientId, type: payload.type, title: payload.title, ...(payload.body !== undefined ? { body: payload.body } : {}) });
 
     const deliveries: DeliveryResult[] = [];
     for (const id of channelIds) {

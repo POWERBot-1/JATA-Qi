@@ -281,3 +281,44 @@ describe('MobileModule — event → push bridge', () => {
     }
   });
 });
+
+describe('MobileModule — in-app notification to push bridge', () => {
+  it('forwards notification.created to the recipient devices', async () => {
+    const kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new ConversationsModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    kernel.register(new OrganizationsModule());
+    kernel.register(new ToolIntelligenceModule());
+    const { NotificationsModule } = await import('@jataqi/notifications');
+    kernel.register(new NotificationsModule());
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new TanyaModule());
+    kernel.register(new MobileModule());
+    await kernel.boot();
+    try {
+      const mobile = kernel.getModule<MobileModule>('mobile');
+      const notifications = kernel.getModule('notifications') as unknown as { notify: (recipientId: string, payload: { type: string; title: string; body?: string; priority?: string }) => Promise<unknown> };
+      await mobile.registerDevice('recipient-n', { platform: 'ios', pushToken: 'apns-notif-1' });
+
+      const sent: Array<Record<string, unknown>> = [];
+      const unsub = kernel.bus.on('mobile.push.sent', (e: Record<string, unknown>) => { sent.push(e); });
+
+      await notifications.notify('recipient-n', { type: 'tanya.reply', title: 'TANYA replied', body: 'Your assistant has an answer', priority: 'normal' });
+
+      for (let i = 0; i < 20; i++) {
+        if (sent.length >= 1) break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.ok(sent.length >= 1, 'in-app notification forwarded as push');
+      assert.equal(sent[0]!.userId, 'recipient-n');
+      assert.equal(sent[0]!.devices, 1);
+      unsub();
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+});
