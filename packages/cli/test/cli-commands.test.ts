@@ -295,4 +295,12 @@ describe('jataqi CLI — intelligence commands', () => {
     const out = await jataqi('tanya', 'summary', 'nope');
     assert.match(out, /not found/);
   });
+
+  it('tanya chat works in piped (non-TTY) mode', async () => {
+    // execFile runs without a TTY → the streaming path is skipped and the
+    // full reply is printed; conversation created.
+    const out = await jataqi('tanya', 'chat', 'Hello streaming CLI');
+    assert.match(out, /\[main@tanya-main\] Echo: Hello streaming CLI/);
+    assert.match(out, /conversation [0-9a-f-]{36} \(2 messages\)/);
+  });
 });

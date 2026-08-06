@@ -587,7 +587,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Crypto / KRT** (Phase 4 — tokens + NFTs, HD wallets, custody, staking, exchange, smart-contract registry)
 - ✅ **Link Intelligence** (classify → extract → gap analysis → governed self-evolution proposals)
 - ✅ **Multimodal Intelligence** (acquisition framework for text/document/image/audio/video/code/web/device/API sources)
-- ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`; multi-user commands: `org create|list|invite|accept|members`, `tanya share|unshare|shared|shares|export|sharelink|summary`; governance: `tools alerts`; observability: `realtime stats`)
+- ✅ **CLI + Bootstrap** (`.env` support, `ask`/`ingest`/`stats`/`search`/`entities`/`repl`/`serve`; multi-user commands: `org create|list|invite|accept|members`, `tanya share|unshare|shared|shares|export|sharelink|summary` (chat streams word-by-word on a TTY); governance: `tools alerts`; observability: `realtime stats`)
 - ✅ **Alpha vertical slice** (authenticate → QiL workflow → agents → knowledge → response → audit)
 - ✅ **Intelligence gateway routes** (`/memory`, `/learning/*`, `/ai-learning/*`, `/design-system/*`, `/branding/*`, `/wallet/*`, `/crypto/*`, `/dashboard/*`, `/link/*`, `/multimodal/*`; bearer auth, RBAC, rate limiting)
 

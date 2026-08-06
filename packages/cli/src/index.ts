@@ -1936,13 +1936,17 @@ async function main() {
             const message = args.slice(2).join(' ').trim() || flag('message') || '';
             if (!message) { console.error('Usage: jataqi tanya chat "<message>" [--conv <id>] [--persona <id>]'); process.exit(1); }
             try {
+              let streamed = '';
               const result = await tanya.chat({
                 userId: 'cli',
                 message,
                 ...(flag('conv') ? { conversationId: flag('conv')! } : {}),
                 ...(flag('persona') ? { persona: flag('persona')! } : {}),
+                // Stream word-by-word to stdout when NOT piped (TTY).
+                ...(process.stdout.isTTY ? { onChunk: (c: string) => { process.stdout.write(c); streamed += c; } } : {}),
               });
-              console.log(`[${result.persona}@${result.agent}] ${result.reply}`);
+              if (streamed) process.stdout.write('\n');
+              console.log(`[${result.persona}@${result.agent}] ${streamed || result.reply}`);
               console.log(`conversation ${result.conversationId} (${result.messageCount} messages)`);
               for (const tc of result.toolCalls) console.log(`  tool: ${tc.name}`);
             } catch (err) {
