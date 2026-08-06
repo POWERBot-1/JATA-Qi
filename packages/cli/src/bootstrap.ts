@@ -364,6 +364,26 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 
   await kernel.boot();
 
+  // Wire DR snapshots into Global Resilience Engineering: recovery-plan
+  // executions measure RPO exposure from the newest disaster-recovery
+  // snapshot (real backup age) unless an explicit snapshot age is supplied.
+  try {
+    const resilience = kernel.getModule<import('@jataqi/resilience-engineering').ResilienceEngineeringModule>('resilience-engineering');
+    const snapshotAges = new Map<string, number>();
+    const onSnapshot = (payload: unknown): void => {
+      const p = (payload ?? {}) as { namespace?: string; createdAt?: number };
+      if (p.namespace && p.createdAt) snapshotAges.set(p.namespace, Date.now() - p.createdAt);
+    };
+    kernel.bus.on('dr.snapshot.created', onSnapshot);
+    resilience.attachDrProvider({
+      latestSnapshotAgeMs: (namespace?: string) => {
+        if (namespace) return snapshotAges.get(namespace);
+        if (snapshotAges.size === 0) return undefined;
+        return [...snapshotAges.values()][0];
+      },
+    });
+  } catch { /* optional integration */ }
+
   // Seed a default, locally-invocable tool so the Universal Tool layer is
   // demonstrably usable out of the box (echo capability, R0 read-only).
   const tools = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');

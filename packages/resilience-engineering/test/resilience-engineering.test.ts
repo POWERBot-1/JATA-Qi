@@ -259,3 +259,30 @@ describe('Resilience gateway integration (vs real server)', () => {
     assert.ok(compliance.compliance);
   });
 });
+
+describe('DR snapshot provider (RPO wiring)', () => {
+  it('measures RPO exposure from the attached DR provider when no age is given', () => {
+    const mod = new ResilienceEngineeringModule();
+    const kernel = createTestKernel();
+    // (module can be used standalone; attach a fake provider)
+    mod.attachDrProvider({ latestSnapshotAgeMs: (ns) => (ns === 'ledger' ? 30 * 60_000 : undefined) });
+    assert.equal(mod.drProviderAttached(), true);
+    const plan = mod.createPlan({ workload: 'ledger', rpoMs: 10 * 60_000, rtoMs: 60_000, createdBy: 'sre' });
+    // 30m snapshot age > 10m RPO → violated without any explicit age.
+    const execution = mod.executePlan(plan.id);
+    assert.equal(execution.status, 'violated', 'RPO breached via DR provider age');
+    assert.equal(execution.dataLossMs, 30 * 60_000);
+    // Explicit snapshot age overrides the provider.
+    const ok = mod.executePlan(plan.id, { snapshotAgeMs: 5 * 60_000 });
+    assert.equal(ok.status, 'completed');
+  });
+
+  it('leaves executions unchanged without a provider (backward compatible)', () => {
+    const mod = new ResilienceEngineeringModule();
+    assert.equal(mod.drProviderAttached(), false);
+    const plan = mod.createPlan({ workload: 'api', rpoMs: 60_000, rtoMs: 60_000, createdBy: 'sre' });
+    const execution = mod.executePlan(plan.id);
+    assert.equal(execution.status, 'completed');
+    assert.equal(execution.dataLossMs, undefined);
+  });
+});

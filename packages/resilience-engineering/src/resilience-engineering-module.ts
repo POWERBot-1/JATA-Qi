@@ -8,6 +8,14 @@ import type {
   ProbeResult, RecoveryPlan, RegionRole,
 } from './types.js';
 
+/** Optional DR integration: supplies the age of the latest disaster-recovery
+ *  snapshot so recovery-plan executions can measure RPO exposure from real
+ *  backup data (wired to @jataqi/disaster-recovery in the bootstrap). */
+export interface DrSnapshotProvider {
+  /** Age in ms of the newest snapshot for a workload namespace (undefined = none). */
+  latestSnapshotAgeMs(namespace?: string): number | undefined;
+}
+
 export const ResilienceEvents = Object.freeze({
   RegionHealthChanged: 'resilience.region.health',
   FailoverCompleted: 'resilience.failover.completed',
@@ -26,6 +34,7 @@ export class ResilienceEngineeringModule implements IModule {
 
   readonly engine: ResilienceEngine;
   private api!: KernelApi;
+  private drProvider?: DrSnapshotProvider;
 
   constructor(topology?: Array<{ name: string; location: string; role: RegionRole; priority: number }>) {
     this.engine = new ResilienceEngine(topology);
@@ -38,6 +47,15 @@ export class ResilienceEngineeringModule implements IModule {
   }
   async start(_kernel: KernelApi): Promise<void> { /* stateless */ }
   async stop(_kernel: KernelApi): Promise<void> { /* stateless */ }
+
+  /** Attach a disaster-recovery snapshot provider (RPO wiring). */
+  attachDrProvider(provider: DrSnapshotProvider): void {
+    this.drProvider = provider;
+  }
+
+  drProviderAttached(): boolean {
+    return this.drProvider !== undefined;
+  }
 
   // ---- topology ---------------------------------------------------------------
 
@@ -77,7 +95,15 @@ export class ResilienceEngineeringModule implements IModule {
   }
   plansList() { return this.engine.plansList(); }
   executePlan(planId: string, opts?: { snapshotAgeMs?: number; failStep?: string }): DrExecution {
-    const execution = this.engine.executePlan(planId, opts);
+    let effective = { ...(opts ?? {}) };
+    // When no snapshot age is supplied, measure RPO exposure from the DR
+    // provider's latest snapshot (real backup data).
+    if (effective.snapshotAgeMs === undefined && this.drProvider) {
+      const plan = this.engine.plansList().find((p) => p.id === planId);
+      const age = plan ? this.drProvider.latestSnapshotAgeMs(plan.workload) : this.drProvider.latestSnapshotAgeMs();
+      if (age !== undefined) effective = { ...effective, snapshotAgeMs: age };
+    }
+    const execution = this.engine.executePlan(planId, effective);
     void this.api?.bus.emit(ResilienceEvents.DrExecuted, { id: execution.id, workload: execution.workload, status: execution.status, rtoMet: execution.rtoMet });
     return execution;
   }

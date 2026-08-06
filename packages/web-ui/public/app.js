@@ -246,6 +246,11 @@ const NAV = [
   { id: 'commerce', label: 'Commerce', icon: '💳' },
   { id: 'maza', label: 'MAZA', icon: '🛒' },
   { id: 'command', label: 'Security Cmd', icon: '🛡️' },
+  { id: 'resilience', label: 'Resilience', icon: '🌍' },
+  { id: 'supplychain', label: 'Supply Chain', icon: '🔗' },
+  { id: 'review', label: 'Security Review', icon: '🔍' },
+  { id: 'privacy', label: 'Privacy', icon: '🔒' },
+  { id: 'secauto', label: 'Sec Auto', icon: '🤖' },
   { id: 'organizations', label: 'Organizations', icon: '🏢' },
   { id: 'orgs', label: 'My Orgs', icon: '👥' },
   { id: 'notifications', label: 'Notifications', icon: '🔔' },
@@ -463,6 +468,68 @@ const VIEWS = {
       supply: supply.status === 'fulfilled' ? supply.value.stats : null,
       infra: infra.status === 'fulfilled' ? infra.value.stats : null,
       incidents: incidents.status === 'fulfilled' ? incidents.value.incidents : [],
+    };
+  },
+  resilience: async () => {
+    const [stats, regions, health, failovers, compliance, availability] = await Promise.allSettled([
+      api('GET', '/resilience/stats'), api('GET', '/resilience/regions'), api('GET', '/resilience/health'),
+      api('GET', '/resilience/failovers'), api('GET', '/resilience/compliance'), api('GET', '/resilience/availability'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      regions: regions.status === 'fulfilled' ? regions.value.regions : [],
+      health: health.status === 'fulfilled' ? health.value.regions : {},
+      failovers: failovers.status === 'fulfilled' ? failovers.value.failovers : [],
+      compliance: compliance.status === 'fulfilled' ? compliance.value.compliance : null,
+      availability: availability.status === 'fulfilled' ? availability.value.availability : [],
+    };
+  },
+  supplychain: async () => {
+    const [stats, repos, pipelines, releases, monitoring] = await Promise.allSettled([
+      api('GET', '/supplychain/stats'), api('GET', '/supplychain/repos'),
+      api('GET', '/supplychain/pipelines'), api('GET', '/supplychain/releases'), api('GET', '/supplychain/monitor'),
+    ]);
+    return {
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+      repositories: repos.status === 'fulfilled' ? repos.value.repositories : [],
+      pipelines: pipelines.status === 'fulfilled' ? pipelines.value.pipelines : [],
+      releases: releases.status === 'fulfilled' ? releases.value.releases : [],
+      monitoring: monitoring.status === 'fulfilled' ? monitoring.value.monitoring : [],
+    };
+  },
+  review: async () => {
+    const [reviews, findings, stats] = await Promise.allSettled([
+      api('GET', '/review'), api('GET', '/review/findings'), api('GET', '/review/stats'),
+    ]);
+    return {
+      reviews: reviews.status === 'fulfilled' ? reviews.value.reviews : [],
+      findings: findings.status === 'fulfilled' ? findings.value.findings : [],
+      stats: stats.status === 'fulfilled' ? stats.value.stats : null,
+    };
+  },
+  privacy: async () => {
+    const [posture, pias, processing, deletions, minimize] = await Promise.allSettled([
+      api('GET', '/privacy/posture'), api('GET', '/privacy/pia'), api('GET', '/privacy/processing'),
+      api('GET', '/privacy/deletions'), api('GET', '/privacy/minimize'),
+    ]);
+    return {
+      posture: posture.status === 'fulfilled' ? posture.value.posture : null,
+      pias: pias.status === 'fulfilled' ? pias.value.pias : [],
+      processing: processing.status === 'fulfilled' ? processing.value.records : [],
+      deletions: deletions.status === 'fulfilled' ? deletions.value.deletions : [],
+      minimize: minimize.status === 'fulfilled' ? minimize.value.checks : [],
+    };
+  },
+  secauto: async () => {
+    const [posture, correlations, sweeps, report] = await Promise.allSettled([
+      api('GET', '/security-automation/posture'), api('GET', '/security-automation/correlations'),
+      api('GET', '/security-automation/hunts'), api('GET', '/security-automation/compliance-report'),
+    ]);
+    return {
+      posture: posture.status === 'fulfilled' ? posture.value : null,
+      correlations: correlations.status === 'fulfilled' ? correlations.value.correlations : [],
+      sweeps: sweeps.status === 'fulfilled' ? sweeps.value.sweeps : [],
+      report: report.status === 'fulfilled' ? report.value.report : null,
     };
   },
   cdn: async () => {
@@ -786,6 +853,93 @@ function renderView(view, data) {
     <div class="card"><div class="card-title">Listings (${(data.listings || []).length})</div>${tableFrom(data.listings, ['title', 'category', 'priceMinor', 'currency', 'status', 'stock', 'rating'])}</div>
     <div class="card"><div class="card-title">Orders (${(data.orders || []).length})</div>${tableFrom(data.orders, ['id', 'buyerId', 'totalMinor', 'currency', 'status', 'createdAt'])}</div>
     <div class="card"><div class="card-title">Payouts (${(data.payouts || []).length})</div>${tableFrom(data.payouts, ['vendorId', 'amountMinor', 'commissionMinor', 'netMinor', 'status'])}</div>`;
+  } else if (view === 'resilience') {
+    const s = data.stats || {};
+    const c = data.compliance || {};
+    const avail = data.availability || [];
+    html += `<div class="stat-grid">
+      ${statCard('Regions', s.regions ?? 0)}
+      ${statCard('Regions Down', s.regionsDown ?? 0, (s.regionsDown ?? 0) ? 'red' : 'green')}
+      ${statCard('Standbys', s.standbys ?? 0)}
+      ${statCard('Failovers', s.failovers ?? 0)}
+      ${statCard('DR Compliant', s.drCompliant != null ? s.drCompliant + '/' + s.drExecutions : null)}
+      ${statCard('Active Faults', s.activeFaults ?? 0, (s.activeFaults ?? 0) ? 'yellow' : 'green')}
+      ${statCard('SLO Healthy', s.healthyWorkloads != null ? s.healthyWorkloads + '/' + s.workloadsTracked : null)}
+    </div>
+    <div class="card"><div class="card-title">Regions & Health</div>
+      ${data.regions.map((r) => `<div class="row">${r.name} (${r.location}) [${r.role}] — ${data.health[r.name] ?? r.health} · ${r.latencyMs}ms</div>`).join('') || '<div class="subtitle">no regions</div>'}
+    </div>
+    <div class="card"><div class="card-title">Failover History (${(data.failovers || []).length})</div>${tableFrom(data.failovers.slice(0, 8), ['workload', 'fromRegion', 'toRegion', 'status', 'reason'])}</div>
+    <div class="card"><div class="card-title">Availability vs SLO</div>
+      ${avail.map((a) => `<div class="row">${a.workload}: ${a.uptimeLabel} vs ${(a.slo * 100).toFixed(1)}% ${a.healthy ? '✅' : '❌'}</div>`).join('') || '<div class="subtitle">no availability records</div>'}
+    </div>`;
+  } else if (view === 'supplychain') {
+    const s = data.stats || {};
+    const vuln = (s.dependenciesVulnerable ?? 0) + (s.dependenciesLicenseDenied ?? 0) + (s.dependenciesMismatched ?? 0);
+    html += `<div class="stat-grid">
+      ${statCard('Repos', s.repositories ?? 0)}
+      ${statCard('Non-Compliant Repos', s.nonCompliantRepos ?? 0, (s.nonCompliantRepos ?? 0) ? 'red' : 'green')}
+      ${statCard('Pipelines', s.pipelines ?? 0)}
+      ${statCard('Non-Compliant Pipelines', s.nonCompliantPipelines ?? 0, (s.nonCompliantPipelines ?? 0) ? 'red' : 'green')}
+      ${statCard('Dep Issues', vuln, vuln ? 'red' : 'green')}
+      ${statCard('Releases Signed', s.releases ?? 0)}
+      ${statCard('Deployments Verified', s.verifiedDeployments != null ? s.verifiedDeployments + '/' + s.attestations : null)}
+      ${statCard('Integrity Drift', s.drifts ?? 0, (s.drifts ?? 0) ? 'red' : 'green')}
+    </div>
+    <div class="card"><div class="card-title">Repository Checks</div>${tableFrom(data.repositories, ['repo', 'status', 'violations'])}</div>
+    <div class="card"><div class="card-title">CI/CD Pipelines</div>${tableFrom(data.pipelines, ['pipeline', 'status', 'violations'])}</div>
+    <div class="card"><div class="card-title">Signed Releases</div>${tableFrom(data.releases.slice(0, 8), ['release', 'artifactName', 'verified'])}</div>
+    <div class="card"><div class="card-title">Integrity Monitoring</div>${tableFrom(data.monitoring, ['release', 'status'])}</div>`;
+  } else if (view === 'review') {
+    const st = data.stats || {};
+    html += `<div class="stat-grid">
+      ${statCard('Reviews', st.total ?? 0)}
+      ${statCard('Signed Off', st.signedOff ?? 0, (st.signedOff ?? 0) ? 'green' : null)}
+      ${statCard('Needs Remediation', st.needsRemediation ?? 0, (st.needsRemediation ?? 0) ? 'yellow' : 'green')}
+      ${statCard('Open Findings', st.openFindings ?? 0)}
+      ${statCard('Critical', st.criticalFindings ?? 0, (st.criticalFindings ?? 0) ? 'red' : 'green')}
+      ${statCard('High', st.highFindings ?? 0, (st.highFindings ?? 0) ? 'red' : 'green')}
+      ${statCard('Remediated', st.remediatedFindings ?? 0, 'green')}
+      ${statCard('Accepted', st.acceptedFindings ?? 0)}
+    </div>
+    <div class="card"><div class="card-title">Reviews (${(data.reviews || []).length})</div>${tableFrom(data.reviews, ['kind', 'target', 'status', 'reviewer', 'phase'])}</div>
+    <div class="card"><div class="card-title">Findings (${(data.findings || []).length})</div>${tableFrom(data.findings.slice(0, 10), ['severity', 'title', 'status', 'controlRef'])}</div>`;
+  } else if (view === 'privacy') {
+    const p = data.posture || {};
+    html += `<div class="stat-grid">
+      ${statCard('PIAs', p.pias ?? 0)}
+      ${statCard('Approved', p.approvedPias ?? 0, 'green')}
+      ${statCard('High-Risk PIAs', p.highRiskPias ?? 0, (p.highRiskPias ?? 0) ? 'red' : 'green')}
+      ${statCard('Processing Records', p.processingRecords ?? 0)}
+      ${statCard('Secure Deletions', p.secureDeletions ?? 0)}
+      ${statCard('Crypto-Shreds', p.cryptoShreds ?? 0, 'green')}
+      ${statCard('Minimization Violations', p.minimizationViolations ?? 0, (p.minimizationViolations ?? 0) ? 'red' : 'green')}
+    </div>
+    <div class="card"><div class="card-title">PIAs (${(data.pias || []).length})</div>${tableFrom(data.pias.slice(0, 8), ['title', 'flow', 'designScore', 'risk', 'status'])}</div>
+    <div class="card"><div class="card-title">Processing Activities (RoPA)</div>${tableFrom(data.processing, ['activity', 'controller', 'legalBasis', 'dataKinds'])}</div>
+    <div class="card"><div class="card-title">Secure Deletions</div>${tableFrom(data.deletions.slice(0, 8), ['target', 'dataKind', 'method', 'verified'])}</div>
+    <div class="card"><div class="card-title">Minimization Checks</div>${tableFrom(data.minimize.slice(0, 8), ['purpose', 'excess', 'compliant'])}</div>`;
+  } else if (view === 'secauto') {
+    const p = data.posture || {};
+    const r = data.report || {};
+    const open = (data.correlations || []).filter((c) => !c.closedAt);
+    html += `<div class="stat-grid">
+      ${statCard('Correlation Rules', p.rules ?? 0)}
+      ${statCard('Open Correlations', p.openCorrelations ?? open.length, open.length ? 'yellow' : 'green')}
+      ${statCard('Hunt Sweeps', p.sweeps ?? 0)}
+      ${statCard('Hunts Running', p.huntsRunning ? 'yes' : 'no', p.huntsRunning ? 'green' : null)}
+      ${statCard('Compliance Readiness', r.overall != null ? r.overall + '/100' : null, (r.overall ?? 0) >= 80 ? 'green' : 'yellow')}
+      ${statCard('Families Satisfied', r.families ? r.families.filter((f) => f.satisfied).length + '/' + r.families.length : null)}
+    </div>
+    <div class="card"><div class="card-title">Correlated Incidents (${(data.correlations || []).length}, ${open.length} open)</div>
+      ${data.correlations.map((c) => `<div class="row">[${c.severity}] ${c.title} — ${c.closedAt ? 'closed' : 'OPEN'} (${c.incidentId.slice(0, 8)})</div>`).join('') || '<div class="subtitle">no correlations yet — trigger a pillar event to see automation</div>'}
+    </div>
+    <div class="card"><div class="card-title">Hunt Sweeps</div>
+      ${(data.sweeps || []).slice(0, 5).map((s) => `<div class="row">${new Date(s.at).toISOString()}: ${s.totalHits} hit(s) across ${s.sessions.length} playbook(s)${s.triggered ? ' ⚠' : ''}</div>`).join('') || '<div class="subtitle">no sweeps yet</div>'}
+    </div>
+    <div class="card"><div class="card-title">Compliance Evidence (ISO 27001)</div>
+      ${(r.families || []).map((f) => `<div class="row">${f.id} ${f.name}: ${f.coverage}% (${f.evidenceCount} evidence) ${f.satisfied ? '✅' : '⬜'}</div>`).join('')}
+    </div>`;
   } else if (view === 'cdn') {
     const s = data.stats || {};
     html += `<div class="stat-grid">

@@ -228,7 +228,7 @@ export class DisasterRecoveryModule implements IModule {
       contentHash, createdAt: Date.now(), createdBy,
     };
     await this.snapshots.put(snapshot);
-    await this.api.bus.emit(DREvents.SnapshotCreated, { id: snapshot.id, namespace, entries: entries.length });
+    await this.api.bus.emit(DREvents.SnapshotCreated, { id: snapshot.id, namespace, entries: entries.length, createdAt: snapshot.createdAt });
     await this.audit(createdBy, 'snapshot_created', { snapshotId: snapshot.id, namespace });
     return snapshot;
   }

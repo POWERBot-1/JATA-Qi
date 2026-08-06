@@ -23,6 +23,13 @@ import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
 import { IpamModule } from '@jataqi/ipam';
 import { TanyaModule } from '@jataqi/tanya';
+import { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
+import { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
+import { SecurityReviewModule } from '@jataqi/security-review';
+import { PrivacyModule } from '@jataqi/privacy';
+import { SocModule } from '@jataqi/soc';
+import { ActiveDefenseModule } from '@jataqi/active-defense';
+import { SecurityAutomationModule } from '@jataqi/security-automation';
 import { ApiGatewayModule } from '@jataqi/api-gateway';
 import { WebUIModule } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -54,6 +61,13 @@ describe('WebUIModule', () => {
     kernel.register(new EmailModule());
     kernel.register(new IpamModule());
     kernel.register(new TanyaModule());
+    kernel.register(new ResilienceEngineeringModule());
+    kernel.register(new SupplyChainSecurityModule());
+    kernel.register(new SecurityReviewModule());
+    kernel.register(new PrivacyModule());
+    kernel.register(new SocModule());
+    kernel.register(new ActiveDefenseModule());
+    kernel.register(new SecurityAutomationModule());
     kernel.register(new ApiGatewayModule());
     kernel.register(new WebUIModule());
     await kernel.boot();
@@ -353,7 +367,7 @@ describe('WebUIModule', () => {
       assert.equal((await layouts.json() as { count: number }).count, 1);
 
       // Engine stats endpoints used by the views.
-      for (const path of ['/cloud/stats', '/cdn/stats', '/email/stats', '/ipam/stats', '/fx/stats', '/memory/stats', '/automations']) {
+      for (const path of ['/cloud/stats', '/cdn/stats', '/email/stats', '/ipam/stats', '/fx/stats', '/memory/stats', '/automations', '/resilience/stats', '/supplychain/stats', '/review/stats', '/privacy/posture', '/security-automation/posture']) {
         const res = await fetch(`${base}${path}`, { headers: auth });
         assert.equal(res.status, 200, `${path} should resolve`);
       }
