@@ -87,3 +87,29 @@ variable "skip_final_snapshot" {
   default     = false
   description = "Skip final RDS snapshot on destroy (set true for dev)."
 }
+
+# --- Disaster-recovery region -------------------------------------------------
+
+variable "dr_enabled" {
+  description = "Provision the disaster-recovery region (VPC + RDS read replica + cross-region S3 replication)"
+  type        = bool
+  default     = true
+}
+
+variable "dr_region" {
+  description = "AWS region for the DR site (geographically distinct from primary)"
+  type        = string
+  default     = "eu-west-2"
+}
+
+variable "dr_db_instance_class" {
+  description = "Instance class for the DR read replica"
+  type        = string
+  default     = "db.t4g.large"
+}
+
+variable "dr_backup_retention_days" {
+  description = "Backup retention for the DR replica"
+  type        = number
+  default     = 30
+}

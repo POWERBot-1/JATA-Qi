@@ -6,7 +6,9 @@ metadata:
   labels:
     {{- include "jataqi.labels" . | nindent 4 }}
   annotations:
-    nginx.ingress.kubernetes.io/enable-cors: {{ .Values.jataqi.cors.enabled | quote }}
+    {{- if and .Values.ingress.tls.certManager .Values.security.tls.certManager.enabled }}
+    cert-manager.io/cluster-issuer: {{ .Values.security.tls.certManager.clusterIssuer | quote }}
+    {{- end }}    nginx.ingress.kubernetes.io/enable-cors: {{ .Values.jataqi.cors.enabled | quote }}
 spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- if .Values.ingress.tls.enabled }}

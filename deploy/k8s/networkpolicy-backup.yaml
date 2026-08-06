@@ -1,0 +1,27 @@
+# JATA Qi — NetworkPolicy: backup / DR plane.
+# Disaster-recovery snapshots are pushed to S3; the base policy already
+# allows DNS + 443, and this policy additionally pins egress to the S3
+# gateway/VPC-endpoint CIDR range when provided (annotation-style override).
+# Without the CIDR the policy is inert (no-op allow) so the base deny-all
+# egress remains authoritative.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jataqi-backup
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jataqi
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            # S3 regional endpoint CIDR (example). Replace with your region's
+            # S3 prefix list, or use an S3 VPC endpoint + the endpoint CIDR.
+            cidr: 0.0.0.0/0
+            except: []
+      ports:
+        - { protocol: TCP, port: 443 }

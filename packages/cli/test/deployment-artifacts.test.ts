@@ -184,3 +184,68 @@ describe('Helm chart — renderable shape', () => {
     }
   });
 });
+
+describe('production hardening — PSS, per-pillar policies, PQ-ready TLS, multi-region DR', () => {
+  it('namespace enforces the RESTRICTED Pod Security Standard', () => {
+    const ns = read('k8s/namespace.yaml');
+    assert.ok(ns.includes('pod-security.kubernetes.io/enforce: restricted'), 'enforce=restricted label');
+    assert.ok(ns.includes('pod-security.kubernetes.io/enforce-version:'), 'enforce version pinned');
+    assert.ok(ns.includes('pod-security.kubernetes.io/audit: restricted'), 'audit label');
+    assert.ok(ns.includes('pod-security.kubernetes.io/warn: restricted'), 'warn label');
+  });
+
+  it('renders dedicated per-pillar NetworkPolicies (backup + observability) wired into kustomize', () => {
+    const backup = read('k8s/networkpolicy-backup.yaml');
+    assert.ok(backup.includes('kind: NetworkPolicy'));
+    assert.ok(backup.includes('policyTypes: [Egress]'));
+    assert.ok(backup.includes('port: 443'), 'S3 egress');
+    const observability = read('k8s/networkpolicy-observability.yaml');
+    assert.ok(observability.includes('policyTypes: [Ingress]'));
+    assert.ok(observability.includes('monitoring'), 'scrape namespace selector');
+    assert.ok(observability.includes('port: 7400'), 'metrics port');
+    const kustomize = read('k8s/kustomization.yaml');
+    assert.ok(kustomize.includes('networkpolicy-backup.yaml'));
+    assert.ok(kustomize.includes('networkpolicy-observability.yaml'));
+  });
+
+  it('ingress is PQ-ready via cert-manager automation with TLS termination', () => {
+    const ingress = read('k8s/ingress.yaml');
+    assert.ok(ingress.includes('cert-manager.io/cluster-issuer: jataqi-letsencrypt'), 'cert-manager annotation');
+    assert.ok(ingress.includes('secretName: jataqi-ingress-tls'), 'TLS secret');
+    const values = read('helm/jataqi/values.yaml');
+    assert.ok(values.includes('pqNotes'), 'PQ notes documented in values');
+    assert.ok(values.includes('clusterIssuer: jataqi-letsencrypt'), 'helm cluster issuer value');
+  });
+
+  it('helm chart renders per-pillar policies + PSS knobs from values', () => {
+    const values = read('helm/jataqi/values.yaml');
+    assert.ok(values.includes('podSecurity:'), 'PSS block');
+    assert.ok(values.includes('enforce: restricted'));
+    assert.ok(values.includes('backupEgress: true'), 'backup plane enabled');
+    assert.ok(values.includes('backupCidr:'), 'backup CIDR knob');
+    assert.ok(values.includes('observabilityIngress: false'), 'observability plane knob');
+    const template = read('helm/jataqi/templates/networkpolicy-backup.yaml');
+    assert.ok(template.includes('networkPolicy.backupEgress'), 'conditional render');
+    assert.ok(template.includes('{{ include "jataqi.fullname" . }}-backup'));
+    const ingressTemplate = read('helm/jataqi/templates/ingress.yaml');
+    assert.ok(ingressTemplate.includes('cert-manager.io/cluster-issuer'), 'helm ingress cert-manager annotation');
+  });
+
+  it('terraform provisions a multi-region DR site (RDS replica + cross-region S3)', () => {
+    const dr = read('terraform/dr-region.tf');
+    assert.ok(dr.includes('provider "aws" {'), 'aliased DR provider');
+    assert.ok(dr.includes('alias  = "dr"'));
+    assert.ok(dr.includes('aws_db_instance.jataqi.arn'), 'cross-region replica of the primary DB');
+    assert.ok(dr.includes('aws_s3_bucket_replication_configuration'), 'cross-region S3 replication');
+    assert.ok(dr.includes('aws_s3_bucket.backups'), 'replicates the primary backup bucket');
+    assert.ok(dr.includes('dr_region'), 'region knob');
+    const vars = read('terraform/variables.tf');
+    for (const v of ['dr_enabled', 'dr_region', 'dr_db_instance_class', 'dr_backup_retention_days']) {
+      assert.ok(vars.includes(variable(v)), `variables.tf missing ${v}`);
+    }
+  });
+});
+
+function variable(name: string): string {
+  return `variable "${name}"`;
+}

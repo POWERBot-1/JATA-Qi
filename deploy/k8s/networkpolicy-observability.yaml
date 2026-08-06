@@ -1,0 +1,22 @@
+# JATA Qi — NetworkPolicy: observability plane.
+# Allows Prometheus (monitoring namespace) to scrape /metrics on the gateway
+# port. The base policy (networkpolicy.yaml) still denies everything else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: jataqi-observability
+  namespace: jataqi
+  labels:
+    app.kubernetes.io/name: jataqi
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jataqi
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - { protocol: TCP, port: 7400 }

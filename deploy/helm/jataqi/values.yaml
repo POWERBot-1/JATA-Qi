@@ -70,11 +70,40 @@ podSecurityContext:
   seccompProfile:
     type: RuntimeDefault
 
+# Pod Security Standards: the workload is built for the RESTRICTED profile
+# (runAsNonRoot, drop ALL caps, seccomp RuntimeDefault, readOnlyRootFilesystem,
+# allowPrivilegeEscalation false). Keep it that way when adding capabilities.
+podSecurity:
+  enforce: restricted
+  enforceVersion: v1.29
+
 securityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
+  runAsNonRoot: true
+  runAsUser: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+# TLS / certificate lifecycle (PQ-ready):
+#   - Leaves are issued + rotated by cert-manager (cluster-issuer below).
+#   - For post-quantum readiness, configure the issuer's certificate profile
+#     with hybrid curves (e.g. X25519MLKEM768, secp384r1+ML-DSA-65) as they
+#     standardize in ACME/CA ecosystems — the @jataqi/pqc migration phases
+#     govern key/signature agility independently of the TLS layer.
+#   - The gateway also supports native TLS (TLS_CERT_PATH/TLS_KEY_PATH) for
+#     end-to-end termination when the edge cannot be trusted.
+security:
+  tls:
+    certManager:
+      enabled: false
+      clusterIssuer: jataqi-letsencrypt
+    pqNotes: >-
+      Hybrid PQ certificate profiles are configured at the issuer level;
+      application-layer PQ readiness is tracked by @jataqi/pqc
+      (inventory -> dual_run -> hybrid -> pq_only).
 
 autoscaling:
   enabled: false
@@ -90,9 +119,18 @@ ingress:
   tls:
     enabled: false
     secretName: jataqi-ingress-tls
+    # cert-manager annotation added when security.tls.certManager.enabled.
+    certManager: false
 
 networkPolicy:
   enabled: true
+  # Dedicated backup-plane egress (S3) + observability-plane ingress policies
+  # are rendered when enabled; the base policy still denies everything else.
+  backupEgress: true
+  # S3 endpoint CIDR for the backup policy (example). Use your region's
+  # prefix list or an S3 VPC-endpoint CIDR for a tight allow.
+  backupCidr: 0.0.0.0/0
+  observabilityIngress: false
 
 monitoring:
   enabled: false               # enable with kube-prometheus-stack

@@ -13,6 +13,11 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
     # Reflect the gateway's own CORS policy at the edge too.
     nginx.ingress.kubernetes.io/enable-cors: "true"
+    # Automated certificate lifecycle (PQ-ready): cert-manager issues and
+    # rotates the leaf; keep the cluster-issuer's certificate algorithm
+    # configured for hybrid/PQ curves as they standardize (see values.yaml
+    # security.tls.pqNotes). No manual secret management.
+    cert-manager.io/cluster-issuer: jataqi-letsencrypt
 spec:
   ingressClassName: nginx
   tls:

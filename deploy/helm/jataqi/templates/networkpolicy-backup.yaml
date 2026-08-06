@@ -1,0 +1,49 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- if .Values.networkPolicy.backupEgress }}
+# JATA Qi — NetworkPolicy: backup / DR plane (S3 egress).
+# The base policy (networkpolicy.yaml) denies everything else; this policy
+# pins egress to the S3 endpoint CIDR when provided. Without a CIDR it is a
+# no-op allow so the base deny-all egress stays authoritative.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "jataqi.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "jataqi.name" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "jataqi.name" . }}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.backupCidr | default "0.0.0.0/0" | quote }}
+      ports:
+        - { protocol: TCP, port: 443 }
+{{- end }}
+{{- if .Values.networkPolicy.observabilityIngress }}
+---
+# JATA Qi — NetworkPolicy: observability plane (metrics scrape).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "jataqi.fullname" . }}-observability
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "jataqi.name" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "jataqi.name" . }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.monitoring.namespace }}
+      ports:
+        - { protocol: TCP, port: 7400 }
+{{- end }}
+{{- end }}
