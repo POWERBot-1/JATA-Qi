@@ -643,4 +643,31 @@ describe('TANYA AI conversational product layer', () => {
       await kernel.shutdown();
     }
   });
+
+  it('setArchived hides conversations from lists with ownership enforcement', async () => {
+    const kernel = await bootTanya();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const result = await tanya.chat({ userId: 'u1', message: 'archive me' });
+      const convId = result.conversationId;
+
+      await tanya.setArchived(convId, 'u1', true);
+      const listed = await tanya.listConversations('u1');
+      assert.equal(listed.total, 0, 'archived hidden from default list');
+
+      // Explicit archived filter still shows it.
+      const archived = await tanya.listConversations('u1', { archived: true });
+      assert.equal(archived.total, 1);
+
+      // Restore brings it back.
+      await tanya.setArchived(convId, 'u1', false);
+      assert.equal((await tanya.listConversations('u1')).total, 1);
+
+      // Ownership enforced.
+      await assert.rejects(tanya.setArchived(convId, 'stranger', true), /does not belong/);
+      await assert.rejects(tanya.setArchived('nope', 'u1', true), /not found/);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
 });

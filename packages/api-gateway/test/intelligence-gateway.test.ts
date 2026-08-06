@@ -1895,4 +1895,33 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const missing = await jsonRequest('POST', `${base}/tanya/conversation/pin`, { id: convId }, token);
     assert.equal(missing.status, 400);
   });
+
+  it('POST /tanya/conversation/archive hides + restores with ownership enforcement', async () => {
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'archive via gateway' }, token);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+
+    const archive = await jsonRequest('POST', `${base}/tanya/conversation/archive`, { id: convId, archived: true }, token);
+    assert.equal(archive.status, 200);
+    assert.equal((archive.body as { archived: boolean }).archived, true);
+
+    // Hidden from the default list.
+    const listed = await jsonRequest('GET', `${base}/tanya/conversations`, undefined, token);
+    const convs = (listed.body as { conversations: { id: string }[] }).conversations;
+    assert.ok(!convs.some((c) => c.id === convId), 'archived conversation hidden');
+
+    // Restore.
+    const restore = await jsonRequest('POST', `${base}/tanya/conversation/archive`, { id: convId, archived: false }, token);
+    assert.equal((restore.body as { archived: boolean }).archived, false);
+    const listedAfter = await jsonRequest('GET', `${base}/tanya/conversations`, undefined, token);
+    assert.ok((listedAfter.body as { conversations: { id: string }[] }).conversations.some((c) => c.id === convId), 'restored conversation visible');
+
+    // Non-owner → 403.
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const denied = await jsonRequest('POST', `${base}/tanya/conversation/archive`, { id: convId, archived: true }, (recLogin.body as { token: string }).token);
+    assert.equal(denied.status, 403);
+
+    // Missing field → 400.
+    const missing = await jsonRequest('POST', `${base}/tanya/conversation/archive`, { id: convId }, token);
+    assert.equal(missing.status, 400);
+  });
 });

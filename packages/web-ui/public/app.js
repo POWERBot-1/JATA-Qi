@@ -544,6 +544,8 @@ function renderView(view, data) {
         <button class="btn-ghost" onclick="loadTanyaConversation('')">New</button>
         <button class="btn-ghost" onclick="pinTanyaConversation(true)">📌 Pin</button>
         <button class="btn-ghost" onclick="pinTanyaConversation(false)">Unpin</button>
+        <button class="btn-ghost" onclick="archiveTanyaConversation(true)">🗄️ Archive</button>
+        <button class="btn-ghost" onclick="archiveTanyaConversation(false)">Restore</button>
       </div>
       <div id="tanya-messages" class="chat-log">
         <p style="color:var(--text-dim)">Send a message to start chatting with TANYA.</p>
@@ -1078,6 +1080,15 @@ async function exportAudit(format) {
     a.download = `audit-${scope}-${Date.now()}.${format}`;
     a.click();
     URL.revokeObjectURL(url);
+  } catch (e) { alert(e.message); }
+}
+async function archiveTanyaConversation(archived) {
+  const convId = $('#tanya-conv')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  try {
+    await api('POST', '/tanya/conversation/archive', { id: convId, archived });
+    alert(archived ? '🗄️ Archived' : 'Restored');
+    loadTanyaConversation('');
   } catch (e) { alert(e.message); }
 }
 async function pinTanyaConversation(pinned) {

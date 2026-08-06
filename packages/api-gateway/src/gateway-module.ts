@@ -539,6 +539,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/tanya/shares/prune', auth('tanya:write', (req) => this.tanyaSharesPrune(req)));
     route('POST', '/tanya/summarize', auth('tanya:write', (req) => this.tanyaSummarize(req)));
     route('POST', '/tanya/conversation/pin', auth('tanya:write', (req) => this.tanyaPin(req)));
+    route('POST', '/tanya/conversation/archive', auth('tanya:write', (req) => this.tanyaArchive(req)));
     route('POST', '/session/revoke', auth(null, (req) => this.sessionRevoke(req)));
     // Notifications.
     route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
@@ -6160,6 +6161,19 @@ export class ApiGatewayModule implements IModule {
     if (!this.tanya) return json(501, { error: 'tanya module not registered' });
     const conversations = await this.tanya.sharedWithMe(req.principal!.userId);
     return json(200, { conversations, count: conversations.length });
+  }
+
+  private async tanyaArchive(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.archived !== 'boolean')
+      return json(400, { error: 'fields "id" and "archived" (boolean) are required' });
+    try {
+      await this.tanya.setArchived(b.id, req.principal!.userId, b.archived);
+      return json(200, { archived: b.archived });
+    } catch (e) {
+      return json(403, { error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   private async tanyaPin(req: GatewayRequest): Promise<GatewayResponse> {

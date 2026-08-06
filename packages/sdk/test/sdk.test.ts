@@ -631,4 +631,17 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     await client.tanya.setPinned(b.conversationId, false);
     void a;
   });
+
+  it('tanya.setArchived hides and restores conversations', async () => {
+    await client.auth.login('admin', 'admin');
+    const chat = await client.tanya.chat('archive via sdk');
+
+    await client.tanya.setArchived(chat.conversationId, true);
+    const listed = await client.tanya.listConversations({ limit: 20 });
+    assert.ok(!listed.conversations.some((c) => c.id === chat.conversationId), 'archived hidden');
+
+    await client.tanya.setArchived(chat.conversationId, false);
+    const after = await client.tanya.listConversations({ limit: 20 });
+    assert.ok(after.conversations.some((c) => c.id === chat.conversationId), 'restored visible');
+  });
 });

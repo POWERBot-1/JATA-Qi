@@ -239,6 +239,10 @@ export class TanyaClient {
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
   }
+  /** Archive or restore a conversation (owner only; archived hidden from lists). */
+  async setArchived(conversationId: string, archived: boolean): Promise<{ archived: boolean }> {
+    return this.c.request('POST', '/tanya/conversation/archive', { id: conversationId, archived });
+  }
   /** Pin or unpin a conversation (owner only). */
   async setPinned(conversationId: string, pinned: boolean): Promise<{ pinned: boolean }> {
     return this.c.request('POST', '/tanya/conversation/pin', { id: conversationId, pinned });
