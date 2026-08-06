@@ -81,6 +81,7 @@ Commands:
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
   ipam <sub>          PRX RIR member: blocks|block|split|addresses|address|asns|asn|announce|announcements|stats.
+  mobile <sub>        TANYA Mobile Native: devices|register|snapshot|notify.
   realtime <sub>      Realtime: stats.
   tanya <sub>         TANYA AI: chat|conversations|conversation|personas|persona|identify|stats|share|unshare|shared|shares|export|sharelink|summary|pin|unpin|archive|restore|folders|folder.
   org <sub>           Organizations: create|invite|accept|list|members.
@@ -125,6 +126,12 @@ async function main() {
   const ipam = kernel.getModule<IpamModule>('ipam');
   const tanya = kernel.getModule<TanyaModule>('tanya');
   const orgs = kernel.getModule<OrganizationsModule>('organizations');
+  const mobile = kernel.getModule('mobile') as unknown as {
+    registerDevice: (userId: string, input: { platform: 'ios' | 'android'; pushToken?: string; name?: string; locale?: string }) => Promise<{ id: string; platform: string; pushToken?: string; name?: string; locale?: string }>;
+    listDevices: (userId: string) => Promise<Array<{ id: string; platform: string; pushToken?: string; name?: string; locale?: string; lastSeenAt: number }>>;
+    snapshot: (userId: string) => Promise<{ serverTime: number; devices: unknown[]; personas: unknown[]; myOrgs: unknown[]; recentConversations: unknown[]; sharedWithMeCount: number; pendingApprovalCount: number }>;
+    notifyUser: (userId: string, input: { title: string; body: string; event?: string }) => Promise<{ delivered: number }>;
+  } | undefined;
   const realtime = kernel.getModule('realtime') as unknown as { stats: () => { clients: number; totalConnections: number; uptimeMs: number; path: string; pingIntervalMs: number } } | undefined;
   const toolIntel = kernel.getModule<ToolIntelligenceModule>('tool-intelligence');
   const orchestrator = kernel.getModule<OrchestratorModule>('orchestrator');
@@ -1849,6 +1856,45 @@ async function main() {
         }
         break;
       }
+      case 'mobile': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'register': {
+            const platform = args[2] ?? flag('platform');
+            if (platform !== 'ios' && platform !== 'android') { console.error('Usage: jataqi mobile register <ios|android> [--token x] [--name x]'); process.exit(1); }
+            const device = await mobile!.registerDevice('cli', { platform, ...(flag('token') ? { pushToken: flag('token')! } : {}), ...(flag('name') ? { name: flag('name')! } : {}) });
+            console.log(`registered ${device.id} (${device.platform})`);
+            break;
+          }
+          case 'devices': {
+            if (!mobile) { console.log('mobile module not registered'); break; }
+            const devices = await mobile.listDevices('cli');
+            for (const d of devices) console.log(`- ${d.id} ${d.platform}${d.name ? ` (${d.name})` : ''}${d.pushToken ? ` token=${d.pushToken.slice(0, 8)}…` : ''}`);
+            console.log(`${devices.length} device(s)`);
+            break;
+          }
+          case 'snapshot': {
+            if (!mobile) { console.log('mobile module not registered'); break; }
+            console.log(JSON.stringify(await mobile.snapshot('cli'), null, 2));
+            break;
+          }
+          case 'notify': {
+            const title = flag('title') ?? args[2];
+            const body = flag('body') ?? args[3];
+            if (!title || !body) { console.error('Usage: jataqi mobile notify <title> <body>'); process.exit(1); }
+            const result = await mobile!.notifyUser('cli', { title, body });
+            console.log(`delivered to ${result.delivered} device(s)`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi mobile register|devices|snapshot|notify'); process.exit(1);
+        }
+        break;
+      }
       case 'realtime': {
         const sub = args[1];
         switch (sub) {
@@ -2152,7 +2198,7 @@ async function main() {
           if (!line) continue;
           if (line === 'exit' || line === 'quit') break;
           if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ') || line.startsWith('org ') || line.startsWith('realtime ')) {
+          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('find ') || line.startsWith('stats') || line.startsWith('entities') || line.startsWith('memory ') || line.startsWith('learning ') || line.startsWith('prompts ') || line.startsWith('experiments ') || line.startsWith('wallet ') || line.startsWith('crypto ') || line.startsWith('dashboard ') || line.startsWith('brands ') || line.startsWith('automation ') || line.startsWith('fx ') || line.startsWith('pki ') || line.startsWith('mobility ') || line.startsWith('logistics ') || line.startsWith('farm ') || line.startsWith('circular ') || line.startsWith('qil ') || line.startsWith('energy ') || line.startsWith('border ') || line.startsWith('kitchen ') || line.startsWith('maza ') || line.startsWith('cloud ') || line.startsWith('cdn ') || line.startsWith('mail ') || line.startsWith('ipam ') || line.startsWith('tanya ') || line.startsWith('tools ') || line.startsWith('org ') || line.startsWith('realtime ') || line.startsWith('mobile ')) {
             const parts = line.split(/\s+/);
             process.argv = ['node', 'jataqi', ...parts];
             await main(); // restart command dispatch (simple impl)

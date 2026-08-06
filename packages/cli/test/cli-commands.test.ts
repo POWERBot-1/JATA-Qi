@@ -320,4 +320,13 @@ describe('jataqi CLI — intelligence commands', () => {
     const out = await jataqi('tanya', 'folders');
     assert.match(out, /0 folder\(s\)/);
   });
+
+  it('mobile devices + snapshot work', async () => {
+    // Fresh OS: no devices registered for 'cli'.
+    const devices = await jataqi('mobile', 'devices');
+    assert.match(devices, /0 device\(s\)/);
+    const snapshot = await jataqi('mobile', 'snapshot');
+    assert.match(snapshot, /"userId": "cli"/);
+    assert.match(snapshot, /"sharedWithMeCount": 0/);
+  });
 });

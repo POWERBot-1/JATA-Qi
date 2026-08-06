@@ -61,6 +61,7 @@ export class JataQiClient {
   readonly audit: AuditClient;
   readonly tanya: TanyaClient;
   readonly alerts: AlertsClient;
+  readonly mobile: MobileClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -96,6 +97,7 @@ export class JataQiClient {
     this.audit = new AuditClient(this);
     this.tanya = new TanyaClient(this);
     this.alerts = new AlertsClient(this);
+    this.mobile = new MobileClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -297,6 +299,35 @@ export class AlertsClient {
   /** Evaluate the governance SLA rules (approval queue / DENY spike / R4 rate). */
   async list(): Promise<{ checkedAt: number; alerts: Array<{ id: string; severity: string; state: string; message: string; value: number; threshold: number; checkedAt: number }> }> {
     return this.c.request('GET', '/governance/alerts');
+  }
+}
+
+// --- TANYA Mobile Native ---------------------------------------------------------
+
+export class MobileClient {
+  constructor(private c: JataQiClient) {}
+  /** Register this device for push notifications (FCM/APNs token). */
+  async registerDevice(platform: 'ios' | 'android', opts: { pushToken?: string; name?: string; locale?: string } = {}): Promise<{ device: { id: string; platform: string; pushToken?: string; name?: string; locale?: string; lastSeenAt: number } }> {
+    return this.c.request('POST', '/mobile/devices', { platform, ...opts });
+  }
+  /** List the caller's registered devices. */
+  async listDevices(): Promise<{ devices: Array<{ id: string; platform: string; pushToken?: string; name?: string; locale?: string; lastSeenAt: number }>; count: number }> {
+    return this.c.request('GET', '/mobile/devices');
+  }
+  async unregisterDevice(deviceId: string): Promise<{ removed: boolean }> {
+    return this.c.request('POST', '/mobile/devices/unregister', { deviceId });
+  }
+  /** Replay offline-queued messages through TANYA chat. */
+  async syncOutbox(messages: Array<{ id: string; message: string; conversationId?: string; persona?: string; orgId?: string }>): Promise<{ results: Array<{ messageId: string; status: string; conversationId?: string; reply?: string; error?: string }>; storedForRetry: number }> {
+    return this.c.request('POST', '/mobile/outbox', { messages });
+  }
+  /** One-call home-screen bootstrap. */
+  async snapshot(): Promise<{ serverTime: number; userId: string; devices: unknown[]; personas: Array<{ id: string; name: string; description: string }>; myOrgs: Array<{ id: string; name: string; slug: string; role?: string }>; recentConversations: Array<{ id: string; title: string; updatedAt: number; messageCount: number; pinned: boolean; orgId?: string }>; sharedWithMeCount: number; pendingApprovalCount: number }> {
+    return this.c.request('GET', '/mobile/snapshot');
+  }
+  /** Send a push notification to the caller's devices (payloads returned). */
+  async notify(title: string, body: string, opts: { event?: string; data?: Record<string, unknown> } = {}): Promise<{ delivered: number; payloads: Array<{ apns: Record<string, unknown>; fcm: Record<string, unknown> }> }> {
+    return this.c.request('POST', '/mobile/notify', { title, body, ...opts });
   }
 }
 

@@ -152,6 +152,12 @@ describe('WebUIModule', () => {
     assert.match(js, /statCard\('Governed Tools'/, 'governed-tools widget data rendered');
     assert.match(js, /Tool Governance Widgets/, 'governance widget panel rendered');
     assert.match(js, /\/tools\/governance-stats/, 'dashboards view fetches governance stats');
+    // TANYA Mobile Native view.
+    assert.match(js, /mobile: async/, 'mobile view present');
+    assert.match(js, /\/mobile\/devices/, 'devices endpoint wired');
+    assert.match(js, /\/mobile\/snapshot/, 'snapshot endpoint wired');
+    assert.match(js, /registerMobileDevice/, 'device registration action present');
+    assert.match(js, /mobileNotify/, 'push test action present');
     // Governance SLA alerts view.
     assert.match(js, /alerts: async/, 'alerts view present');
     assert.match(js, /\/governance\/alerts/, 'alerts endpoint wired');

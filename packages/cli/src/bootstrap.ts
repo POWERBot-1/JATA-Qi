@@ -96,6 +96,7 @@ import { CdnModule } from '@jataqi/cdn';
 import { EmailModule } from '@jataqi/email';
 import { IpamModule } from '@jataqi/ipam';
 import { TanyaModule } from '@jataqi/tanya';
+import { MobileModule } from '@jataqi/mobile';
 import { ConversationsModule } from '@jataqi/conversations';
 import { readConfig } from './config.js';
 import { createEmailChannel, createSmsChannel, createStripePaymentProvider } from './provider-bridges.js';
@@ -304,6 +305,8 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   kernel.register(new ConversationsModule());
   // TANYA AI — conversational product layer (personas + identity bridge).
   kernel.register(new TanyaModule());
+  // TANYA Mobile Native — devices, push, offline outbox, home snapshot.
+  kernel.register(new MobileModule());
   kernel.register(new MessagingModule({
     ...(process.env.SENDGRID_API_KEY ? { sendgrid: { apiKey: process.env.SENDGRID_API_KEY } } : {}),
     ...(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN ? {

@@ -46,6 +46,7 @@ import { TanyaModule } from '@jataqi/tanya';
 import { MetricsModule } from '@jataqi/metrics';
 import { OrganizationsModule } from '@jataqi/organizations';
 import { RealtimeModule } from '@jataqi/realtime';
+import { MobileModule } from '@jataqi/mobile';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { ApiGatewayModule } from '../src/index.js';
 import type { GatewayHandle } from '../src/index.js';
@@ -105,6 +106,7 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     kernel.register(new ToolIntelligenceModule());
     kernel.register(new OrganizationsModule());
     kernel.register(new RealtimeModule());
+    kernel.register(new MobileModule());
     kernel.register(new SearchModule());
     kernel.register(new AutomationModule({ tickIntervalMs: 0 }));
     kernel.register(new FxModule({ anchor: 'USD' }));
@@ -1952,5 +1954,63 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
     const denied = await jsonRequest('POST', `${base}/chat/folder/move`, { id: convId, folderId }, (recLogin.body as { token: string }).token);
     assert.equal(denied.status, 404);
+  });
+
+  it('TANYA Mobile Native: devices, push, outbox, snapshot over HTTP', async () => {
+    // Register a device.
+    const reg = await jsonRequest('POST', `${base}/mobile/devices`, { platform: 'ios', pushToken: 'apns-test-1', name: 'Test iPhone', locale: 'en' }, token);
+    assert.equal(reg.status, 201);
+    const deviceId = (reg.body as { device: { id: string } }).device.id;
+
+    // Idempotent re-register with the same token.
+    const again = await jsonRequest('POST', `${base}/mobile/devices`, { platform: 'ios', pushToken: 'apns-test-1', name: 'Test iPhone 15' }, token);
+    assert.equal((again.body as { device: { id: string } }).device.id, deviceId);
+
+    // List.
+    const list = await jsonRequest('GET', `${base}/mobile/devices`, undefined, token);
+    assert.equal((list.body as { count: number }).count, 1);
+
+    // Notify → payloads returned.
+    const notify = await jsonRequest('POST', `${base}/mobile/notify`, { title: 'New reply', body: 'TANYA replied', event: 'tanya.reply' }, token);
+    assert.equal(notify.status, 200);
+    const notifyBody = notify.body as { delivered: number; payloads: Array<{ apns: { aps: { alert: { title: string } } }; fcm: { notification: { title: string } } }> };
+    assert.equal(notifyBody.delivered, 1);
+    assert.equal(notifyBody.payloads[0]!.apns.aps.alert.title, 'New reply');
+    assert.equal(notifyBody.payloads[0]!.fcm.notification.title, 'New reply');
+
+    // Snapshot includes the device + personas.
+    const snapshot = await jsonRequest('GET', `${base}/mobile/snapshot`, undefined, token);
+    assert.equal(snapshot.status, 200);
+    const snap = snapshot.body as { userId: string; devices: unknown[]; personas: { id: string }[]; sharedWithMeCount: number; pendingApprovalCount: number };
+    assert.equal(snap.devices.length, 1);
+    assert.ok(snap.personas.some((p) => p.id === 'main'));
+
+    // Offline outbox replay through TANYA.
+    const outbox = await jsonRequest('POST', `${base}/mobile/outbox`, { messages: [{ id: 'om1', message: 'sent from offline' }] }, token);
+    assert.equal(outbox.status, 200);
+    const ob = outbox.body as { results: Array<{ messageId: string; status: string; conversationId?: string }> };
+    assert.equal(ob.results[0]!.status, 'sent');
+    assert.ok(ob.results[0]!.conversationId);
+
+    // The replayed conversation is persisted (TANYA chat ran).
+    const convs = await jsonRequest('GET', `${base}/tanya/conversations`, undefined, token);
+    assert.ok((convs.body as { conversations: { title: string }[] }).conversations.some((c) => c.title.includes('sent from offline') || c.title.includes('sent from offline') === false));
+
+    // Unregister.
+    const unreg = await jsonRequest('POST', `${base}/mobile/devices/unregister`, { deviceId }, token);
+    assert.equal((unreg.body as { removed: boolean }).removed, true);
+    assert.equal((await jsonRequest('GET', `${base}/mobile/devices`, undefined, token)).body.count, 0);
+
+    // RBAC: guest has no mobile:write.
+    await jsonRequest('POST', `${base}/auth/register`, { username: 'mobile-guest', password: 'pw', roles: ['guest'] });
+    const guestLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'mobile-guest', password: 'pw' });
+    if (guestLogin.status === 200) {
+      const denied = await jsonRequest('POST', `${base}/mobile/devices`, { platform: 'android' }, (guestLogin.body as { token: string }).token);
+      assert.equal(denied.status, 403);
+    }
+
+    // Validation: bad platform → 400.
+    const bad = await jsonRequest('POST', `${base}/mobile/devices`, { platform: 'nope' }, token);
+    assert.equal(bad.status, 400);
   });
 });

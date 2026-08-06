@@ -663,4 +663,32 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const after = await client.tanya.listConversations({ folderId: folder.id });
     assert.ok(!after.conversations.some((c) => c.id === chat.conversationId), 'moved out of folder');
   });
+
+  it('mobile namespace: devices, push, snapshot, outbox', async () => {
+    await client.auth.login('admin', 'admin');
+
+    const reg = await client.mobile.registerDevice('ios', { pushToken: 'apns-sdk-1', name: 'SDK iPhone', locale: 'en' });
+    assert.ok(reg.device.id);
+    assert.equal(reg.device.platform, 'ios');
+
+    const list = await client.mobile.listDevices();
+    assert.equal(list.count, 1);
+
+    const notify = await client.mobile.notify('Hello', 'From the SDK', { event: 'tanya.test' });
+    assert.equal(notify.delivered, 1);
+    assert.equal((notify.payloads[0]!.apns.aps as { alert: { title: string } }).alert.title, 'Hello');
+    assert.equal((notify.payloads[0]!.fcm.notification as { body: string }).body, 'From the SDK');
+
+    const snapshot = await client.mobile.snapshot();
+    assert.equal(snapshot.devices.length, 1);
+    assert.ok(snapshot.personas.some((p) => p.id === 'main'));
+
+    const outbox = await client.mobile.syncOutbox([{ id: 'sdk-om1', message: 'offline sdk message' }]);
+    assert.equal(outbox.results[0]!.status, 'sent');
+    assert.ok(outbox.results[0]!.conversationId);
+
+    const unreg = await client.mobile.unregisterDevice(reg.device.id);
+    assert.equal(unreg.removed, true);
+    assert.equal((await client.mobile.listDevices()).count, 0);
+  });
 });

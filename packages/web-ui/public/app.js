@@ -233,6 +233,7 @@ const NAV = [
   { id: 'automations', label: 'Automations', icon: '⏰' },
   { id: 'tools', label: 'Tools', icon: '🔧' },
   { id: 'approvals', label: 'Approvals', icon: '✅' },
+  { id: 'mobile', label: 'Mobile', icon: '📱' },
   { id: 'alerts', label: 'Governance Alerts', icon: '🚨' },
   { id: 'audit', label: 'Audit Trail', icon: '📜' },
   { id: 'health', label: 'System Health', icon: '💚' },
@@ -347,6 +348,16 @@ const VIEWS = {
       alerts: alerts.status === 'fulfilled' ? alerts.value.alerts : [],
       checkedAt: alerts.status === 'fulfilled' ? alerts.value.checkedAt : null,
       gstats: gstats.status === 'fulfilled' ? gstats.value : null,
+    };
+  },
+
+  mobile: async () => {
+    const [devices, snapshot] = await Promise.allSettled([
+      api('GET', '/mobile/devices'), api('GET', '/mobile/snapshot'),
+    ]);
+    return {
+      devices: devices.status === 'fulfilled' ? devices.value.devices : [],
+      snapshot: snapshot.status === 'fulfilled' ? snapshot.value : null,
     };
   },
 
@@ -775,6 +786,31 @@ function renderView(view, data) {
     <div class="card"><div class="card-title">Approval Decisions (ledger)</div>${tableFrom(approval, ['ts', 'action', 'actor', 'result', 'detail'])}</div>
     <div class="card"><div class="card-title">Denied High-Risk Invocations</div>${tableFrom(denied, ['ts', 'action', 'actor', 'result', 'resource'])}</div>
     <div class="card"><div class="card-title">Recent Logins</div>${tableFrom(login, ['ts', 'actor', 'action', 'result'])}</div>`;
+  } else if (view === 'mobile') {
+    const devices = data.devices || [];
+    const s = data.snapshot || {};
+    html += `<div class="stat-grid">
+      ${statCard('Devices', devices.length, devices.length ? 'green' : null)}
+      ${statCard('Shared w/ Me', s.sharedWithMeCount ?? 0)}
+      ${statCard('Pending Approvals', s.pendingApprovalCount ?? 0, (s.pendingApprovalCount ?? 0) ? 'yellow' : 'green')}
+      ${statCard('Recent Conversations', s.recentConversations?.length ?? 0)}
+    </div>
+    <div class="card"><div class="card-title">Register Test Device</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="mobile-platform" placeholder="ios | android" style="max-width:120px" value="ios">
+        <input id="mobile-token" placeholder="push token (optional)" style="flex:1;min-width:200px">
+        <input id="mobile-name" placeholder="device name (optional)" style="flex:1;min-width:180px">
+        <button class="btn-primary" onclick="registerMobileDevice()">Register</button>
+      </div></div>
+    <div class="card"><div class="card-title">Test Push</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input id="mobile-notify-title" placeholder="title" style="flex:1;min-width:150px">
+        <input id="mobile-notify-body" placeholder="body" style="flex:1;min-width:200px">
+        <button class="btn-ghost" onclick="mobileNotify()">Send</button>
+      </div>
+      <div id="mobile-notify-result" style="margin-top:8px;font-size:12px;color:var(--text-dim)"></div></div>
+    <div class="card"><div class="card-title">Devices</div>${tableFrom(devices, ['id', 'platform', 'name', 'pushToken', 'lastSeenAt'])}</div>
+    <div class="card"><div class="card-title">Home Snapshot</div><pre>${esc(JSON.stringify(s, null, 2).slice(0, 1200))}</pre></div>`;
   } else if (view === 'approvals') {
     const pending = data.pending || [];
     const history = data.history || [];
@@ -1027,6 +1063,25 @@ async function sendTanyaHttp(message, persona, convId, orgId, modelRouting) {
   } catch (e) {
     appendChatMessage('system', `Error: ${e.message}`);
   }
+}
+async function registerMobileDevice() {
+  const platform = $('#mobile-platform')?.value.trim() || 'ios';
+  const pushToken = $('#mobile-token')?.value.trim() || undefined;
+  const name = $('#mobile-name')?.value.trim() || undefined;
+  try {
+    await api('POST', '/mobile/devices', { platform, ...(pushToken ? { pushToken } : {}), ...(name ? { name } : {}) });
+    await loadView('mobile');
+  } catch (e) { alert(e.message); }
+}
+async function mobileNotify() {
+  const title = $('#mobile-notify-title')?.value.trim();
+  const body = $('#mobile-notify-body')?.value.trim();
+  if (!title || !body) { alert('Enter a title and body.'); return; }
+  const box = $('#mobile-notify-result');
+  try {
+    const r = await api('POST', '/mobile/notify', { title, body, event: 'tanya.test' });
+    if (box) box.textContent = `delivered to ${r.delivered} device(s)`;
+  } catch (e) { if (box) box.textContent = ''; alert(e.message); }
 }
 async function createOrg() {
   const name = $('#org-name')?.value.trim();

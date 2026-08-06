@@ -75,6 +75,7 @@ import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
 import type { TanyaModule } from '@jataqi/tanya';
+import type { MobileModule } from '@jataqi/mobile';
 import type { PromptExperiment } from '@jataqi/ai-learning';
 import { extract as extractTraceContext } from '@jataqi/tracing';
 import type { TaskProfile } from '@jataqi/scheduler';
@@ -157,6 +158,7 @@ export class ApiGatewayModule implements IModule {
   private email?: EmailModule;
   private ipam?: IpamModule;
   private tanya?: TanyaModule;
+  private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
   private readonly opts: GatewayOptions;
@@ -246,6 +248,7 @@ export class ApiGatewayModule implements IModule {
     this.email = this.tryModule<EmailModule>('email');
     this.ipam = this.tryModule<IpamModule>('ipam');
     this.tanya = this.tryModule<TanyaModule>('tanya');
+    this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
     this.registerRoutes();
@@ -532,6 +535,13 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/tanya/persona', auth('tanya:write', (req) => this.tanyaPersonaCreate(req)));
     route('POST', '/tanya/identify', auth('tanya:read', (req) => this.tanyaIdentify(req)));
     route('GET', '/tanya/stats', auth('tanya:read', (req) => this.tanyaStats(req)));
+    // TANYA Mobile Native — devices, push, offline outbox, home snapshot.
+    route('POST', '/mobile/devices', auth('mobile:write', (req) => this.mobileDevicesRegister(req)));
+    route('GET', '/mobile/devices', auth('mobile:read', (req) => this.mobileDevicesList(req)));
+    route('POST', '/mobile/devices/unregister', auth('mobile:write', (req) => this.mobileDevicesUnregister(req)));
+    route('POST', '/mobile/outbox', auth('mobile:write', (req) => this.mobileOutbox(req)));
+    route('GET', '/mobile/snapshot', auth('mobile:read', (req) => this.mobileSnapshot(req)));
+    route('POST', '/mobile/notify', auth('mobile:write', (req) => this.mobileNotify(req)));
     route('POST', '/tanya/share', auth('tanya:write', (req) => this.tanyaShare(req)));
     route('POST', '/tanya/unshare', auth('tanya:write', (req) => this.tanyaUnshare(req)));
     route('GET', '/tanya/shared', auth('tanya:read', (req) => this.tanyaShared(req)));
@@ -1263,7 +1273,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -6241,6 +6251,67 @@ export class ApiGatewayModule implements IModule {
     } catch (e) {
       return json(400, { error: e instanceof Error ? e.message : String(e) });
     }
+  }
+
+  // --- TANYA Mobile Native ---------------------------------------------------
+
+  private async mobileDevicesRegister(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const b = this.asObject(req.body);
+    if (b.platform !== 'ios' && b.platform !== 'android') return json(400, { error: 'field "platform" must be "ios" or "android"' });
+    try {
+      const device = await this.mobile.registerDevice(req.principal!.userId, {
+        platform: b.platform,
+        ...(typeof b.pushToken === 'string' ? { pushToken: b.pushToken } : {}),
+        ...(typeof b.name === 'string' ? { name: b.name } : {}),
+        ...(typeof b.locale === 'string' ? { locale: b.locale } : {}),
+      });
+      return json(201, { device });
+    } catch (e) {
+      return json(400, { error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  private async mobileDevicesList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const devices = await this.mobile.listDevices(req.principal!.userId);
+    return json(200, { devices, count: devices.length });
+  }
+
+  private async mobileDevicesUnregister(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.deviceId !== 'string' || !b.deviceId) return json(400, { error: 'field "deviceId" is required' });
+    const removed = await this.mobile.unregisterDevice(req.principal!.userId, b.deviceId);
+    return json(200, { removed });
+  }
+
+  private async mobileOutbox(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const b = this.asObject(req.body);
+    if (!Array.isArray(b.messages)) return json(400, { error: 'field "messages" (array) is required' });
+    const result = await this.mobile.syncOutbox(req.principal!.userId, b.messages as never[]);
+    return json(200, result);
+  }
+
+  private async mobileSnapshot(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const snapshot = await this.mobile.snapshot(req.principal!.userId);
+    return json(200, snapshot);
+  }
+
+  private async mobileNotify(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.mobile) return json(501, { error: 'mobile module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.title !== 'string' || typeof b.body !== 'string')
+      return json(400, { error: 'fields "title" and "body" are required' });
+    const result = await this.mobile.notifyUser(req.principal!.userId, {
+      title: b.title,
+      body: b.body,
+      ...(typeof b.event === 'string' ? { event: b.event } : {}),
+      ...(b.data && typeof b.data === 'object' ? { data: b.data as Record<string, unknown> } : {}),
+    });
+    return json(200, result);
   }
 
   // --- helpers -------------------------------------------------------------

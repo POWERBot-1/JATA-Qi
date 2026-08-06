@@ -56,6 +56,7 @@
     "@jataqi/marketplace": "0.1.0",
     "@jataqi/memory": "0.1.0",
     "@jataqi/metrics": "0.1.0",
+    "@jataqi/mobile": "0.1.0",
     "@jataqi/mobility": "0.1.0",
     "@jataqi/model-registry": "0.1.0",
     "@jataqi/model-runtime": "0.1.0",
