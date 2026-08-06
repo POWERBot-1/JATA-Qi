@@ -235,3 +235,34 @@ describe('LLMGatewayModule', () => {
     assert.equal(p.tier, 'fallback');
   });
 });
+
+describe('safeArithmetic (mock provider evaluator — no eval)', () => {
+  it('computes the four basic operations', async () => {
+    const { safeArithmetic } = await import('../src/providers.js');
+    assert.equal(safeArithmetic('2 + 3'), 5);
+    assert.equal(safeArithmetic('10 - 4'), 6);
+    assert.equal(safeArithmetic('6 * 7'), 42);
+    assert.equal(safeArithmetic('9 / 2'), 4.5);
+    // Whitespace tolerance.
+    assert.equal(safeArithmetic('  100  +  1 '), 101);
+  });
+
+  it('rejects anything that is not a simple digit-operator-digit expression', async () => {
+    const { safeArithmetic } = await import('../src/providers.js');
+    for (const bad of ['1 + 2 + 3', 'process.exit()', '2 ** 3', '1; rm -rf /', '() => 1', '2 +', '+ 2', '1e3 + 2', '']) {
+      assert.throws(() => safeArithmetic(bad), /unsupported/, `must reject: ${bad}`);
+    }
+  });
+
+  it('rejects division by zero', async () => {
+    const { safeArithmetic } = await import('../src/providers.js');
+    assert.throws(() => safeArithmetic('5 / 0'), /division by zero/);
+  });
+
+  it('mock provider answers arithmetic without executing code', async () => {
+    const { mockProvider } = await import('../src/providers.js');
+    const provider = mockProvider({ seed: 1 });
+    const r = await provider.llm.complete({ messages: [{ role: 'user', content: '12 * 8' }], temperature: 0 });
+    assert.equal(r.message.content, 'The answer is 96.');
+  });
+});

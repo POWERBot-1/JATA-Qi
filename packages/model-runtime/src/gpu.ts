@@ -1,7 +1,9 @@
 // GPU detection — probes for CUDA GPUs via nvidia-smi (if available).
 // Zero deps; gracefully degrades to CPU-only on systems without GPUs.
 
-import { execSync } from 'node:child_process';
+// The probe uses execFileSync-style argv execution (no shell), so the
+// command string is a fixed literal with no injection surface.
+import { execFileSync } from 'node:child_process';
 import type { GPUDetection } from './types.js';
 
 let cached: GPUDetection | undefined;
@@ -18,7 +20,10 @@ export function resetGPUDetection(): void { cached = undefined; }
 
 function probeGPU(): GPUDetection {
   try {
-    const output = execSync('nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits', {
+    const output = execFileSync('nvidia-smi', [
+      '--query-gpu=name,memory.total,driver_version',
+      '--format=csv,noheader,nounits',
+    ], {
       timeout: 3000,
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],

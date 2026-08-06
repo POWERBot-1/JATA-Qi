@@ -181,6 +181,15 @@ Run the TANYA Mobile Native demo (devices → snapshot → push → outbox → b
 node examples/mobile-app.mjs http://localhost:7400 admin admin
 ```
 
+Run the **independent security self-audit** (the platform's own
+security-review tooling scans all 547 source files, assesses the architecture
+and ISO 27001 compliance, applies risk acceptances with justification, and
+writes `docs/INDEPENDENT_AUDIT_REPORT.md`):
+
+```bash
+node examples/self-audit.mjs
+```
+
 Run the TANYA Mobile **reference app** (Expo/React Native — Login / Home /
 Chat / Settings over the `@jataqi/mobile-app` controller; type-checks without
 the RN toolchain via `npm run typecheck`):
@@ -601,6 +610,7 @@ node examples/vertical-slice.mjs    # the seven Alpha success criteria
 - ✅ **Data Loss Prevention** (`@jataqi/dlp` — 7 default rules (cards, bulk-PII exports, national IDs, credentials with entropy gate, private keys → quarantine, health, source-code markers); redact masks inline, block/quarantine/notify raise redacted-evidence incidents that feed the SOC correlation engine; Shannon-entropy detection; gateway `/dlp/*` (RBAC `dlp:read/write`), SDK `dlp`, CLI `dlp`)
 - ✅ **Post-Quantum Readiness** (`@jataqi/pqc` — ML-KEM/ML-DSA/SLH-DSA catalog with NIST categories + FIPS refs; hybrid signature envelopes requiring BOTH PQ and classic signatures; migration phases with cadence + approval governance; deprecation scheduling; pluggable `PqProvider` interface with an honest demo implementation; gateway `/pqc/*` (RBAC `pqc:read/write`), SDK `pqc`, CLI `pqc`)
 - ✅ **Hardware Root of Trust + Confidential Computing** (`@jataqi/infra-governance` — TPM/Secure-Boot/measured-boot attestation with hardware key handles + attestation quotes (un-attested assets flagged); confidential workload registry (enclave/SEV-SNP/TDX) with memory encryption + data residency)
+- ✅ **Independent Self-Audit** (`examples/self-audit.mjs` — the platform audits itself: static scan of 547 source files, weighted architecture assessment, ISO 27001 scorecard, risk acceptances with justification, and an enforced sign-off gate; first run found 3 real high findings (LLM-mock `eval`, shell-based `execSync`) which were remediated (safe arithmetic evaluator + argv-style `execFileSync`) and re-audited to sign-off **granted**; reproducible report at `docs/INDEPENDENT_AUDIT_REPORT.md`)
 - ✅ **Formal Verification** (property-based suites: SOC lake hash-chain tamper detection, DLP redaction idempotence + evidence invariants, PQC round-trip/unforgeability/phase-order, incident lifecycle forward-only + sign-off gates — see `docs/FORMAL_VERIFICATION.md`)
 - ✅ **Security Ops Console + DR wiring** (web UI: 32 views incl. dedicated Resilience / Supply Chain / Security Review / Privacy / Security Automation dashboards; disaster-recovery snapshots wired into resilience-engineering recovery plans so RPO exposure is measured from the newest real backup age — `dr.snapshot.created` feeds the DR provider, backward compatible when absent)
 - ✅ **Security Automation** (`@jataqi/security-automation` — cross-pillar correlation engine: 11 rules turning pillar events into severity-mapped SOC incidents (defense findings, supply-chain vulnerabilities/drift/deployment mismatches, resilience failovers/SLO/DR, infra firmware/config drift) with dedupe + auto-closure on remediation (finding resolved → incident closed; region recovered → failover incident closed); abuse alerts auto-ban actors + origins (24h) and insider alerts emit risk signals — all within authorized boundaries and auditable; scheduled continuous threat hunts over SOC playbooks (interval config + manual sweeps); ISO/IEC 27001 compliance evidence reports (12 control families, lake evidence + review scorecard, JSON/Markdown export); gateway `/security-automation/*` (RBAC `secauto:read/write`), SDK `secauto`, CLI `secauto`, realtime `secauto.*` topics)

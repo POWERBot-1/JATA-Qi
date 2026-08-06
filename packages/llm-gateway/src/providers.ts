@@ -8,6 +8,29 @@ import type { ILLM, LLMRequest, LLMResponse, ChatMessage } from '@jataqi/agent-r
 import { OpenAILLM } from '@jataqi/agent-runtime';
 import type { LLMProviderConfig } from './types.js';
 
+/**
+ * Safe arithmetic evaluator — the LLM mock provider computes simple
+ * `a op b` expressions WITHOUT dynamic code evaluation. Input is validated
+ * by the caller's regex (digits + one of + - * /); this parser only handles
+ * those tokens, so there is no code-execution surface.
+ */
+export function safeArithmetic(expr: string): number {
+  const m = /^(\d+)\s*([+\-*/])\s*(\d+)$/.exec(expr.trim());
+  if (!m) throw new Error('unsupported expression');
+  const a = Number(m[1]);
+  const b = Number(m[3]);
+  switch (m[2]) {
+    case '+': return a + b;
+    case '-': return a - b;
+    case '*': return a * b;
+    case '/': {
+      if (b === 0) throw new Error('division by zero');
+      return a / b;
+    }
+    default: throw new Error('unsupported operator');
+  }
+}
+
 // --- OpenAI provider factory -------------------------------------------------
 
 export function openaiProvider(opts: {
@@ -78,7 +101,7 @@ export class MockLLM implements ILLM {
 
     let response: string;
     if (/^\d+\s*[+\-*/]\s*\d+$/.test(content.trim())) {
-      try { response = `The answer is ${eval(content.trim())}.`; } catch { response = `I cannot compute "${content}".`; }
+      try { response = `The answer is ${safeArithmetic(content.trim())}.`; } catch { response = `I cannot compute "${content}".`; }
     } else if (content.toLowerCase().includes('hello') || content.toLowerCase().includes('hi')) {
       response = 'Hello! I am a JATA Qi assistant. How can I help you?';
     } else if (content.toLowerCase().includes('what is') || content.toLowerCase().includes('explain')) {
