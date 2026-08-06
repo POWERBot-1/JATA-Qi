@@ -71,6 +71,7 @@ export class JataQiClient {
   readonly resilience: ResilienceClient;
   readonly privacy: PrivacyClient;
   readonly review: ReviewClient;
+  readonly secauto: SecautoClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -116,6 +117,7 @@ export class JataQiClient {
     this.resilience = new ResilienceClient(this);
     this.privacy = new PrivacyClient(this);
     this.review = new ReviewClient(this);
+    this.secauto = new SecautoClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -1071,4 +1073,32 @@ export class ReviewClient {
     return this.c.request('POST', '/review/compliance', { evidence });
   }
   async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/review/stats'); }
+}
+
+// --- Security Automation (cross-pillar) ------------------------------------------
+
+export class SecautoClient {
+  constructor(private c: JataQiClient) {}
+  /** Correlation rules (bus event → SOC incident/ban/risk mappings). */
+  async rules(): Promise<{ rules: unknown[] }> { return this.c.request('GET', '/security-automation/rules'); }
+  async upsertRule(rule: Record<string, unknown>): Promise<{ rules: unknown[] }> {
+    return this.c.request('POST', '/security-automation/rules', rule);
+  }
+  async correlations(): Promise<{ correlations: unknown[]; open: number }> {
+    return this.c.request('GET', '/security-automation/correlations');
+  }
+  async posture(): Promise<{ correlations: unknown[]; openCorrelations: number; rules: number; huntsRunning: boolean; huntConfig: unknown; sweeps: number }> {
+    return this.c.request('GET', '/security-automation/posture');
+  }
+  async hunts(): Promise<{ sweeps: unknown[] }> { return this.c.request('GET', '/security-automation/hunts'); }
+  /** Run a full threat-hunt sweep now. */
+  async runHunts(): Promise<{ result: { at: number; totalHits: number; triggered: boolean } }> {
+    return this.c.request('POST', '/security-automation/hunts/run');
+  }
+  async scheduleHunts(input: { intervalMs: number; playbooks?: string[]; sinceMs?: number }): Promise<{ config: unknown }> {
+    return this.c.request('POST', '/security-automation/hunts/schedule', input);
+  }
+  async complianceReport(): Promise<{ report: unknown }> { return this.c.request('GET', '/security-automation/compliance-report'); }
+  /** Compliance evidence export (JSON). */
+  async complianceExport(): Promise<string> { return this.c.requestText('GET', '/security-automation/compliance-report/export'); }
 }

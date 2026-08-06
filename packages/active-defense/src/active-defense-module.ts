@@ -26,6 +26,7 @@ export const DefenseEvents = Object.freeze({
   BanAdded: 'defense.ban.added',
   CryptoRotated: 'defense.crypto.rotated',
   TrustReassessed: 'defense.trust.reassessed',
+  FindingResolved: 'defense.finding.resolved',
 } as const);
 
 /** Bus events this module watches for detection + risk correlation. */
@@ -133,7 +134,13 @@ export class ActiveDefenseModule implements IModule {
     return this.engine.detection.list(filter);
   }
   acknowledgeFinding(id: string): Finding | undefined { return this.engine.detection.acknowledge(id); }
-  resolveFinding(id: string): Finding | undefined { return this.engine.detection.resolve(id); }
+  resolveFinding(id: string): Finding | undefined {
+    const finding = this.engine.detection.resolve(id);
+    if (finding) {
+      try { void this.api?.bus.emit(DefenseEvents.FindingResolved, { id: finding.id, rule: finding.rule }); } catch { /* bus not ready */ }
+    }
+    return finding;
+  }
   updateSignature(ruleId: string, patch: Partial<DetectionRule>): DetectionRule | undefined { return this.engine.updateSignature(ruleId, patch); }
   adaptThreshold(ruleId: string, delta: { burst?: number; windowMs?: number }): DetectionRule | undefined { return this.engine.adaptThreshold(ruleId, delta); }
 

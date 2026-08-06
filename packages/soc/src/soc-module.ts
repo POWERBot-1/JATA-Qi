@@ -138,7 +138,11 @@ export class SocModule implements IModule {
 
   observeAbuse(input: { kind: string; actor?: string; origin?: string; value?: string; ts?: number }): AbuseAlert | undefined {
     const alert = this.abuse.observe({ ...input, kind: input.kind as never });
-    if (alert) void this.api?.bus.emit(SocEvents.AbuseAlert, { id: alert.id, rule: alert.rule, severity: alert.severity });
+    if (alert) void this.api?.bus.emit(SocEvents.AbuseAlert, {
+      id: alert.id, rule: alert.rule, severity: alert.severity,
+      ...(alert.actors ? { actors: alert.actors } : {}),
+      ...(alert.origins ? { origins: alert.origins } : {}),
+    });
     return alert;
   }
   abuseAlerts() { return this.abuse.alertsList(); }

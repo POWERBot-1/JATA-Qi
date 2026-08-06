@@ -38,6 +38,7 @@ import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 import type { PrivacyModule } from '@jataqi/privacy';
 import type { SecurityReviewModule } from '@jataqi/security-review';
+import type { SecurityAutomationModule } from '@jataqi/security-automation';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -94,6 +95,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  secauto <sub>        Security automation: rules|correlations|posture|hunt|hunts|schedule|compliance|export.
   review <sub>         Security review: schedule|start|complete|signoff|finding|findings|scan|architecture|compliance|stats.
   privacy <sub>        Privacy engineering: pia|pias|decide|processing|secure-delete|deletions|minimize|posture.
   resilience <sub>    Global resilience: stats|regions|probe|failover|failback|plan|execute|fault|test|availability|compliance.
@@ -152,6 +154,7 @@ async function main() {
   const resilience = kernel.getModule<ResilienceEngineeringModule>('resilience-engineering');
   const privacy = kernel.getModule<PrivacyModule>('privacy');
   const review = kernel.getModule<SecurityReviewModule>('security-review');
+  const secauto = kernel.getModule<SecurityAutomationModule>('security-automation');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1409,6 +1412,70 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'secauto': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'rules': {
+            for (const r of secauto.rules()) console.log(`- ${r.id}: ${r.event} → ${r.severity}${r.closeOn ? ` (auto-close on ${r.closeOn})` : ''}${r.banActorsFrom || r.banOriginsFrom ? ' ⛔auto-ban' : ''}${r.riskSignalFor ? ' ⚠risk' : ''}`);
+            console.log(`${secauto.rules().length} rule(s)`);
+            break;
+          }
+          case 'correlations': {
+            const all = secauto.correlations();
+            for (const c of all) console.log(`- ${c.severity} ${c.title} [${c.closedAt ? 'closed' : 'OPEN'}] incident=${c.incidentId.slice(0, 8)} @${new Date(c.openedAt).toISOString()}`);
+            console.log(`${all.length} correlation(s), ${all.filter((c) => !c.closedAt).length} open`);
+            break;
+          }
+          case 'posture': {
+            const p = secauto.correlatedOpenCount();
+            console.log(`rules: ${secauto.rules().length} · open correlations: ${p} · hunts running: ${secauto.huntsRunning()}`);
+            console.log(`hunt sweeps: ${secauto.huntSweeps().length} · config: ${JSON.stringify(secauto.huntConfig())}`);
+            break;
+          }
+          case 'hunt': {
+            const r = await secauto.runHuntSweep();
+            console.log(`sweep @ ${new Date(r.at).toISOString()}: ${r.sessions.length} playbook(s), ${r.totalHits} hit(s)${r.triggered ? ' ⚠ TRIGGERED' : ''}`);
+            for (const s of r.sessions.filter((x) => x.hits.length > 0)) console.log(`  ! ${s.playbookName}: ${s.hits.length} hit(s)`);
+            break;
+          }
+          case 'hunts': {
+            const sweeps = secauto.huntSweeps();
+            for (const s of sweeps.slice(0, 5)) console.log(`- ${new Date(s.at).toISOString()}: ${s.totalHits} hit(s) across ${s.sessions.length} playbook(s)`);
+            console.log(`${sweeps.length} sweep(s)`);
+            break;
+          }
+          case 'schedule': {
+            const intervalMin = args[2];
+            if (!intervalMin) { console.error('Usage: jataqi secauto schedule <intervalMinutes> [--playbooks a,b]'); process.exit(1); }
+            const config = secauto.configureHunts({
+              intervalMs: Number(intervalMin) * 60_000,
+              ...(flag('playbooks') ? { playbooks: flag('playbooks')!.split(',') } : {}),
+            });
+            console.log(`hunt scheduler: interval ${config.intervalMs / 60_000}m, running=${secauto.huntsRunning()}`);
+            break;
+          }
+          case 'compliance': {
+            const r = secauto.buildComplianceReport();
+            console.log(`compliance readiness: ${r.overall}/100 (${r.families.filter((f) => f.satisfied).length}/${r.families.length} families satisfied)`);
+            for (const f of r.families) console.log(`- ${f.id} ${f.name}: ${f.coverage}% (${f.evidenceCount} evidence)`);
+            for (const n of r.notes) console.log(`  · ${n}`);
+            break;
+          }
+          case 'export': {
+            const r = secauto.buildComplianceReport();
+            const md = secauto.compliance.toMarkdown(r);
+            console.log(md);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi secauto rules|correlations|posture|hunt|hunts|schedule|compliance|export'); process.exit(1);
         }
         break;
       }

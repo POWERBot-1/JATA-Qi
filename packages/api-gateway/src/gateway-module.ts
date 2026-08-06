@@ -47,6 +47,7 @@ import type { SupplyChainSecurityModule } from '@jataqi/supply-chain-security';
 import type { InfrastructureGovernanceModule } from '@jataqi/infra-governance';
 import type { ResilienceEngineeringModule } from '@jataqi/resilience-engineering';
 import type { SecurityReviewModule } from '@jataqi/security-review';
+import type { SecurityAutomationModule } from '@jataqi/security-automation';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -170,6 +171,7 @@ export class ApiGatewayModule implements IModule {
   private infraGovernance?: InfrastructureGovernanceModule;
   private resilience?: ResilienceEngineeringModule;
   private securityReview?: SecurityReviewModule;
+  private securityAutomation?: SecurityAutomationModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -266,6 +268,7 @@ export class ApiGatewayModule implements IModule {
     this.infraGovernance = this.tryModule<InfrastructureGovernanceModule>('infra-governance');
     this.resilience = this.tryModule<ResilienceEngineeringModule>('resilience-engineering');
     this.securityReview = this.tryModule<SecurityReviewModule>('security-review');
+    this.securityAutomation = this.tryModule<SecurityAutomationModule>('security-automation');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -1110,6 +1113,16 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/review/architecture', auth('review:write', (req) => this.reviewArchitecture(req)));
     route('POST', '/review/compliance', auth('review:write', (req) => this.reviewCompliance(req)));
     route('GET', '/review/stats', auth('review:read', () => this.reviewStats()));
+    // Security Automation (cross-pillar correlation).
+    route('GET', '/security-automation/rules', auth('secauto:read', () => this.secautoRules()));
+    route('POST', '/security-automation/rules', auth('secauto:write', (req) => this.secautoRulesUpsert(req)));
+    route('GET', '/security-automation/correlations', auth('secauto:read', () => this.secautoCorrelations()));
+    route('GET', '/security-automation/posture', auth('secauto:read', () => this.secautoPosture()));
+    route('GET', '/security-automation/hunts', auth('secauto:read', () => this.secautoHunts()));
+    route('POST', '/security-automation/hunts/run', auth('secauto:write', () => this.secautoHuntsRun()));
+    route('POST', '/security-automation/hunts/schedule', auth('secauto:write', (req) => this.secautoHuntsSchedule(req)));
+    route('GET', '/security-automation/compliance-report', auth('secauto:read', () => this.secautoComplianceReport()));
+    route('GET', '/security-automation/compliance-report/export', auth('secauto:read', () => this.secautoComplianceExport()));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1456,7 +1469,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense', 'soc', 'supply-chain-security', 'infra-governance', 'resilience-engineering', 'security-review', 'security-automation',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -5951,6 +5964,84 @@ export class ApiGatewayModule implements IModule {
   private reviewStats(): GatewayResponse {
     if (!this.securityReview) return json(501, { error: 'security-review module not registered' });
     return json(200, { stats: this.securityReview.stats() });
+  }
+
+  // ---- Security Automation handlers --------------------------------------
+
+  private secautoRules(): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    return json(200, { rules: this.securityAutomation.rules() });
+  }
+
+  private secautoRulesUpsert(req: GatewayRequest): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.event !== 'string' || typeof b.severity !== 'string' || typeof b.title !== 'string' || typeof b.key !== 'string')
+      return json(400, { error: 'fields "id", "event", "severity", "title", "key" are required' });
+    this.securityAutomation.upsertRule({
+      id: b.id, event: b.event, severity: b.severity as never, title: b.title, key: b.key,
+      ...(typeof b.closeOn === 'string' ? { closeOn: b.closeOn } : {}),
+      ...(typeof b.closeKey === 'string' ? { closeKey: b.closeKey } : {}),
+      ...(typeof b.banActorsFrom === 'string' ? { banActorsFrom: b.banActorsFrom } : {}),
+      ...(typeof b.banOriginsFrom === 'string' ? { banOriginsFrom: b.banOriginsFrom } : {}),
+      ...(typeof b.riskSignalFor === 'string' ? { riskSignalFor: b.riskSignalFor } : {}),
+      ...(typeof b.riskType === 'string' ? { riskType: b.riskType } : {}),
+    });
+    return json(200, { rules: this.securityAutomation.rules() });
+  }
+
+  private secautoCorrelations(): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    return json(200, { correlations: this.securityAutomation.correlations(), open: this.securityAutomation.correlatedOpenCount() });
+  }
+
+  private secautoPosture(): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    return json(200, {
+      correlations: this.securityAutomation.correlations(),
+      openCorrelations: this.securityAutomation.correlatedOpenCount(),
+      rules: this.securityAutomation.rules().length,
+      huntsRunning: this.securityAutomation.huntsRunning(),
+      huntConfig: this.securityAutomation.huntConfig(),
+      sweeps: this.securityAutomation.huntSweeps().length,
+    });
+  }
+
+  private secautoHunts(): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    return json(200, { sweeps: this.securityAutomation.huntSweeps() });
+  }
+
+  private async secautoHuntsRun(): Promise<GatewayResponse> {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    const result = await this.securityAutomation.runHuntSweep();
+    return json(200, { result });
+  }
+
+  private secautoHuntsSchedule(req: GatewayRequest): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    const b = this.asObject(req.body);
+    const config = this.securityAutomation.configureHunts({
+      intervalMs: typeof b.intervalMs === 'number' ? b.intervalMs : 0,
+      ...(Array.isArray(b.playbooks) ? { playbooks: b.playbooks as string[] } : {}),
+      ...(typeof b.sinceMs === 'number' ? { sinceMs: b.sinceMs } : {}),
+    });
+    return json(200, { config });
+  }
+
+  private secautoComplianceReport(): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    return json(200, { report: this.securityAutomation.buildComplianceReport() });
+  }
+
+  private secautoComplianceExport(): GatewayResponse {
+    if (!this.securityAutomation) return json(501, { error: 'security-automation module not registered' });
+    const format = (this.asObject({}).format ?? 'json');
+    const report = this.securityAutomation.buildComplianceReport();
+    if (format === 'markdown') {
+      return { status: 200, body: this.securityAutomation.compliance.toMarkdown(report), contentType: 'text/markdown' };
+    }
+    return { status: 200, body: this.securityAutomation.compliance.toJson(report), contentType: 'application/json' };
   }
 
   private principalUsername(req: GatewayRequest): string | undefined {
