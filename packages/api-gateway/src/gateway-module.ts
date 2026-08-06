@@ -41,6 +41,7 @@ import type { DisasterRecoveryModule } from '@jataqi/disaster-recovery';
 import type { TracingModule } from '@jataqi/tracing';
 import type { Span } from '@jataqi/tracing';
 import type { RealtimeModule } from '@jataqi/realtime';
+import type { ActiveDefenseModule } from '@jataqi/active-defense';
 import type { ConversationsModule } from '@jataqi/conversations';
 import type { AccreditationModule } from '@jataqi/accreditation';
 import type { DnsModule } from '@jataqi/dns';
@@ -158,6 +159,7 @@ export class ApiGatewayModule implements IModule {
   private email?: EmailModule;
   private ipam?: IpamModule;
   private tanya?: TanyaModule;
+  private activeDefense?: ActiveDefenseModule;
   private mobile?: MobileModule;
   private server: Server | HttpsServer | undefined;
   private booted = false;
@@ -248,6 +250,7 @@ export class ApiGatewayModule implements IModule {
     this.email = this.tryModule<EmailModule>('email');
     this.ipam = this.tryModule<IpamModule>('ipam');
     this.tanya = this.tryModule<TanyaModule>('tanya');
+    this.activeDefense = this.tryModule<ActiveDefenseModule>('active-defense');
     this.mobile = this.tryModule<MobileModule>('mobile');
     this.storage = this.tryModule<StorageModule>('storage');
     this.cors = this.resolveCorsPolicy();
@@ -420,6 +423,11 @@ export class ApiGatewayModule implements IModule {
       const principal = await this.sec.authenticate(req.headers['authorization']);
       if (!principal) return json(401, { error: 'unauthorized' });
       req.principal = principal;
+      // Active Defense enforcement: banned / critical-risk sessions are refused
+      // before any permission checks (adaptive access control).
+      if (this.activeDefense && this.activeDefense.isBlocked(principal.userId)) {
+        return json(423, { error: 'session blocked by active defense', code: 'defense.blocked' });
+      }
       if (perm) await this.sec.requirePermission(principal, perm);
       return h(req);
     };
@@ -942,6 +950,35 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/cloud/autoscaling/evaluate', auth('cloud:write', (req) => this.cloudAutoscalingEvaluate(req)));
     route('POST', '/cloud/autoscaling/update', auth('cloud:write', (req) => this.cloudAutoscalingUpdate(req)));
     route('GET', '/cloud/autoscaling/history', auth('cloud:read', (req) => this.cloudAutoscalingHistory(req)));
+    // Active Defense & Adaptive Resilience Layer.
+    route('GET', '/defense/posture', auth('defense:read', () => this.defensePosture()));
+    route('GET', '/defense/findings', auth('defense:read', (req) => this.defenseFindings(req)));
+    route('POST', '/defense/findings/ack', auth('defense:write', (req) => this.defenseFindingAck(req)));
+    route('POST', '/defense/findings/resolve', auth('defense:write', (req) => this.defenseFindingResolve(req)));
+    route('POST', '/defense/ingest', auth('defense:write', (req) => this.defenseIngest(req)));
+    route('GET', '/defense/risk', auth('defense:read', (req) => this.defenseRisk(req)));
+    route('POST', '/defense/risk/signal', auth('defense:write', (req) => this.defenseRiskSignal(req)));
+    route('POST', '/defense/trust/reassess', auth('defense:write', (req) => this.defenseTrustReassess(req)));
+    route('GET', '/defense/bans', auth('defense:read', () => this.defenseBansList()));
+    route('POST', '/defense/bans', auth('defense:write', (req) => this.defenseBansAdd(req)));
+    route('POST', '/defense/bans/lift', auth('defense:write', (req) => this.defenseBansLift(req)));
+    route('GET', '/defense/actions', auth('defense:read', (req) => this.defenseActionsList(req)));
+    route('POST', '/defense/contain', auth('defense:write', (req) => this.defenseContain(req)));
+    route('POST', '/defense/actions/approve', auth('defense:write', (req) => this.defenseActionApprove(req)));
+    route('POST', '/defense/actions/deny', auth('defense:write', (req) => this.defenseActionDeny(req)));
+    route('GET', '/defense/honeytokens', auth('defense:read', () => this.defenseHoneytokensList()));
+    route('POST', '/defense/honeytokens', auth('defense:write', (req) => this.defenseHoneytokensAdd(req)));
+    route('GET', '/defense/decoys', auth('defense:read', () => this.defenseDecoysList()));
+    route('POST', '/defense/decoys', auth('defense:write', (req) => this.defenseDecoysAdd(req)));
+    route('GET', '/defense/touches', auth('defense:read', () => this.defenseTouchesList()));
+    route('GET', '/defense/incidents', auth('defense:read', () => this.defenseIncidentsList()));
+    route('POST', '/defense/incidents', auth('defense:write', (req) => this.defenseIncidentsAdd(req)));
+    route('POST', '/defense/incidents/review', auth('defense:write', (req) => this.defenseIncidentsReview(req)));
+    route('POST', '/defense/recover', auth('defense:write', (req) => this.defenseRecover(req)));
+    route('GET', '/defense/recovery', auth('defense:read', () => this.defenseRecoveryList()));
+    route('POST', '/defense/integrity', auth('defense:write', (req) => this.defenseIntegrityValidate(req)));
+    route('POST', '/defense/crypto/rotate', auth('defense:write', (req) => this.defenseCryptoRotate(req)));
+    route('GET', '/defense/report', auth('defense:read', () => this.defenseReport()));
     route('GET', '/cloud/stats', auth('cloud:read', () => this.cloudStats()));
     // PRX — CDN Provider.
     route('POST', '/cdn/nodes', auth('cdn:write', (req) => this.cdnNodesRegister(req)));
@@ -1288,7 +1325,7 @@ export class ApiGatewayModule implements IModule {
       'design-system', 'branding', 'universal-wallet', 'crypto', 'dashboard',
       'link-intelligence', 'multimodal-intelligence', 'search', 'automation',
       'fx', 'pki', 'mobility', 'logistics', 'agriculture', 'circular',
-      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile',
+      'energy', 'border', 'restaurants', 'marketplace', 'cloud', 'cdn', 'email', 'ipam', 'tanya', 'mobile', 'active-defense',
     ]) {
       try {
         this.api.getModuleState(id);
@@ -4630,6 +4667,276 @@ export class ApiGatewayModule implements IModule {
     if (!this.cloud) return json(501, { error: 'cloud module not registered' });
     const decisions = this.cloud.autoscalingHistory(req.query.groupId);
     return json(200, { decisions, count: decisions.length });
+  }
+
+  // ---- Active Defense handlers --------------------------------------------
+
+  private defensePosture(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const engine = this.activeDefense.engine;
+    return json(200, {
+      stats: engine.stats(),
+      riskDistribution: engine.risk.distribution(),
+      findingsBySeverity: engine.detection.bySeverity(),
+      blockedSessions: engine.risk.all().filter((a) => a.level === 'critical').length,
+    });
+  }
+
+  private defenseFindings(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const findings = this.activeDefense.findings({
+      ...(req.query.severity ? { severity: req.query.severity as never } : {}),
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+    });
+    return json(200, { findings, count: findings.length });
+  }
+
+  private defenseFindingAck(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    const f = typeof b.id === 'string' ? this.activeDefense.acknowledgeFinding(b.id) : undefined;
+    return f ? json(200, { finding: f }) : json(404, { error: 'finding not found' });
+  }
+
+  private defenseFindingResolve(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    const f = typeof b.id === 'string' ? this.activeDefense.resolveFinding(b.id) : undefined;
+    return f ? json(200, { finding: f }) : json(404, { error: 'finding not found' });
+  }
+
+  private defenseIngest(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.type !== 'string') return json(400, { error: 'field "type" is required' });
+    const finding = this.activeDefense.ingest({
+      type: b.type,
+      ...(typeof b.actor === 'string' ? { actor: b.actor } : {}),
+      ...(typeof b.severity === 'string' ? { severity: b.severity as never } : {}),
+      ...(typeof b.title === 'string' ? { title: b.title } : {}),
+      ...(typeof b.detail === 'string' ? { detail: b.detail } : {}),
+      ...(b.context && typeof b.context === 'object' ? { context: b.context as Record<string, unknown> } : {}),
+    });
+    return json(200, { finding });
+  }
+
+  private defenseRisk(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const userId = req.query.userId ?? req.principal?.userId;
+    if (!userId) return json(400, { error: 'userId required' });
+    return json(200, { risk: this.activeDefense.risk(userId) ?? { score: 0, level: 'low', signals: [] } });
+  }
+
+  private defenseRiskSignal(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.userId !== 'string' || typeof b.type !== 'string')
+      return json(400, { error: 'fields "userId" and "type" are required' });
+    const assessment = this.activeDefense.engine.risk.signal(b.userId, {
+      type: b.type,
+      ...(typeof b.weight === 'number' ? { weight: b.weight } : {}),
+      ...(typeof b.context === 'string' ? { context: b.context } : {}),
+    });
+    return json(200, { risk: assessment });
+  }
+
+  private defenseTrustReassess(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.userId !== 'string') return json(400, { error: 'field "userId" is required' });
+    this.activeDefense.reassessTrust(b.userId);
+    return json(200, { reassessed: true, userId: b.userId });
+  }
+
+  private defenseBansList(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const bans = this.activeDefense.listBans();
+    return json(200, { bans, count: bans.length });
+  }
+
+  private defenseBansAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.scope !== 'string' || typeof b.value !== 'string' || typeof b.reason !== 'string')
+      return json(400, { error: 'fields "scope", "value", and "reason" are required' });
+    try {
+      const ban = this.activeDefense.ban({
+        scope: b.scope as never,
+        value: b.value,
+        reason: b.reason,
+        ...(typeof b.durationMs === 'number' ? { durationMs: b.durationMs } : {}),
+        ...(this.principalUsername(req) ? { createdBy: this.principalUsername(req) } : {}),
+      });
+      return json(201, { ban });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private defenseBansLift(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    return json(200, { lifted: this.activeDefense.liftBan(b.id) });
+  }
+
+  private defenseActionsList(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const actions = this.activeDefense.listActions({
+      ...(req.query.status ? { status: req.query.status as never } : {}),
+      ...(req.query.kind ? { kind: req.query.kind as never } : {}),
+    });
+    return json(200, { actions, count: actions.length });
+  }
+
+  private defenseContain(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.kind !== 'string' || typeof b.target !== 'string' || typeof b.reason !== 'string')
+      return json(400, { error: 'fields "kind", "target", and "reason" are required' });
+    const action = this.activeDefense.contain({
+      kind: b.kind as never,
+      target: b.target,
+      reason: b.reason,
+      ...(this.principalUsername(req) ? { requestedBy: this.principalUsername(req) } : {}),
+    });
+    return json(201, { action });
+  }
+
+  private defenseActionApprove(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const action = this.activeDefense.approveAction(b.id, this.principalUsername(req) ?? 'unknown');
+    return action ? json(200, { action }) : json(404, { error: 'action not found or not pending' });
+  }
+
+  private defenseActionDeny(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    const action = this.activeDefense.denyAction(b.id, this.principalUsername(req) ?? 'unknown', typeof b.reason === 'string' ? b.reason : undefined);
+    return action ? json(200, { action }) : json(404, { error: 'action not found or not pending' });
+  }
+
+  private defenseHoneytokensList(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    return json(200, { honeytokens: this.activeDefense.listHoneytokens() });
+  }
+
+  private defenseHoneytokensAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.label !== 'string' || typeof b.value !== 'string' || typeof b.placement !== 'string')
+      return json(400, { error: 'fields "label", "value", and "placement" are required' });
+    try {
+      const token = this.activeDefense.createHoneytoken({
+        label: b.label, value: b.value, placement: b.placement,
+        ...(typeof b.oneTime === 'boolean' ? { oneTime: b.oneTime } : {}),
+      });
+      return json(201, { honeytoken: token });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private defenseDecoysList(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    return json(200, { decoys: this.activeDefense.listDecoys() });
+  }
+
+  private defenseDecoysAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.name !== 'string' || typeof b.kind !== 'string')
+      return json(400, { error: 'fields "name" and "kind" are required' });
+    try {
+      const decoy = this.activeDefense.registerDecoy({
+        name: b.name, kind: b.kind as never,
+        ...(typeof b.endpoint === 'string' ? { endpoint: b.endpoint } : {}),
+      });
+      return json(201, { decoy });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private defenseTouchesList(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    return json(200, { touches: this.activeDefense.touches() });
+  }
+
+  private defenseIncidentsList(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    return json(200, { incidents: this.activeDefense.listIncidents() });
+  }
+
+  private defenseIncidentsAdd(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.title !== 'string' || typeof b.severity !== 'string')
+      return json(400, { error: 'fields "title" and "severity" are required' });
+    const incident = this.activeDefense.recordIncident({
+      title: b.title,
+      severity: b.severity as never,
+      ...(Array.isArray(b.findingIds) ? { findingIds: b.findingIds as string[] } : {}),
+      ...(Array.isArray(b.actionIds) ? { actionIds: b.actionIds as string[] } : {}),
+    });
+    return json(201, { incident });
+  }
+
+  private defenseIncidentsReview(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string' || typeof b.rca !== 'string')
+      return json(400, { error: 'fields "id" and "rca" are required' });
+    const incident = this.activeDefense.reviewIncident(b.id, {
+      rca: b.rca,
+      lessonsLearned: Array.isArray(b.lessonsLearned) ? b.lessonsLearned as string[] : [],
+    });
+    return incident ? json(200, { incident }) : json(404, { error: 'incident not found' });
+  }
+
+  private defenseRecover(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.target !== 'string') return json(400, { error: 'field "target" is required' });
+    const run = this.activeDefense.recover({
+      target: b.target,
+      ...(typeof b.fromSnapshot === 'string' ? { fromSnapshot: b.fromSnapshot } : {}),
+    });
+    return json(201, { recovery: run });
+  }
+
+  private defenseRecoveryList(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    return json(200, { recoveries: this.activeDefense.recoveryRuns() });
+  }
+
+  private defenseIntegrityValidate(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    const manifest = Array.isArray(b.manifest) ? b.manifest as Array<{ path: string; sha256: string }> : [];
+    if (manifest.length === 0) return json(400, { error: 'field "manifest" (array of {path, sha256}) is required' });
+    const results = this.activeDefense.validateRuntimeIntegrity(manifest);
+    return json(200, { results, ok: results.every((r) => r.ok) });
+  }
+
+  private defenseCryptoRotate(req: GatewayRequest): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.scope !== 'string') return json(400, { error: 'field "scope" is required' });
+    const r = this.activeDefense.rotateCryptoMaterial(b.scope, typeof b.minIntervalMs === 'number' ? b.minIntervalMs : undefined);
+    return r.rotated ? json(200, r) : json(200, r);
+  }
+
+  private defenseReport(): GatewayResponse {
+    if (!this.activeDefense) return json(501, { error: 'active-defense module not registered' });
+    return json(200, { report: this.activeDefense.report() });
+  }
+
+  private principalUsername(req: GatewayRequest): string | undefined {
+    return req.principal?.username;
   }
 
   private cloudStats(): GatewayResponse {

@@ -38,6 +38,8 @@ const DEFAULT_EVENTS = [
   // Mobile native: push delivery observability, in-app notifications, and
   // conversation shares — consumed by the reference mobile app's live feed.
   'mobile.push.sent', 'notification.created', 'conversation.shared_to',
+  'defense.finding.created', 'defense.containment.started', 'defense.containment.approval.requested',
+  'defense.incident.recorded', 'defense.recovery.completed', 'defense.ban.added',
 ];
 
 export class RealtimeModule implements IModule {

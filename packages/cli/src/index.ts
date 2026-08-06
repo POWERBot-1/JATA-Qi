@@ -31,6 +31,7 @@ import type { BorderModule } from '@jataqi/border';
 import type { RestaurantsModule } from '@jataqi/restaurants';
 import type { MarketplaceModule } from '@jataqi/marketplace';
 import type { CloudModule } from '@jataqi/cloud';
+import type { ActiveDefenseModule } from '@jataqi/active-defense';
 import type { CdnModule } from '@jataqi/cdn';
 import type { EmailModule } from '@jataqi/email';
 import type { IpamModule } from '@jataqi/ipam';
@@ -77,6 +78,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  defense <sub>       Active Defense: posture|findings|risk|signal|bans|ban|lift|contain|actions|approve|deny|honeytokens|honeytoken|decoys|decoy|touches|incidents|incident|review|recover|report|integrity|rotate.
   cloud <sub>         PRX Part E cloud: regions|region|flavors|images|instances|instance|volumes|vpcs|firewall|lbs|hosting|autoscale|stats.
   cdn <sub>           PRX CDN: nodes|zones|zone|cache|lookup|purge|stats.
   mail <sub>          PRX email: domains|domain|verify|dns|mailboxes|send|inbox|stats.
@@ -121,6 +123,7 @@ async function main() {
   const restaurants = kernel.getModule<RestaurantsModule>('restaurants');
   const marketplace = kernel.getModule<MarketplaceModule>('marketplace');
   const cloud = kernel.getModule<CloudModule>('cloud');
+  const defense = kernel.getModule<ActiveDefenseModule>('active-defense');
   const cdn = kernel.getModule<CdnModule>('cdn');
   const email = kernel.getModule<EmailModule>('email');
   const ipam = kernel.getModule<IpamModule>('ipam');
@@ -1378,6 +1381,156 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'defense': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'posture': {
+            const s = defense.stats();
+            console.log(`risk assessments: ${s.riskAssessments} (critical: ${s.criticalSessions})`);
+            console.log(`findings: ${s.openFindings} open / ${s.criticalFindings} critical`);
+            console.log(`containment: ${s.containmentActions} actions / ${s.pendingApprovals} pending approval`);
+            console.log(`bans: ${s.activeBans} · honeytokens: ${s.honeytokens} · decoys: ${s.decoys} · touches: ${s.touches}`);
+            console.log(`incidents: ${s.incidents} · recoveries: ${s.recoveryRuns} · playbook v${s.playbookVersion}`);
+            break;
+          }
+          case 'findings': {
+            const findings = defense.findings({ ...(flag('severity') ? { severity: flag('severity') as never } : {}), ...(flag('status') ? { status: flag('status') as never } : {}) });
+            for (const f of findings) console.log(`- [${f.severity}] ${f.title} (rule=${f.rule}) ${f.actor ? `actor=${f.actor} ` : ''}${f.status} @${new Date(f.createdAt).toISOString()}`);
+            console.log(`${findings.length} finding(s)`);
+            break;
+          }
+          case 'risk': {
+            const userId = args[2];
+            if (!userId) { console.error('Usage: jataqi defense risk <userId>'); process.exit(1); }
+            const r = defense.risk(userId);
+            console.log(r ? `${userId}: ${r.score}/100 (${r.level}) — ${r.signals.length} signal(s)` : `${userId}: no assessment (low)`);
+            break;
+          }
+          case 'signal': {
+            const userId = args[2], type = args[3];
+            if (!userId || !type) { console.error('Usage: jataqi defense signal <userId> <signalType> [--weight n]'); process.exit(1); }
+            defense.ingestRisk(userId, { type, ...(flag('weight') ? { weight: Number(flag('weight')) } : {}) });
+            const r = defense.risk(userId)!;
+            console.log(`${userId}: now ${r.score}/100 (${r.level})`);
+            break;
+          }
+          case 'bans': {
+            for (const b of defense.listBans()) console.log(`- [${b.scope}] ${b.value} — ${b.reason}${b.permanent ? ' (permanent)' : ` (until ${new Date(b.expiresAt!).toISOString()})`}`);
+            console.log(`${defense.listBans().length} ban(s)`);
+            break;
+          }
+          case 'ban': {
+            const scope = args[2], value = args[3], reason = args.slice(4).join(' ') || 'manual ban';
+            if (!scope || !value) { console.error('Usage: jataqi defense ban <user|ip|token> <value> <reason> [--hours n]'); process.exit(1); }
+            const b = defense.ban({ scope: scope as never, value, reason, ...(flag('hours') ? { durationMs: Number(flag('hours')) * 3600_000 } : {}) });
+            console.log(`banned [${b.scope}] ${b.value} (${b.permanent ? 'permanent' : `expires ${new Date(b.expiresAt!).toISOString()}`})`);
+            break;
+          }
+          case 'lift': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi defense lift <banId>'); process.exit(1); }
+            console.log(defense.liftBan(id) ? `lifted ${id}` : 'ban not found');
+            break;
+          }
+          case 'contain': {
+            const kind = args[2], target = args[3], reason = args.slice(4).join(' ') || 'automated containment';
+            if (!kind || !target) { console.error('Usage: jataqi defense contain <kind> <target> <reason>'); process.exit(1); }
+            const a = defense.contain({ kind: kind as never, target, reason });
+            console.log(`action ${a.id}: ${a.kind} on ${a.target} [${a.status}]${a.requiresApproval ? ' — awaiting human approval' : ''}`);
+            break;
+          }
+          case 'actions': {
+            const actions = defense.listActions({ ...(flag('status') ? { status: flag('status') as never } : {}) });
+            for (const a of actions) console.log(`- ${a.id.slice(0, 8)} ${a.kind} on ${a.target} [${a.status}]${a.requiresApproval ? ' (approval)' : ''}${a.approvedBy ? ` by ${a.approvedBy}` : ''}`);
+            console.log(`${actions.length} action(s)`);
+            break;
+          }
+          case 'approve': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi defense approve <actionId>'); process.exit(1); }
+            const a = defense.approveAction(id, 'cli-operator');
+            console.log(a ? `approved: ${a.kind} on ${a.target} [${a.status}]` : 'action not found or not pending');
+            break;
+          }
+          case 'deny': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi defense deny <actionId>'); process.exit(1); }
+            const a = defense.denyAction(id, 'cli-operator');
+            console.log(a ? `denied: ${a.kind} on ${a.target} [${a.status}]` : 'action not found or not pending');
+            break;
+          }
+          case 'honeytoken': {
+            const label = args[2], value = args[3], placement = args[4];
+            if (!label || !value || !placement) { console.error('Usage: jataqi defense honeytoken <label> <value> <placement>'); process.exit(1); }
+            const t = defense.createHoneytoken({ label, value, placement });
+            console.log(`honeytoken ${t.id} placed at "${t.placement}" (${t.oneTime ? 'one-time' : 'multi-use'})`);
+            break;
+          }
+          case 'honeytokens':
+            for (const t of defense.listHoneytokens()) console.log(`- ${t.label} @ ${t.placement} [${t.touched ? 'touched' : 'armed'}]`);
+            break;
+          case 'decoy': {
+            const name = args[2], kind = args[3];
+            if (!name || !kind) { console.error('Usage: jataqi defense decoy <name> <api|service|database|credential>'); process.exit(1); }
+            const d = defense.registerDecoy({ name, kind: kind as never });
+            console.log(`decoy ${d.name} (${d.kind}) armed`);
+            break;
+          }
+          case 'decoys':
+            for (const d of defense.listDecoys()) console.log(`- ${d.name} (${d.kind})${d.endpoint ? ` @ ${d.endpoint}` : ''}`);
+            break;
+          case 'touches':
+            for (const t of defense.touches()) console.log(`- ${t.kind} ${t.target}${t.source ? ` source=${t.source}` : ''} @${new Date(t.ts).toISOString()}`);
+            break;
+          case 'incidents':
+            for (const i of defense.listIncidents()) console.log(`- [${i.severity}] ${i.title} (${i.status}) ${i.lessonsLearned?.length ? `lessons=${i.lessonsLearned.length}` : `playbook v${i.playbookVersion ?? '—'}`}`);
+            break;
+          case 'incident': {
+            const title = args[2], severity = args[3];
+            if (!title || !severity) { console.error('Usage: jataqi defense incident <title> <low|medium|high|critical>'); process.exit(1); }
+            const i = defense.recordIncident({ title, severity: severity as never });
+            console.log(`incident ${i.id} recorded`);
+            break;
+          }
+          case 'review': {
+            const id = args[2], rca = args.slice(3).join(' ');
+            if (!id || !rca) { console.error('Usage: jataqi defense review <incidentId> <root cause analysis...>'); process.exit(1); }
+            const i = defense.reviewIncident(id, { rca, lessonsLearned: ['validated fix', 'updated detection'] });
+            console.log(i ? `incident ${i.id} reviewed → playbook v${i.playbookVersion}` : 'incident not found');
+            break;
+          }
+          case 'recover': {
+            const target = args[2];
+            if (!target) { console.error('Usage: jataqi defense recover <target> [--snapshot id]'); process.exit(1); }
+            const r = defense.recover({ target, ...(flag('snapshot') ? { fromSnapshot: flag('snapshot') } : {}) });
+            console.log(`recovery ${r.id}: ${r.target} → ${r.stage}${r.completedAt ? ' (completed)' : ''}`);
+            break;
+          }
+          case 'rotate': {
+            const scope = args[2];
+            if (!scope) { console.error('Usage: jataqi defense rotate <scope> [--min-interval-hours n]'); process.exit(1); }
+            const r = defense.rotateCryptoMaterial(scope, flag('min-interval-hours') ? Number(flag('min-interval-hours')) * 3600_000 : undefined);
+            console.log(r.rotated ? `rotated ${scope}` : `skipped: ${r.reason}`);
+            break;
+          }
+          case 'report': {
+            const r = defense.report();
+            console.log(`Security report @ ${new Date(r.generatedAt).toISOString()}`);
+            console.log(`  risk: ${JSON.stringify(r.riskDistribution)}`);
+            console.log(`  findings: ${JSON.stringify(r.findingsBySeverity)}`);
+            console.log(`  bans: ${r.activeBans.length} · pending approvals: ${r.pendingApprovals.length} · incidents: ${r.incidents.length}`);
+            for (const f of r.recentFindings.slice(0, 5)) console.log(`  ! [${f.severity}] ${f.title}`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi defense posture|findings|risk|signal|bans|ban|lift|contain|actions|approve|deny|honeytoken|honeytokens|decoy|decoys|touches|incidents|incident|review|recover|rotate|report'); process.exit(1);
         }
         break;
       }

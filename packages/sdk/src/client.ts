@@ -64,6 +64,7 @@ export class JataQiClient {
   readonly mobile: MobileClient;
   readonly marketplace: MarketplaceClient;
   readonly cloud: CloudClient;
+  readonly defense: DefenseClient;
   readonly commerceStats: CommerceStatsClient;
   /** WebSocket streaming client for the /ws realtime channel. */
   readonly streaming: StreamingClient;
@@ -102,6 +103,7 @@ export class JataQiClient {
     this.mobile = new MobileClient(this);
     this.marketplace = new MarketplaceClient(this);
     this.cloud = new CloudClient(this);
+    this.defense = new DefenseClient(this);
     this.commerceStats = new CommerceStatsClient(this);
     this.streaming = new StreamingClient({ baseUrl: this.baseUrl, token: this.token });
   }
@@ -706,4 +708,74 @@ export class CloudClient {
     return this.c.request('GET', '/cloud/autoscaling/history', undefined, groupId ? { groupId } : undefined);
   }
   async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/cloud/stats'); }
+}
+
+// --- Active Defense & Adaptive Resilience -------------------------------------
+
+export class DefenseClient {
+  constructor(private c: JataQiClient) {}
+  /** Current security posture: stats, risk distribution, findings by severity. */
+  async posture(): Promise<{ stats: Record<string, unknown>; riskDistribution: Record<string, number>; findingsBySeverity: Record<string, number>; blockedSessions: number }> {
+    return this.c.request('GET', '/defense/posture');
+  }
+  async findings(opts: { severity?: string; status?: string } = {}): Promise<{ findings: unknown[]; count: number }> {
+    return this.c.request('GET', '/defense/findings', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async acknowledgeFinding(id: string): Promise<{ finding: unknown }> { return this.c.request('POST', '/defense/findings/ack', { id }); }
+  async resolveFinding(id: string): Promise<{ finding: unknown }> { return this.c.request('POST', '/defense/findings/resolve', { id }); }
+  /** Ingest a telemetry event → optional finding. */
+  async ingest(type: string, opts: { actor?: string; severity?: string; title?: string; detail?: string; context?: Record<string, unknown> } = {}): Promise<{ finding: unknown }> {
+    return this.c.request('POST', '/defense/ingest', { type, ...opts });
+  }
+  async risk(userId: string): Promise<{ risk: { score: number; level: string; signals: unknown[] } }> {
+    return this.c.request('GET', '/defense/risk', undefined, { userId });
+  }
+  /** Add a risk signal; returns the reassessed risk. */
+  async signalRisk(userId: string, type: string, opts: { weight?: number; context?: string } = {}): Promise<{ risk: unknown }> {
+    return this.c.request('POST', '/defense/risk/signal', { userId, type, ...opts });
+  }
+  async reassessTrust(userId: string): Promise<{ reassessed: boolean; userId: string }> {
+    return this.c.request('POST', '/defense/trust/reassess', { userId });
+  }
+  async bans(): Promise<{ bans: unknown[]; count: number }> { return this.c.request('GET', '/defense/bans'); }
+  async ban(scope: string, value: string, reason: string, opts: { durationMs?: number } = {}): Promise<{ ban: unknown }> {
+    return this.c.request('POST', '/defense/bans', { scope, value, reason, ...opts });
+  }
+  async liftBan(id: string): Promise<{ lifted: boolean }> { return this.c.request('POST', '/defense/bans/lift', { id }); }
+  async actions(opts: { status?: string; kind?: string } = {}): Promise<{ actions: unknown[]; count: number }> {
+    return this.c.request('GET', '/defense/actions', undefined, Object.fromEntries(Object.entries(opts).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])));
+  }
+  async contain(kind: string, target: string, reason: string): Promise<{ action: unknown }> {
+    return this.c.request('POST', '/defense/contain', { kind, target, reason });
+  }
+  async approveAction(id: string): Promise<{ action: unknown }> { return this.c.request('POST', '/defense/actions/approve', { id }); }
+  async denyAction(id: string, reason?: string): Promise<{ action: unknown }> { return this.c.request('POST', '/defense/actions/deny', { id, ...(reason ? { reason } : {}) }); }
+  async honeytokens(): Promise<{ honeytokens: unknown[] }> { return this.c.request('GET', '/defense/honeytokens'); }
+  async createHoneytoken(label: string, value: string, placement: string): Promise<{ honeytoken: unknown }> {
+    return this.c.request('POST', '/defense/honeytokens', { label, value, placement });
+  }
+  async decoys(): Promise<{ decoys: unknown[] }> { return this.c.request('GET', '/defense/decoys'); }
+  async createDecoy(name: string, kind: string, opts: { endpoint?: string } = {}): Promise<{ decoy: unknown }> {
+    return this.c.request('POST', '/defense/decoys', { name, kind, ...opts });
+  }
+  async touches(): Promise<{ touches: unknown[] }> { return this.c.request('GET', '/defense/touches'); }
+  async incidents(): Promise<{ incidents: unknown[] }> { return this.c.request('GET', '/defense/incidents'); }
+  async recordIncident(title: string, severity: string): Promise<{ incident: unknown }> {
+    return this.c.request('POST', '/defense/incidents', { title, severity });
+  }
+  async reviewIncident(id: string, rca: string, lessonsLearned: string[] = []): Promise<{ incident: unknown }> {
+    return this.c.request('POST', '/defense/incidents/review', { id, rca, lessonsLearned });
+  }
+  async recover(target: string, opts: { fromSnapshot?: string } = {}): Promise<{ recovery: unknown }> {
+    return this.c.request('POST', '/defense/recover', { target, ...opts });
+  }
+  async recoveries(): Promise<{ recoveries: unknown[] }> { return this.c.request('GET', '/defense/recovery'); }
+  async validateIntegrity(manifest: Array<{ path: string; sha256: string }>): Promise<{ results: Array<{ path: string; ok: boolean; actual?: string }>; ok: boolean }> {
+    return this.c.request('POST', '/defense/integrity', { manifest });
+  }
+  async rotateCrypto(scope: string, minIntervalMs?: number): Promise<{ rotated: boolean; rotatedAt: number; reason?: string }> {
+    return this.c.request('POST', '/defense/crypto/rotate', { scope, ...(minIntervalMs !== undefined ? { minIntervalMs } : {}) });
+  }
+  /** Executive security report. */
+  async report(): Promise<{ report: unknown }> { return this.c.request('GET', '/defense/report'); }
 }
