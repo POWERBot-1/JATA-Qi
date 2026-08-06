@@ -239,6 +239,10 @@ export class TanyaClient {
   async shares(conversationId: string): Promise<{ shares: Array<{ id: string; recipientUserId?: string; createdAt: number; expiresAt?: number }>; count: number }> {
     return this.c.request('GET', '/tanya/shares', undefined, { id: conversationId });
   }
+  /** Rollup summary of a conversation (owned by the caller). */
+  async summarize(conversationId: string): Promise<{ summary: { conversationId: string; title: string; messageCount: number; userMessages: number; assistantMessages: number; firstMessage?: string; lastReply?: string; toolCalls: string[]; orgId?: string } }> {
+    return this.c.request('POST', '/tanya/summarize', { conversationId });
+  }
   /** Public share link for a conversation (anyone with the share id can read). */
   async createShareLink(conversationId: string): Promise<{ shareId: string }> {
     return this.c.request('POST', '/chat/share', { id: conversationId });

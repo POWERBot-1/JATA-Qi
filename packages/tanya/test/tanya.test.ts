@@ -573,4 +573,48 @@ describe('TANYA AI conversational product layer', () => {
       await kernel.shutdown();
     }
   });
+
+  it('summarize produces a rollup and records it into memory', async () => {
+    const kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new ConversationsModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    kernel.register(new OrganizationsModule());
+    const { DigitalMemoryModule } = await import('@jataqi/memory');
+    kernel.register(new DigitalMemoryModule());
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new TanyaModule());
+    await kernel.boot();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+      const memory = kernel.getModule('memory') as unknown as { query: (q: { category?: string }) => Array<{ category: string; summary: string; data?: Record<string, unknown> }> };
+
+      const chat = await tanya.chat({ userId: 'u1', message: 'First question', orgId: 's-org' });
+      await tanya.chat({ userId: 'u1', conversationId: chat.conversationId, message: 'Follow-up question' });
+
+      const summary = await tanya.summarize(chat.conversationId, 'u1');
+      assert.equal(summary.conversationId, chat.conversationId);
+      assert.equal(summary.messageCount, 4); // 2 user + 2 assistant
+      assert.equal(summary.userMessages, 2);
+      assert.equal(summary.assistantMessages, 2);
+      assert.equal(summary.firstMessage, 'First question');
+      assert.ok(summary.lastReply && summary.lastReply.length > 0);
+      assert.equal(summary.orgId, 's-org');
+      assert.ok(summary.startedAt && summary.lastActivityAt);
+
+      // Non-owner denied.
+      await assert.rejects(tanya.summarize(chat.conversationId, 'stranger'), /does not belong/);
+      await assert.rejects(tanya.summarize('nope', 'u1'), /not found/);
+
+      // Memory record created.
+      const summaries = memory.query({ category: 'tanya_summary' });
+      assert.ok(summaries.length >= 1, 'summary recorded into memory');
+      assert.equal(summaries[0]!.data?.messageCount, 4);
+    } finally {
+      await kernel.shutdown();
+    }
+  });
 });

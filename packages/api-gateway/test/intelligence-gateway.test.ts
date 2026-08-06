@@ -1848,4 +1848,27 @@ describe('ApiGatewayModule (CLP + Phase 2–5 intelligence routes)', () => {
     const grants = (await jsonRequest('GET', `${base}/tanya/shares?id=${convId}`, undefined, token)).body as { count: number };
     assert.equal(grants.count, 1, 'live grant survives pruning');
   });
+
+  it('POST /tanya/summarize returns a rollup; ownership enforced', async () => {
+    const chat = await jsonRequest('POST', `${base}/tanya/chat`, { message: 'Summarize me' }, token);
+    const convId = (chat.body as { conversationId: string }).conversationId;
+    await jsonRequest('POST', `${base}/tanya/chat`, { message: 'Second turn', conversationId: convId }, token);
+
+    const res = await jsonRequest('POST', `${base}/tanya/summarize`, { conversationId: convId }, token);
+    assert.equal(res.status, 200);
+    const summary = (res.body as { summary: { title: string; messageCount: number; userMessages: number; firstMessage: string } }).summary;
+    assert.equal(summary.messageCount, 4);
+    assert.equal(summary.userMessages, 2);
+    assert.equal(summary.firstMessage, 'Summarize me');
+
+    // Non-owner → 403.
+    const recLogin = await jsonRequest('POST', `${base}/auth/login`, { username: 'tanya-recipient', password: 'pw' });
+    const denied = await jsonRequest('POST', `${base}/tanya/summarize`, { conversationId: convId }, (recLogin.body as { token: string }).token);
+    assert.equal(denied.status, 403);
+    assert.match((denied.body as { error: string }).error, /does not belong/);
+
+    // Missing field → 400.
+    const missing = await jsonRequest('POST', `${base}/tanya/summarize`, {}, token);
+    assert.equal(missing.status, 400);
+  });
 });

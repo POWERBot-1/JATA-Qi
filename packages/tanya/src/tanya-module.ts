@@ -445,6 +445,58 @@ export class TanyaModule implements IModule {
     return (await this.conversations.sharesFor(conversationId)).map((s) => ({ id: s.id, ...(s.recipientUserId ? { recipientUserId: s.recipientUserId } : {}), createdAt: s.createdAt, ...(s.expiresAt ? { expiresAt: s.expiresAt } : {}) }));
   }
 
+  /**
+   * Rollup summary of a conversation: title, message counts by role, first
+   * user message, last assistant reply excerpt, tool calls used, org, and
+   * timespan. Deterministic (no LLM dependency); recorded into the memory
+   * engine as a tanya_summary event.
+   */
+  async summarize(conversationId: string, ownerId: string): Promise<{
+    conversationId: string;
+    title: string;
+    messageCount: number;
+    userMessages: number;
+    assistantMessages: number;
+    firstMessage?: string;
+    lastReply?: string;
+    toolCalls: string[];
+    orgId?: string;
+    startedAt?: number;
+    lastActivityAt?: number;
+  }> {
+    if (!this.conversations) throw new Error('conversations module not registered on this kernel');
+    const conv = await this.conversations.get(conversationId);
+    if (!conv) throw new Error(`conversation ${conversationId} not found`);
+    if (conv.userId !== ownerId) throw new Error('conversation does not belong to this user');
+    const userMessages = conv.messages.filter((m) => m.role === 'user');
+    const assistantMessages = conv.messages.filter((m) => m.role === 'assistant');
+    const toolCalls = [...new Set(conv.messages.flatMap((m) => (m.toolCalls ?? []).map((t) => t.name)))];
+    const summary = {
+      conversationId,
+      title: conv.title,
+      messageCount: conv.messages.length,
+      userMessages: userMessages.length,
+      assistantMessages: assistantMessages.length,
+      ...(userMessages[0] ? { firstMessage: userMessages[0]!.content.slice(0, 280) } : {}),
+      ...(assistantMessages.length ? { lastReply: assistantMessages[assistantMessages.length - 1]!.content.slice(0, 280) } : {}),
+      toolCalls,
+      ...(conv.orgId ? { orgId: conv.orgId } : {}),
+      ...(conv.createdAt ? { startedAt: conv.createdAt } : {}),
+      ...(conv.updatedAt ? { lastActivityAt: conv.updatedAt } : {}),
+    };
+    if (this.memory) {
+      try {
+        await this.memory.record({
+          category: 'tanya_summary',
+          summary: `TANYA summary: ${conv.title} (${conv.messages.length} messages, ${toolCalls.length} tool types)`,
+          data: { ...summary },
+          tags: ['tanya', 'summary', ...(conv.orgId ? [conv.orgId] : [])],
+        });
+      } catch { /* best-effort */ }
+    }
+    return summary;
+  }
+
   /** Delete expired share grants platform-wide (housekeeping). */
   async pruneExpiredShares(): Promise<number> {
     if (!this.conversations) throw new Error('conversations module not registered on this kernel');

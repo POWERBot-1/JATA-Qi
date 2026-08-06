@@ -596,4 +596,25 @@ describe('JataQiClient (HTTP SDK against real server)', () => {
     const plain = await client.tanya.chat('plain check');
     assert.ok(plain.reply.length > 0);
   });
+
+  it('tanya.summarize returns the rollup', async () => {
+    await client.auth.login('admin', 'admin');
+    const chat = await client.tanya.chat('summarize via sdk');
+    await client.tanya.chat('second sdk turn', { conversationId: chat.conversationId });
+
+    const { summary } = await client.tanya.summarize(chat.conversationId);
+    assert.equal(summary.messageCount, 4);
+    assert.equal(summary.userMessages, 2);
+    assert.equal(summary.firstMessage, 'summarize via sdk');
+    assert.ok(Array.isArray(summary.toolCalls));
+
+    // Non-owned conversation → error.
+    const recLogin = await (await fetch(`http://127.0.0.1:${port}/auth/login`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sdk-recipient', password: 'pw' }),
+    })).json() as { token: string };
+    const rec = new JataQiClient({ baseUrl: `http://127.0.0.1:${port}` });
+    rec.setToken(recLogin.token);
+    await assert.rejects(rec.tanya.summarize(chat.conversationId), /does not belong/);
+  });
 });

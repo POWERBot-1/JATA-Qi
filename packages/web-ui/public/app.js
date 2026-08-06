@@ -556,7 +556,9 @@ function renderView(view, data) {
           <button class="btn-ghost" onclick="exportTanyaConversation('json')">Export JSON</button>
           <button class="btn-ghost" onclick="exportTanyaConversation('markdown')">Export Markdown</button>
           <button class="btn-ghost" onclick="exportTanyaConversation('text')">Export Text</button>
+          <button class="btn-ghost" onclick="summarizeTanyaConversation()">📋 Summarize</button>
         </div>
+        <div id="tanya-summary" style="margin-top:8px;font-size:12px;color:var(--text-dim)"></div>
       </div>
       <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">SHARE CURRENT CONVERSATION (multi-user)</div>
@@ -1075,6 +1077,19 @@ async function exportAudit(format) {
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) { alert(e.message); }
+}
+async function summarizeTanyaConversation() {
+  const convId = $('#tanya-conv')?.value;
+  if (!convId) { alert('Select a conversation first.'); return; }
+  const box = $('#tanya-summary');
+  if (box) box.textContent = 'Summarizing…';
+  try {
+    const r = await api('POST', '/tanya/summarize', { conversationId: convId });
+    if (box) {
+      const s = r.summary;
+      box.innerHTML = `<b>${esc(s.title)}</b> — ${s.messageCount} messages (${s.userMessages} user / ${s.assistantMessages} assistant) · tools: ${s.toolCalls.length ? esc(s.toolCalls.join(', ')) : 'none'}${s.orgId ? ` · org ${esc(s.orgId)}` : ''}`;
+    }
+  } catch (e) { if (box) box.textContent = ''; alert(e.message); }
 }
 async function exportTanyaConversation(format) {
   const convId = $('#tanya-conv')?.value;

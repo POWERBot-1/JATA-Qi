@@ -537,6 +537,7 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/tanya/shares', auth('tanya:read', (req) => this.tanyaShares(req)));
     route('GET', '/tanya/org', auth('tanya:read', (req) => this.tanyaOrg(req)));
     route('POST', '/tanya/shares/prune', auth('tanya:write', (req) => this.tanyaSharesPrune(req)));
+    route('POST', '/tanya/summarize', auth('tanya:write', (req) => this.tanyaSummarize(req)));
     route('POST', '/session/revoke', auth(null, (req) => this.sessionRevoke(req)));
     // Notifications.
     route('GET', '/notifications', auth('notification:read', (req) => this.notificationsList(req)));
@@ -6158,6 +6159,18 @@ export class ApiGatewayModule implements IModule {
     if (!this.tanya) return json(501, { error: 'tanya module not registered' });
     const conversations = await this.tanya.sharedWithMe(req.principal!.userId);
     return json(200, { conversations, count: conversations.length });
+  }
+
+  private async tanyaSummarize(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.tanya) return json(501, { error: 'tanya module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.conversationId !== 'string' || !b.conversationId) return json(400, { error: 'field "conversationId" is required' });
+    try {
+      const summary = await this.tanya.summarize(b.conversationId, req.principal!.userId);
+      return json(200, { summary });
+    } catch (e) {
+      return json(403, { error: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   private async tanyaSharesPrune(req: GatewayRequest): Promise<GatewayResponse> {

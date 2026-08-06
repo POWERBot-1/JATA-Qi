@@ -289,4 +289,10 @@ describe('jataqi CLI — intelligence commands', () => {
     const out = await jataqi('tanya', 'sharelink', 'nope');
     assert.match(out, /not found or not owned/);
   });
+
+  it('tanya summary validates ownership cleanly', async () => {
+    // Fresh OS: 'cli' owns nothing, so summarizing fails cleanly.
+    const out = await jataqi('tanya', 'summary', 'nope');
+    assert.match(out, /not found/);
+  });
 });
