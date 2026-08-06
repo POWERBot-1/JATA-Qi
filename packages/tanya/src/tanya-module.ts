@@ -48,6 +48,13 @@ export interface TanyaChatInput {
   /** Organization scope (multi-user TANYA): new conversations get orgId; continuing an existing conversation requires a matching orgId. */
   orgId?: string;
   /**
+   * Route the turn through the model-runtime router (ModelRuntimeModule)
+   * instead of the persona agent when available. Falls back to the agent
+   * when the module is absent. Default false (agent-based personas keep
+   * tool use).
+   */
+  modelRouting?: boolean;
+  /**
    * Optional streaming callback: receives the assistant reply in word chunks
    * as it is produced (WebSocket clients render these progressively).
    * Streaming is best-effort — a throwing callback never fails the chat.
@@ -99,6 +106,7 @@ export class TanyaModule implements IModule {
   private agents?: AgentRuntimeModule;
   private pki?: PkiModule;
   private organizations?: OrganizationsModule;
+  private modelRuntime?: { complete: (req: { messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: string }> }) => Promise<{ message: { content: string }; usage?: { promptTokens: number; completionTokens: number } }> };
   private personas = new Map<string, TanyaPersona>([[DEFAULT_PERSONA.id, DEFAULT_PERSONA]]);
   /** IdP identity bridge index: email/preferred_username → platform userId (sub). */
   private idpIdentities = new Map<string, { userId: string; via: 'email' | 'sub' }>();
@@ -109,6 +117,11 @@ export class TanyaModule implements IModule {
     this.agents = this.tryModule<AgentRuntimeModule>('agent-runtime');
     this.pki = this.tryModule<PkiModule>('pki');
     this.organizations = this.tryModule<OrganizationsModule>('organizations');
+    try {
+      this.modelRuntime = kernel.getModule('model-runtime') as unknown as NonNullable<TanyaModule['modelRuntime']>;
+    } catch {
+      this.modelRuntime = undefined;
+    }
     kernel.container.registerValue('tanya', this);
     kernel.logger.info('tanya module initialized (TANYA AI conversational product layer)');
   }
@@ -254,19 +267,43 @@ export class TanyaModule implements IModule {
       .slice(-(maxHistory * 2 + 1), -1)
       .map((m) => ({ role: m.role, content: m.content }));
 
-    const result = await this.agents.run(input.message, {
-      agent: persona.agentName,
-      systemPrompt: conv.systemPrompt ?? persona.systemPrompt,
-      history,
-      metadata: { product: 'tanya', persona: persona.id, conversationId: conv.id, userId: input.userId },
-    });
+    let answer: string;
+    let finishedReason: 'answer' | 'max_iterations' | 'cancelled' | 'error' = 'answer';
+    let toolCalls: Array<{ name: string; input: Record<string, unknown>; result?: unknown }> = [];
 
-    const reply = result.answer ?? (result.error ? `(error) ${result.error}` : '');
-    const toolCalls = result.toolCalls.map((tc) => ({
-      name: tc.tool,
-      input: (tc.input ?? {}) as Record<string, unknown>,
-      result: tc.error ? { error: tc.error } : tc.output,
-    }));
+    if (input.modelRouting && this.modelRuntime) {
+      // Model-router path: full history + system prompt through the platform
+      // model abstraction (no tool loop — pure generation).
+      try {
+        const res = await this.modelRuntime.complete({
+          messages: [
+            { role: 'system', content: conv.systemPrompt ?? persona.systemPrompt },
+            ...history.map((m) => ({ role: m.role, content: m.content })),
+            { role: 'user', content: input.message },
+          ],
+        });
+        answer = res.message.content;
+      } catch {
+        answer = 'I encountered an error. Please try again.';
+        finishedReason = 'error';
+      }
+    } else {
+      const result = await this.agents.run(input.message, {
+        agent: persona.agentName,
+        systemPrompt: conv.systemPrompt ?? persona.systemPrompt,
+        history,
+        metadata: { product: 'tanya', persona: persona.id, conversationId: conv.id, userId: input.userId },
+      });
+      answer = result.answer ?? (result.error ? `(error) ${result.error}` : '');
+      finishedReason = result.finishedReason;
+      toolCalls = result.toolCalls.map((tc) => ({
+        name: tc.tool,
+        input: (tc.input ?? {}) as Record<string, unknown>,
+        result: tc.error ? { error: tc.error } : tc.output,
+      }));
+    }
+
+    const reply = answer;
 
     // Stream the reply in word chunks when a callback is provided (WS clients).
     if (input.onChunk) {
@@ -292,8 +329,8 @@ export class TanyaModule implements IModule {
       agent: persona.agentName,
       reply,
       toolCalls,
-      finishedReason: result.finishedReason,
-      ...(result.error ? { error: result.error } : {}),
+      finishedReason,
+      ...(finishedReason === 'error' ? { error: 'model routing failed' } : {}),
       messageCount: (await this.conversations.get(conv.id))?.messages.length ?? 0,
     };
   }

@@ -5942,6 +5942,7 @@ export class ApiGatewayModule implements IModule {
           ...(conversationId ? { conversationId } : {}),
           persona,
           ...(orgId ? { orgId } : {}),
+          ...(msg.modelRouting === true ? { modelRouting: true } : {}),
           onChunk: (chunk) => { ws.send(JSON.stringify({ type: 'tanya.chunk', content: chunk })); },
         });
         ws.send(JSON.stringify({
@@ -6030,6 +6031,7 @@ export class ApiGatewayModule implements IModule {
         ...(typeof b.persona === 'string' ? { persona: b.persona } : {}),
         ...(typeof b.title === 'string' ? { title: b.title } : {}),
         ...(typeof b.orgId === 'string' ? { orgId: b.orgId } : {}),
+        ...(b.modelRouting === true ? { modelRouting: true } : {}),
       });
       return json(200, result);
     } catch (e) {

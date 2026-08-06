@@ -486,4 +486,58 @@ describe('TANYA AI conversational product layer', () => {
       await kernel.shutdown();
     }
   });
+
+  it('modelRouting routes turns through the model runtime when present', async () => {
+    // Fresh kernel with a stub model-runtime registered BEFORE TanyaModule so
+    // the module resolves it at init.
+    const kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    kernel.register(new ConversationsModule());
+    kernel.register(new SecurityModule({ bootstrapAdmin: { username: 'admin', password: 'admin' } }));
+    const stub = {
+      id: 'model-runtime',
+      tags: [] as string[],
+      dependsOn: [] as string[],
+      calls: 0,
+      async init() {},
+      async start() {},
+      async stop() {},
+      async complete(req: { messages: Array<{ role: string; content: string }> }) {
+        this.calls++;
+        return { message: { content: `MODEL:${req.messages[req.messages.length - 1]!.content}` } };
+      },
+    };
+    kernel.register(stub as never);
+    kernel.register(new AgentRuntimeModule({ llm: new EchoLLM() }));
+    kernel.register(new TanyaModule());
+    await kernel.boot();
+    try {
+      const tanya = kernel.getModule<TanyaModule>('tanya');
+
+      // Agent path (default) still works.
+      const agentChat = await tanya.chat({ userId: 'u1', message: 'agent path' });
+      assert.equal(agentChat.reply.startsWith('Echo:'), true, 'agent path unchanged');
+
+      // Model-router path.
+      const routed = await tanya.chat({ userId: 'u1', message: 'router path', modelRouting: true });
+      assert.equal(routed.reply, 'MODEL:router path');
+      assert.equal(routed.toolCalls.length, 0, 'no tool calls on the router path');
+      assert.equal((stub as unknown as { calls: number }).calls, 1);
+    } finally {
+      await kernel.shutdown();
+    }
+
+    // modelRouting without the module present → falls back to the agent.
+    const k2 = await bootTanya();
+    try {
+      const tanya2 = k2.getModule<TanyaModule>('tanya');
+      const fallback = await tanya2.chat({ userId: 'u1', message: 'fallback', modelRouting: true });
+      assert.equal(fallback.reply.startsWith('Echo:'), true, 'falls back to the agent');
+    } finally {
+      await k2.shutdown();
+    }
+  });
 });
