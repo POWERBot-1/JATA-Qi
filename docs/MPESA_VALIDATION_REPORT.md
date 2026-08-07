@@ -1,16 +1,16 @@
 # M-Pesa (Daraja) Payment Rail — Validation Report
 
-- **Date:** 2026-08-07T15:42:50.166Z
+- **Date:** 2026-08-07T16:01:49.397Z
 - **Mode:** production (CLI serve, filesystem storage, admin bootstrap; Daraja emulated via MPESA_API_BASE mock; webhook HMAC enforced)
 - **Checks:** 20/20 passed · 0 failed
 
 ## Results
-- ✅ 1.1 production boot (v1.0.0 tree, filesystem storage) — fsRoot=/tmp/jataqi-mpesa-EKBllc
+- ✅ 1.1 production boot (v1.0.0 tree, filesystem storage) — fsRoot=/tmp/jataqi-mpesa-Th5ML9
 - ✅ 1.2 exact version deployed — 1.0.0
 - ✅ 1.3 mpesa provider registered on boot — modules=68
 - ✅ 1.4 providers endpoint reports mpesa configured (sandbox) — [{"id":"stripe","configured":false},{"id":"mpesa","configured":true,"environment":"sandbox"}]
 - ✅ 2.1 operator authenticated
-- ✅ 2.2 subscription + invoice created — invoice=efd55c29-fefb-4cac-9299-cedcd73468b7
+- ✅ 2.2 subscription + invoice created — invoice=52427d67-1959-446a-b8d9-fd166f668d1d
 - ✅ 3.1 STK Push initiated against Daraja (201) — intent=ws_CO_2026080712345678901234567890
 - ✅ 3.2 intent status requires_action (customer approval pending)
 - ✅ 3.3 Daraja OAuth bearer used for STK Push — auth=Bearer tok_s…
