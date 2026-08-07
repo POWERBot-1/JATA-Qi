@@ -1,0 +1,21 @@
+{
+  "value": {
+    "id": "8ef12a64-cc3d-4a27-a8b0-0de612a2205e",
+    "ts": 1786092337576,
+    "actor": "system",
+    "action": "gateway.start",
+    "result": "success",
+    "detail": {
+      "tls": false,
+      "cors": false,
+      "apiVersion": "v1",
+      "tenantIsolation": true
+    }
+  },
+  "meta": {
+    "key": "8ef12a64-cc3d-4a27-a8b0-0de612a2205e",
+    "createdAt": 1786092337577,
+    "updatedAt": 1786092337577,
+    "etag": "msip9fvt-wzodk3"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "value": {
+    "id": "de950ad0-02fd-40de-86f6-0b7729b60bca",
+    "ts": 1786092354545,
+    "actor": "system",
+    "action": "gateway.start",
+    "result": "success",
+    "detail": {
+      "tls": false,
+      "cors": false,
+      "apiVersion": "v1",
+      "tenantIsolation": true
+    }
+  },
+  "meta": {
+    "key": "de950ad0-02fd-40de-86f6-0b7729b60bca",
+    "createdAt": 1786092354546,
+    "updatedAt": 1786092354546,
+    "etag": "msip9sz6-hvqpvx"
+  }
+}

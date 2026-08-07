@@ -90,7 +90,7 @@ if git tag --list v1.0.0 | grep -q v1.0.0; then ok "git tag v1.0.0 present"; els
 echo "== 7. Production boot (filesystem storage → /readyz) =="
 PORT=$((RANDOM % 2000 + 30000))
 FSROOT=$(mktemp -d)
-STORAGE_DRIVER=filesystem JATAQI_STORAGE_FS_ROOT="$FSROOT" \
+STORAGE_DRIVER=filesystem STORAGE_FS_ROOT="$FSROOT" \
   JATAQI_ADMIN_USERNAME=admin JATAQI_ADMIN_PASSWORD=admin LOG_LEVEL=warn \
   node packages/cli/dist/src/index.js serve "$PORT" >/tmp/jataqi-deploy-validate.log 2>&1 &
 SRV=$!

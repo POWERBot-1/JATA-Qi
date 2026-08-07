@@ -1,0 +1,15 @@
+{
+  "value": {
+    "id": "1753e3f6-e0d5-48f7-a791-cb992fd7713b",
+    "ts": 1786092356012,
+    "actor": "d3ed579f-91d0-41dd-bdb2-bad6aebaa3d5",
+    "action": "auth.login",
+    "result": "success"
+  },
+  "meta": {
+    "key": "1753e3f6-e0d5-48f7-a791-cb992fd7713b",
+    "createdAt": 1786092356013,
+    "updatedAt": 1786092356013,
+    "etag": "msip9u3x-2yh0fb"
+  }
+}
