@@ -33,7 +33,14 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
+# NOTE: MemoryDenyWriteExecute=true is intentionally NOT set. Node 22 cannot
+# run under it: V8 commits its code range RWX (fatal SIGTRAP at boot) and
+# undici's llhttp HTTP parser is WebAssembly, which --jitless would disable.
+# A unit that crashes on start is not a security control. The flag is
+# compensated by the seccomp allowlist below plus zero capabilities,
+# NoNewPrivileges, and the read-only root filesystem.
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 CapabilityBoundingSet=
 AmbientCapabilities=
 # Restrict file access to the app + data dirs.

@@ -310,14 +310,21 @@ describe('Phase 6 — production kit + payment webhook', () => {
     assert.ok(nginx.includes('api.${DOMAIN}'), 'api subdomain');
   });
 
-  it('systemd unit is hardened (non-root, NoNewPrivileges, ProtectSystem)', () => {
+  it('systemd unit is hardened (non-root, NoNewPrivileges, ProtectSystem, seccomp allowlist)', () => {
     const unit = read('production/jataqi.service');
     assert.ok(unit.includes('User=jataqi') && unit.includes('Group=jataqi'));
     assert.ok(unit.includes('NoNewPrivileges=true'));
     assert.ok(unit.includes('ProtectSystem=strict'));
     assert.ok(unit.includes('PrivateTmp=true'));
     assert.ok(unit.includes('CapabilityBoundingSet='));
-    assert.ok(unit.includes('MemoryDenyWriteExecute=true'));
+    assert.ok(unit.includes('AmbientCapabilities='));
+    assert.ok(unit.includes('SystemCallFilter=@system-service'), 'seccomp allowlist compensates');
+    assert.ok(unit.includes('SystemCallErrorNumber=EPERM'));
+    // MemoryDenyWriteExecute is incompatible with Node 22 (V8 RWX code range,
+    // undici llhttp WASM) — it must be documented as such, never set as a
+    // directive (the comment may mention it).
+    assert.ok(!/^MemoryDenyWriteExecute=/m.test(unit), 'incompatible flag not set as a directive');
+    assert.ok(unit.includes('MemoryDenyWriteExecute'), 'incompatibility documented in the unit');
   });
 
   it('docker-compose runs postgres+redis+jataqi with health gates and persistent volumes', () => {
@@ -346,16 +353,109 @@ describe('Phase 6 — production kit + payment webhook', () => {
 });
 
 
-describe('Phase 7 — deploy.sh production rehearsal hardening', () => {
-  it('deploy.sh is production-hardened (surviving fallback, complete install, operator escapes)', () => {
+describe('Phase 7/8 — deploy.sh production hardening (live rehearsal fixes)', () => {
+  it('installs the complete tree via a per-item loop — no brace expansion, missing items skipped', () => {
     const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
-    assert.ok(script.includes('SKIP_BUILD'), 'SKIP_BUILD escape');
-    assert.ok(script.includes('FORCE_BACKGROUND'), 'FORCE_BACKGROUND escape (no-systemd envs)');
-    assert.ok(script.includes('npm ci --omit=dev'), 'production deps installed into app dir (bare-metal path)');
-    assert.ok(script.includes('"$REPO/deploy"'), 'deploy kit installed (complete tree)');
-    assert.ok(script.includes('ps -p 1 -o comm='), 'PID-1 systemd detection');
+    assert.ok(script.includes('INSTALL_ITEMS=('), 'per-item install list');
+    for (const item of ['package.json', 'package-lock.json', 'scripts', 'clients', 'deploy', 'docs', '.env.example']) {
+      assert.ok(script.includes(`"${item}"`), `install list includes ${item}`);
+    }
+    assert.ok(script.includes('"$REPO/packages/"'), 'packages has its own dedicated sync (with --delete)');
+    assert.ok(!script.includes('"$REPO"/{'), 'no brace expansion on repo paths');
+    assert.ok(script.includes('(skip missing:'), 'missing optional items are skipped, not fatal');
+  });
+
+  it('rsync --delete is scoped to packages/ only (production.env can never be deleted)', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    const deleteLine = script.split('\n').find((l) => l.includes('rsync -a --delete')) ?? '';
+    assert.ok(deleteLine.includes('--delete'), 'has a --delete pass');
+    assert.ok(deleteLine.includes('"$REPO/packages/"') && deleteLine.includes('"$APP_DIR/packages/"'),
+      '--delete applies only to the packages/ sync (its only rsync use in the script)');
+    assert.ok(!deleteLine.includes('"$APP_DIR/"'), 'never --delete the APP_DIR root (protects production.env)');
+    assert.ok(script.includes('cp -r "$REPO/$item" "$APP_DIR/"'), 'cp fallback per item');
+    assert.ok(script.includes('rsync not found — using cp fallback'), 'cp fallback branch');
+  });
+
+  it('systemd detection is container-safe: root + real systemd + systemctl + writable unit dir', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes('[ "$(id -u)" = "0" ]'), 'systemd mode requires root');
+    assert.ok(script.includes('command -v systemctl'), 'systemctl must exist');
+    assert.ok(script.includes('[ -w /etc/systemd/system ]'), 'unit dir must be writable');
+    assert.ok(script.includes('ps -p 1 -o comm='), 'PID-1 verification');
+    assert.ok(script.includes('FORCE_BACKGROUND'), 'operator escape still forces background mode');
+    assert.ok(script.includes('MODE="systemd"'), 'mode selection present');
+  });
+
+  it('background mode survives script/session exit (setsid, nohup fallback, in-child env sourcing)', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes('command -v setsid'), 'setsid preferred');
+    assert.ok(script.includes('wrapper="nohup"'), 'nohup fallback when setsid is absent');
+    assert.ok(script.includes("set -a; . \"$1\"; set +a; exec node \"$2\" serve 7400"),
+      'env sourced inside the child — quoting-safe env values can never break the command line');
+    assert.ok(script.includes('disown'), 'job table release');
     assert.ok(script.includes('[ -w "$(dirname "$LOG")" ]'), 'log-path writability fallback');
     assert.ok(script.includes('setsid'), 'detached background process survives script exit');
+  });
+
+  it('removes unsafe sudo assumptions: chown/ownership only when root, APP_DIR writability gate', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes('(non-root — skipping chown'), 'chown skipped for non-root');
+    assert.ok(script.includes('is not writable — run as root or set APP_DIR'), 'writable APP_DIR gate');
+    const rootChown = script.indexOf('chown -R');
+    const nonRoot = script.indexOf('(non-root — skipping chown');
+    assert.ok(rootChown > -1 && nonRoot > -1 && rootChown < nonRoot, 'chown guarded by root check');
+  });
+
+  it('bare-metal path runs npm ci in APP_DIR with a package-lock guard before starting', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes('npm ci --omit=dev --ignore-scripts --no-audit --no-fund'),
+      'production deps installed into app dir');
+    assert.ok(script.includes('package-lock.json missing — install incomplete'), 'lockfile guard');
+    const ciAt = script.indexOf('npm ci --omit=dev');
+    const startAt = script.indexOf('Start + health gate');
+    assert.ok(ciAt > -1 && startAt > -1 && ciAt < startAt, 'npm ci runs before application start');
+  });
+
+  it('keeps the real connectivity probe: Postgres TCP probe + Redis when configured', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes('probe_url'), 'probe helper');
+    assert.ok(script.includes('net.connect'), 'real TCP probe (not a ping/HTTP substitute)');
+    assert.ok(script.includes('POSTGRES_URL'), 'Postgres probed when configured');
+    assert.ok(script.includes('REDIS_URL'), 'Redis probed when configured');
+    assert.ok(script.includes('connectivity failed — check POSTGRES_URL'), 'hard failure on unreachable DB');
+  });
+
+  it('refuses placeholder secrets: CHANGE_ME gate on production.env', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes("grep -q 'CHANGE_ME'"), 'placeholder scan');
+    assert.ok(script.includes('still contains CHANGE_ME placeholders'), 'clear error');
+  });
+
+  it('systemd unit templates to a custom APP_DIR/APP_USER via the same sed deploy.sh uses', () => {
+    const unit = read('production/jataqi.service');
+    const rendered = unit
+      .replaceAll('/opt/jataqi', '/srv/jataqi')
+      .replaceAll('User=jataqi', 'User=ops')
+      .replaceAll('Group=jataqi', 'Group=ops');
+    assert.ok(rendered.includes('WorkingDirectory=/srv/jataqi'));
+    assert.ok(rendered.includes('EnvironmentFile=/srv/jataqi/production.env'));
+    assert.ok(rendered.includes('ExecStart=/usr/bin/node /srv/jataqi/packages/cli/dist/src/index.js serve 7400'));
+    assert.ok(rendered.includes('ReadWritePaths=/srv/jataqi'));
+    assert.ok(rendered.includes('User=ops') && rendered.includes('Group=ops'));
+    assert.ok(rendered.includes('NoNewPrivileges=true') && rendered.includes('ProtectSystem=strict'),
+      'hardening survives templating');
+  });
+
+  it('deploy.sh never touches the Docker/Compose path (both paths stay independent)', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(!script.includes('docker compose') && !script.includes('docker-compose'),
+      'deploy.sh is the bare-metal path; compose stays the container path');
+    const compose = read('production/docker-compose.prod.yml');
+    for (const svc of ['postgres:', 'redis:', 'jataqi:', 'nginx:', 'certbot:']) {
+      assert.ok(compose.includes(svc), `compose service ${svc} still present`);
+    }
+    assert.ok(compose.includes('ghcr.io/powerbot-1/jataqi:1.0.0'), 'pinned image unchanged');
+    assert.ok((compose.match(/healthcheck:/g) ?? []).length >= 3, 'healthchecks intact');
   });
 });
 
