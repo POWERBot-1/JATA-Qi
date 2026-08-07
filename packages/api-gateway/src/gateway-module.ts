@@ -1200,6 +1200,7 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/payments/webhook/mpesa', (req) => this.paymentsWebhookMpesa(req));
     // M-Pesa STK Push initiation (auth'd; the provider prompt happens on the phone).
     route('POST', '/payments/mpesa/stk-push', auth('payments:write', (req) => this.paymentsMpesaStkPush(req)));
+    route('GET', '/payments/providers', auth('payments:read', () => this.paymentsProviders()));
     route('POST', '/commerce/invoice', auth('commerce:read', (req) => this.commerceInvoiceCreate(req)));
     route('POST', '/commerce/invoice/pay', auth('commerce:read', (req) => this.commerceInvoicePay(req)));
     route('GET', '/commerce/invoices', auth('commerce:read', (req) => this.commerceInvoicesList(req)));
@@ -7417,6 +7418,21 @@ export class ApiGatewayModule implements IModule {
     if (!this.commerce) return json(501, { error: 'commerce module not registered' });
     if (!req.query.customerId) return json(400, { error: 'field "customerId" is required' });
     return json(200, { state: await this.commerce.customerBillingState(req.query.customerId) });
+  }
+
+  /** Registered payment providers and their configuration status (operator view). */
+  private paymentsProviders(): GatewayResponse {
+    if (!this.payments) return json(501, { error: 'payments module not registered' });
+    const providers = [
+      { id: 'stripe', configured: this.payments.getProvider('stripe') !== undefined },
+      {
+        id: 'mpesa',
+        configured: this.payments.getProvider('mpesa') !== undefined,
+        ...(this.payments.getProvider('mpesa') ? { environment: this.payments.mpesaEnvironment } : {}),
+        ...(process.env.MPESA_CALLBACK_URL ? { callbackUrl: process.env.MPESA_CALLBACK_URL } : {}),
+      },
+    ];
+    return json(200, { providers });
   }
 
   /**

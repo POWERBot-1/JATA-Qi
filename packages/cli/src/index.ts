@@ -44,6 +44,8 @@ import type { PqcModule } from '@jataqi/pqc';
 import type { ProductMarketplaceModule } from '@jataqi/product-marketplace';
 import type { OnboardingModule } from '@jataqi/onboarding';
 import type { OperationsModule } from '@jataqi/operations';
+import type { CommerceModule } from '@jataqi/commerce';
+import type { PaymentsModule } from '@jataqi/payments';
 
 /** SOC incident severity → escalation SLA in minutes (mirrors the module). */
 function severityToSlaMin(severity: string): number {
@@ -104,6 +106,7 @@ Commands:
   products <sub>       Product marketplace: catalog|install|upgrade|uninstall|runtime|installed|upgrades|deps|stats.
   onboard <sub>        Onboarding: start|profile|admin|tenant|invite|accept|sample|complete|stats.
   ops <sub>            Operations: rotation|oncall|chain|sla|verify-backup|drill|advance|health|stats.
+  payments <sub>       Payments: status|stk-push|invoice|invoice-pay|billing-state (Stripe + M-Pesa Daraja).
   dlp <sub>            Data loss prevention: rules|scan|incidents|resolve|stats.
   pqc <sub>            Post-quantum: algorithms|keys|key|sign|verify|signatures|phase|migration|stats.
   secauto <sub>        Security automation: rules|correlations|posture|hunt|hunts|schedule|compliance|export.
@@ -141,6 +144,8 @@ async function main() {
   const products = kernel.getModule<ProductMarketplaceModule>('product-marketplace');
   const onboarding = kernel.getModule<OnboardingModule>('onboarding');
   const ops = kernel.getModule<OperationsModule>('operations');
+  const payments = kernel.getModule<PaymentsModule>('payments');
+  const commerce = kernel.getModule<CommerceModule>('commerce');
   const search = kernel.getModule<SearchModule>('search');
   const memory = kernel.getModule<DigitalMemoryModule>('memory');
   const learning = kernel.getModule<ContinuousLearningModule>('learning');
@@ -2332,6 +2337,74 @@ async function main() {
           }
           default:
             console.error('Usage: jataqi infra stats|asset|assets|provision|approve|firmware|drift|compliance|access'); process.exit(1);
+        }
+        break;
+      }
+      case 'payments': {
+        const sub = args[1];
+        switch (sub) {
+          case 'status': {
+            if (!payments) { console.error('payments module not registered'); process.exit(1); }
+            for (const id of ['stripe', 'mpesa']) {
+              const p = payments.getProvider(id);
+              console.log(`${id}: ${p ? 'configured' : 'not configured'}`);
+              if (id === 'mpesa' && p) console.log(`  environment: ${payments.mpesaEnvironment}`);
+            }
+            break;
+          }
+          case 'stk-push': {
+            if (!payments) { console.error('payments module not registered'); process.exit(1); }
+            const customerId = args[2], amount = Number(args[3]), phone = args[4];
+            const currency = args[5] ?? 'KES', reference = args[6];
+            if (!customerId || !amount || !phone) {
+              console.error('Usage: jataqi payments stk-push <customerId> <amountMinor> <phone> [currency] [reference]');
+              process.exit(1);
+            }
+            const provider = payments.getProvider('mpesa');
+            if (!provider) { console.error('mpesa provider not configured — set MPESA_CONSUMER_KEY/SECRET/SHORTCODE/PASSKEY'); process.exit(1); }
+            const intent = await provider.createPaymentIntent({
+              amount, currency, customerId,
+              description: reference ? `JATA Qi payment (${reference})` : 'JATA Qi payment',
+              metadata: { phone, reference: reference ?? customerId, customerId },
+            });
+            payments.recordPendingIntent(intent.id, { customerId, amount, currency, reference });
+            console.log(`STK Push sent — CheckoutRequestID: ${intent.id}`);
+            console.log(`status: ${intent.status} (customer approves on phone; callback applies invoice payment)`);
+            break;
+          }
+          case 'invoice': {
+            if (!commerce) { console.error('commerce module not registered'); process.exit(1); }
+            const customerId = args[2], planSlug = args[3], currency = args[4];
+            if (!customerId || !planSlug) { console.error('Usage: jataqi payments invoice <customerId> <planSlug> [currency]'); process.exit(1); }
+            const plan = await commerce.getPlan(planSlug);
+            if (!plan) { console.error(`plan ${planSlug} not found`); process.exit(1); }
+            const price = plan.prices[currency ?? 'USD'] ?? plan.prices[Object.keys(plan.prices)[0]!];
+            if (!price) { console.error(`plan ${planSlug} has no prices`); process.exit(1); }
+            const invoice = await commerce.createInvoice(customerId, [
+              { description: `${plan.name} — ${plan.billingCycle.toLowerCase()}`, quantity: 1, unitPrice: price, total: price },
+            ], { currency: price.currency });
+            console.log(`invoice ${invoice.id} created — ${price.amount} ${price.currency}`);
+            break;
+          }
+          case 'invoice-pay': {
+            if (!commerce) { console.error('commerce module not registered'); process.exit(1); }
+            const id = args[2], ref = args[3];
+            if (!id) { console.error('Usage: jataqi payments invoice-pay <invoiceId> [paymentRef]'); process.exit(1); }
+            const inv = await commerce.markInvoicePaid(id, ref);
+            console.log(`invoice ${inv.id} → ${inv.status}`);
+            break;
+          }
+          case 'billing-state': {
+            if (!commerce) { console.error('commerce module not registered'); process.exit(1); }
+            const customerId = args[2];
+            if (!customerId) { console.error('Usage: jataqi payments billing-state <customerId>'); process.exit(1); }
+            const state = await commerce.customerBillingState(customerId);
+            console.log(JSON.stringify(state, null, 2));
+            break;
+          }
+          default:
+            console.error('Usage: jataqi payments status|stk-push|invoice|invoice-pay|billing-state');
+            process.exit(1);
         }
         break;
       }

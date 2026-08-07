@@ -1,6 +1,6 @@
 # JATA Qi — First Customer Pilot Report
 
-- **Date:** 2026-08-07T14:34:17.730Z
+- **Date:** 2026-08-07T15:50:37.621Z
 - **Customer:** Pilot Customer Co (test/sandbox customer)
 - **Flow:** Signup → Tenant → Subscription → Billing → Provisioning → Products → Usage → Support → Renewal/Cancellation
 - **Result:** 17/17 steps passed
@@ -10,7 +10,7 @@
 - ✅ customer admin signup + auth
 - ✅ guided onboarding + tenant provisioned — tenant tenant-0001
 - ✅ customer account bound to tenant + billing identity
-- ✅ business subscription created — sub 617287fd
+- ✅ business subscription created — sub 31e03c2d
 - ✅ subscription assigned to account (edition enforcement)
 - ✅ invoice issued + paid (payment status)
 - ✅ one-click product install (SOMA + TANYA dep)

@@ -185,6 +185,51 @@ class JataQiClient:
     def marketplace_payouts(self, vendor_id: Optional[str] = None) -> Dict[str, Any]:
         return self.request("GET", "/marketplace/payouts", query={"vendorId": vendor_id} if vendor_id else None)
 
+    # ---- commerce + payments -------------------------------------------------------
+
+    def commerce_plans(self) -> Dict[str, Any]:
+        return self.request("GET", "/commerce/plans")
+
+    def commerce_analytics(self) -> Dict[str, Any]:
+        return self.request("GET", "/commerce/analytics")
+
+    def commerce_subscribe(self, customer_id: str, plan_slug: str, trial: bool = False) -> Dict[str, Any]:
+        body = {"customerId": customer_id, "planSlug": plan_slug}
+        if trial:
+            body["trial"] = True
+        return self.request("POST", "/commerce/subscribe", body)
+
+    def commerce_invoice(self, customer_id: str, plan_slug: str, currency: Optional[str] = None) -> Dict[str, Any]:
+        body = {"customerId": customer_id, "planSlug": plan_slug}
+        if currency:
+            body["currency"] = currency
+        return self.request("POST", "/commerce/invoice", body)
+
+    def commerce_invoice_pay(self, invoice_id: str, payment_ref: Optional[str] = None) -> Dict[str, Any]:
+        body = {"id": invoice_id}
+        if payment_ref:
+            body["paymentRef"] = payment_ref
+        return self.request("POST", "/commerce/invoice/pay", body)
+
+    def commerce_invoices(self, customer_id: str) -> Dict[str, Any]:
+        return self.request("GET", "/commerce/invoices", query={"customerId": customer_id})
+
+    def commerce_billing_state(self, customer_id: str) -> Dict[str, Any]:
+        return self.request("GET", "/commerce/billing-state", query={"customerId": customer_id})
+
+    def payments_providers(self) -> Dict[str, Any]:
+        return self.request("GET", "/payments/providers")
+
+    def payments_mpesa_stk_push(self, customer_id: str, amount_minor: int, phone: str,
+                                currency: str = "KES", reference: Optional[str] = None,
+                                description: Optional[str] = None) -> Dict[str, Any]:
+        body = {"customerId": customer_id, "amount": amount_minor, "phone": phone, "currency": currency}
+        if reference:
+            body["reference"] = reference
+        if description:
+            body["description"] = description
+        return self.request("POST", "/payments/mpesa/stk-push", body)
+
     # ---- cloud ---------------------------------------------------------------------
 
     def cloud_stats(self) -> Dict[str, Any]:

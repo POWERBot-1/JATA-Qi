@@ -303,7 +303,12 @@ const VIEWS = {
   },
   models: async () => api('GET', '/models'),
   knowledge: async () => api('GET', '/stats'),
-  commerce: async () => { const [plans, analytics] = await Promise.all([api('GET', '/commerce/plans'), api('GET', '/commerce/analytics')]); return { plans, analytics }; },
+  commerce: async () => {
+    const [plans, analytics, providers] = await Promise.all([
+      api('GET', '/commerce/plans'), api('GET', '/commerce/analytics'), api('GET', '/payments/providers'),
+    ]);
+    return { plans, analytics, providers };
+  },
   organizations: async () => api('GET', '/orgs'),
   notifications: async () => api('GET', '/notifications'),
   governance: async () => api('GET', '/gov/policies'),
@@ -839,6 +844,41 @@ function renderView(view, data) {
     <div class="card"><div class="card-title">Open Incidents (${openInc.length})</div>${tableFrom(openInc, ['id', 'title', 'severity', 'status', 'escalations', 'commander'])}</div>
     <div class="card"><div class="card-title">Risk Distribution</div><div class="subtitle">${JSON.stringify(ds.riskDistribution || {})}</div></div>
     <div class="card"><div class="card-title">Recent SOC Alerts</div>${(soc.recentAlerts || []).slice(0, 8).map((a) => `<div class="row">[${a.type}/${a.severity}] ${a.message}</div>`).join('') || '<div class="subtitle">no recent alerts</div>'}</div>`;
+  } else if (view === 'commerce') {
+    const a = data.analytics || {};
+    const mrr = a.mrr ? Object.entries(a.mrr).map(([c, v]) => `${c} ${v}`).join(' · ') : null;
+    const arr = a.arr ? Object.entries(a.arr).map(([c, v]) => `${c} ${v}`).join(' · ') : null;
+    const provs = (data.providers?.providers || []);
+    html += `<div class="stat-grid">
+      ${statCard('Active Paying Tenants', a.activePayingTenants ?? null)}
+      ${statCard('MRR', mrr)}
+      ${statCard('ARR', arr)}
+      ${statCard('Churn', a.churnCount ?? 0, (a.churnCount ?? 0) ? 'yellow' : 'green')}
+      ${statCard('Conversion', a.conversionRate != null ? Math.round(a.conversionRate * 100) + '%' : null)}
+      ${statCard('Outstanding', a.outstandingTotalMinor != null ? (a.outstandingTotalMinor / 100).toFixed(2) : null, (a.outstandingTotalMinor ?? 0) ? 'yellow' : 'green')}
+    </div>
+    <div class="card"><div class="card-title">Plans (${(data.plans || []).length})</div>${tableFrom(data.plans, ['id', 'name', 'billingCycle', 'price', 'currency', 'trialDays', 'active'])}</div>
+    <div class="card">
+      <div class="card-title">Payment Providers</div>
+      ${provs.map((p) => `<div class="row">${p.configured ? '✅' : '⛔'} ${p.id}${p.environment ? ` <span class="feed-dim">(${p.environment})</span>` : ''}${p.callbackUrl ? ` <span class="feed-dim">→ ${esc(p.callbackUrl)}</span>` : ''}</div>`).join('') || '<div class="subtitle">no provider status</div>'}
+    </div>
+    <div class="card">
+      <div class="card-title">M-Pesa STK Push (Lipa Na M-Pesa)</div>
+      <div class="subtitle">Sends a payment prompt to the customer's phone. Requires the M-Pesa provider (Daraja keys).</div>
+      <div class="form-group"><label>Customer ID (platform userId)</label><input id="mpesa-customer" placeholder="e.g. u_..."></div>
+      <div class="form-group"><label>Amount (KES, minor units — 1 KSh = 100)</label><input id="mpesa-amount" type="number" placeholder="e.g. 490000 for KSh 4,900"></div>
+      <div class="form-group"><label>Phone (2547XXXXXXXX)</label><input id="mpesa-phone" placeholder="254712345678"></div>
+      <div class="form-group"><label>Reference (optional)</label><input id="mpesa-ref" placeholder="invoice id / order id"></div>
+      <button class="btn-primary" onclick="sendMpesaStkPush()">Send STK Push</button>
+      <div id="mpesa-result" style="margin-top:10px;font-size:13px"></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Billing State</div>
+      <div class="subtitle">Fetch a customer's subscription + invoice overview.</div>
+      <div class="form-group"><label>Customer ID</label><input id="billing-customer" placeholder="e.g. u_..."></div>
+      <button class="btn-ghost" onclick="loadBillingState()">Load</button>
+      <div id="billing-result" style="margin-top:10px;font-size:13px"></div>
+    </div>`;
   } else if (view === 'maza') {
     const s = data.stats || {};
     const a = data.analytics || {};
@@ -1671,8 +1711,42 @@ window.logout = logout;
 window.sendTanya = sendTanya;
 window.loadTanyaConversation = loadTanyaConversation;
 window.createLayout = createLayout;
+// --- Commerce / payments actions ---
+async function sendMpesaStkPush() {
+  const box = $('#mpesa-result');
+  if (!box) return;
+  const customerId = $('#mpesa-customer')?.value.trim();
+  const amount = Number($('#mpesa-amount')?.value);
+  const phone = $('#mpesa-phone')?.value.trim();
+  const reference = $('#mpesa-ref')?.value.trim() || undefined;
+  if (!customerId || !amount || !phone) { box.innerHTML = '<p style="color:var(--red)">customerId, amount and phone are required.</p>'; return; }
+  try {
+    const r = await api('POST', '/payments/mpesa/stk-push', { customerId, amount, phone, currency: 'KES', ...(reference ? { reference } : {}) });
+    if (r.intent) {
+      box.innerHTML = `<p style="color:var(--green)">✅ STK Push sent — CheckoutRequestID <b>${esc(r.intent.id)}</b> · status: ${esc(r.intent.status)}</p>`;
+    } else {
+      box.innerHTML = `<p style="color:var(--red)">${esc(r.error || 'STK Push failed')}</p>`;
+    }
+  } catch (e) {
+    box.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+async function loadBillingState() {
+  const box = $('#billing-result');
+  if (!box) return;
+  const customerId = $('#billing-customer')?.value.trim();
+  if (!customerId) { box.innerHTML = '<p style="color:var(--red)">customerId required.</p>'; return; }
+  try {
+    const r = await api('GET', `/commerce/billing-state?customerId=${encodeURIComponent(customerId)}`);
+    box.innerHTML = `<pre style="font-size:12px">${esc(JSON.stringify(r.state || r, null, 2))}</pre>`;
+  } catch (e) {
+    box.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
 window.adaptLayout = adaptLayout;
 window.autoArrange = autoArrange;
+window.sendMpesaStkPush = sendMpesaStkPush;
+window.loadBillingState = loadBillingState;
 window.doSearch = doSearch;
 window.syncTools = syncTools;
 window.decideApproval = decideApproval;

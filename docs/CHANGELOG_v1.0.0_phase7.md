@@ -67,6 +67,26 @@ payment rails. Backward compatible; the Phase-5/6 architecture is preserved.
   unregistered intents acked but not attributed; no secrets in responses or
   logs (19/19 checks — `examples/mpesa-validation.mjs`).
 
+## Operator surface for payments (new)
+
+- `GET /payments/providers` (auth `payments:read`) — operator view of the
+  payment rail: Stripe/M-Pesa configured flags, M-Pesa environment
+  (sandbox/production/custom), configured callback URL.
+- CLI: `jataqi payments status|stk-push|invoice|invoice-pay|billing-state` —
+  in-process provider status, M-Pesa STK Push initiation (with
+  pending-intent registration), invoice create/pay, and billing-state
+  inspection.
+- Web UI Commerce view: payment provider status panel, M-Pesa STK Push form
+  (customerId/amount/phone/reference) with live result, and a billing-state
+  inspector.
+- Python SDK: `commerce_plans/analytics/subscribe/invoice/invoice_pay/
+  invoices/billing_state` + `payments_providers/mpesa_stk_push` (+ 4 client
+  tests against a live gateway; suite 20/20).
+- `docker-compose.prod.yml`: the app service now receives the full M-Pesa
+  env block (consumer key/secret, shortcode, passkey, environment, callback
+  URL, webhook secret) — the container path is M-Pesa-capable like the
+  bare-metal path.
+
 ## CI (new: .github/workflows/ci.yml)
 
 - Every push: clean install → ordered build → full regression suite →
@@ -76,10 +96,11 @@ payment rails. Backward compatible; the Phase-5/6 architecture is preserved.
 
 ## Validation
 
-- Full regression suite: **2,143 tests · 120 suites · 0 failures**
-  (deployment-artifacts suite: 85 checks).
+- Full regression suite: **2,168 tests · 120 suites · 0 failures**
+  (deployment-artifacts suite: 90 checks).
 - Acceptance harnesses: Phase 6 29/29 · Phase 5 33/33 · Pilot 17/17 ·
-  GA 31/31 · M-Pesa 19/19 · deploy-validate ✓ · self-audit sign-off granted.
+  GA 31/31 · M-Pesa 20/20 · Python SDK 20/20 · deploy-validate ✓ ·
+  self-audit sign-off granted.
 - Deployment rehearsals: systemd mode ✓ (unit active, `/readyz` 200,
   `/health` healthy, 68 modules) · background mode ✓ (detached process
   survives script exit) · cross-session survival ✓ (PPID 1, own SID) ·

@@ -61,6 +61,12 @@ export class PaymentsModule implements IModule {
   get stripe(): PaymentProvider | undefined { return this.providers.get('stripe'); }
   get mpesa(): PaymentProvider | undefined { return this.providers.get('mpesa'); }
 
+  /** M-Pesa environment label ('sandbox' | 'production' | 'custom' when apiBase overridden). */
+  get mpesaEnvironment(): string {
+    if (this.cfg.mpesa?.environment) return this.cfg.mpesa.environment;
+    return this.cfg.mpesa?.apiBase ? 'custom' : 'sandbox';
+  }
+
   /** Attribute a provider-side intent to a customer before/at initiation time. */
   recordPendingIntent(intentId: string, meta: PendingIntentMeta): void {
     if (!intentId) return;

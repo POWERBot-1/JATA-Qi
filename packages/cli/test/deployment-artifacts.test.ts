@@ -396,6 +396,46 @@ describe('Phase 7b — M-Pesa (Daraja) payment rail', () => {
     assert.ok(src.includes('stkpush/v1/processrequest') && src.includes('stkpushquery/v1/query'), 'Daraja endpoints');
     assert.ok(src.includes('sandbox.safaricom.co.ke') && src.includes('api.safaricom.co.ke'), 'sandbox/production bases');
   });
+
+  it('docker-compose passes the M-Pesa rail env through to the app service', () => {
+    const compose = read('production/docker-compose.prod.yml');
+    for (const v of ['MPESA_CONSUMER_KEY', 'MPESA_CONSUMER_SECRET', 'MPESA_SHORTCODE', 'MPESA_PASSKEY',
+                     'MPESA_ENVIRONMENT', 'MPESA_CALLBACK_URL', 'MPESA_WEBHOOK_SECRET']) {
+      assert.ok(compose.includes(`${v}: $`), `compose passes ${v}`);
+    }
+  });
+
+  it('gateway exposes the operator provider-status endpoint under payments:read', () => {
+    const gateway = fs.readFileSync(path.join(REPO_ROOT, 'packages/api-gateway/src/gateway-module.ts'), 'utf8');
+    assert.ok(gateway.includes("'/payments/providers'"), 'providers route');
+    assert.ok(gateway.includes("auth('payments:read'"), 'read-protected');
+    assert.ok(gateway.includes('paymentsProviders()'), 'handler present');
+  });
+
+  it('CLI ships a payments command (status|stk-push|invoice|invoice-pay|billing-state)', () => {
+    const cli = fs.readFileSync(path.join(REPO_ROOT, 'packages/cli/src/index.ts'), 'utf8');
+    assert.ok(cli.includes("case 'payments'"), 'CLI payments case');
+    for (const sub of ['status', 'stk-push', 'invoice', 'invoice-pay', 'billing-state']) {
+      assert.ok(cli.includes(`case '${sub}'`), `subcommand ${sub}`);
+    }
+    assert.ok(cli.includes("jataqi payments stk-push <customerId> <amountMinor> <phone>"), 'usage text');
+  });
+
+  it('web-ui commerce view renders the payment providers panel + STK Push form', () => {
+    const app = fs.readFileSync(path.join(REPO_ROOT, 'packages/web-ui/public/app.js'), 'utf8');
+    assert.ok(app.includes("'/payments/providers'"), 'view fetches provider status');
+    assert.ok(app.includes('M-Pesa STK Push (Lipa Na M-Pesa)'), 'STK push panel');
+    assert.ok(app.includes('sendMpesaStkPush()'), 'STK push action');
+    assert.ok(app.includes('loadBillingState()'), 'billing state action');
+  });
+
+  it('python SDK exposes commerce + payments methods', () => {
+    const py = fs.readFileSync(path.join(REPO_ROOT, 'clients/python/jataqi_sdk/client.py'), 'utf8');
+    for (const m of ['commerce_plans', 'commerce_subscribe', 'commerce_invoice', 'commerce_invoice_pay',
+                     'commerce_invoices', 'commerce_billing_state', 'payments_providers', 'payments_mpesa_stk_push']) {
+      assert.ok(py.includes(`def ${m}(`), `python SDK method ${m}`);
+    }
+  });
 });
 
 

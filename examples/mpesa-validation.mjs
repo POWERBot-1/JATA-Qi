@@ -118,6 +118,16 @@ check('1.1 production boot (v1.0.0 tree, filesystem storage)', true, `fsRoot=${F
 check('1.2 exact version deployed', JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version === '1.0.0', '1.0.0', 'deployment');
 const health = await api('GET', '/health');
 check('1.3 mpesa provider registered on boot', health.status === 200, `modules=${health.json.modules?.length}`, 'deployment');
+{
+  const login = await api('POST', '/auth/login', { username: 'admin', password: 'admin' });
+  TOKEN = login.json.token;
+  const prov = await api('GET', '/payments/providers');
+  const mpesa = prov.json?.providers?.find((p) => p.id === 'mpesa');
+  const stripe = prov.json?.providers?.find((p) => p.id === 'stripe');
+  check('1.4 providers endpoint reports mpesa configured (sandbox)', prov.status === 200 && mpesa?.configured === true && mpesa?.environment === 'sandbox' && stripe?.configured === false,
+    JSON.stringify(prov.json?.providers), 'deployment');
+  TOKEN = '';
+}
 
 // ---- 2. Commercial setup -------------------------------------------------------
 {

@@ -140,6 +140,39 @@ class JataQiClientTest(unittest.TestCase):
             self.admin.tanya_chat("")  # empty message rejected
         self.assertGreaterEqual(ctx.exception.status, 400)
 
+    # ---- commerce + payments -------------------------------------------------
+
+    def test_commerce_plans_and_analytics(self):
+        plans = self.admin.commerce_plans()
+        self.assertGreaterEqual(len(plans["plans"]), 6)
+        analytics = self.admin.commerce_analytics()
+        self.assertIn("mrr", analytics)
+
+    def test_commerce_invoice_flow_and_billing_state(self):
+        me = self.admin.whoami()["principal"]["userId"]
+        sub = self.admin.commerce_subscribe(me, "business")
+        self.assertEqual(sub["subscription"]["status"], "ACTIVE")
+        inv = self.admin.commerce_invoice(me, "business")
+        self.assertIn("invoice", inv)
+        invoices = self.admin.commerce_invoices(me)
+        self.assertGreaterEqual(len(invoices["invoices"]), 1)
+        state = self.admin.commerce_billing_state(me)
+        self.assertEqual(state["state"]["customerId"], me)
+        self.assertEqual(state["state"]["invoices"]["outstanding"], 1)
+
+    def test_payments_providers_surface(self):
+        providers = self.admin.payments_providers()
+        ids = {p["id"]: p for p in providers["providers"]}
+        self.assertIn("stripe", ids)
+        self.assertIn("mpesa", ids)
+        # Fresh server without payment keys: both not configured.
+        self.assertFalse(ids["mpesa"]["configured"])
+
+    def test_mpesa_stk_push_unconfigured_raises(self):
+        with self.assertRaises(JataQiError) as ctx:
+            self.admin.payments_mpesa_stk_push("u_x", 100, "254712345678")
+        self.assertEqual(ctx.exception.status, 503)
+
 
 if __name__ == "__main__":
     unittest.main()

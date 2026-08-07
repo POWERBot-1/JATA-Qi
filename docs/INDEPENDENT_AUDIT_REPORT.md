@@ -3,8 +3,8 @@
 - **Target:** JATA Qi platform (all 120 packages)
 - **Reviewer:** independent-auditor (independent — no ownership of audited components)
 - **Phase:** pre-production independent audit
-- **Generated:** 2026-08-07T14:34:21.829Z
-- **Review id:** f472a3af-4d95-4135-923a-9e45fb91b6f6
+- **Generated:** 2026-08-07T15:50:39.480Z
+- **Review id:** 8c8dee58-c6ed-4a0f-b813-372ae262f053
 - **Status:** signed_off
 
 ## Executive summary

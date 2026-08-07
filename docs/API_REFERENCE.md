@@ -66,6 +66,7 @@ Every route is also reachable under `/v1/...`. OpenAPI: `GET /openapi.json`.
 | GET | /commerce/* · /payments/* | commerce:read | plans, subscriptions, invoices |
 | POST | /payments/webhook/stripe · /payments/webhook/mpesa | public (provider signature/HMAC is the auth) | payment callbacks → invoice PAID + subscription reactivation |
 | POST | /payments/mpesa/stk-push | payments:write | M-Pesa STK Push initiation (Daraja) |
+| GET | /payments/providers | payments:read | payment rail status (stripe/mpesa configured + environment) |
 
 ## SDKs
 

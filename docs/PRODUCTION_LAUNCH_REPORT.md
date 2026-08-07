@@ -28,7 +28,7 @@
 | A9 | All acceptance gates re-run | ✅ | Phase 6: 29/29 · Phase 5: 33/33 · Pilot: 17/17 · GA: 31/31 · deploy-validate ✓ · self-audit **sign-off granted** (556 files, 0 blocking) |
 | A10 | Full regression suite | ✅ | **2,143 tests · 120 suites · 0 failures** |
 | A11 | Git state | ✅ | Clean working tree; `867477c` + hardening round 2 pushed to `origin/arena/019fccab-jata-qi`; tag v1.0.0 on origin |
-| A12 | M-Pesa (Daraja) payment rail | ✅ | STK Push initiation + signed-callback webhook → invoice PAID; tampered/missing HMAC 400; failed callback acked as `payment_failed`; unregistered intents not attributed; no secrets in responses/logs — **19/19** (`examples/mpesa-validation.mjs` + `docs/MPESA_VALIDATION_REPORT.md`) |
+| A12 | M-Pesa (Daraja) payment rail | ✅ | STK Push initiation + signed-callback webhook → invoice PAID; tampered/missing HMAC 400; failed callback acked as `payment_failed`; unregistered intents not attributed; no secrets in responses/logs; operator surface (providers endpoint, CLI, web console, Python SDK, compose env pass-through) — **20/20** (`examples/mpesa-validation.mjs` + `docs/MPESA_VALIDATION_REPORT.md`) |
 
 ### Defects discovered in the rehearsal & remediated (Phase 7)
 
