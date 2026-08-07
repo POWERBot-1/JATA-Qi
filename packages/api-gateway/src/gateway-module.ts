@@ -127,6 +127,7 @@ export class ApiGatewayModule implements IModule {
   private readiness?: ReadinessModule;
   private provenance?: ProvenanceModule;
   private commerce?: CommerceModule;
+  private payments?: import('@jataqi/payments').PaymentsModule;
   private organizations?: OrganizationsModule;
   private notifications?: NotificationsModule;
   private policies?: PoliciesModule;
@@ -229,6 +230,7 @@ export class ApiGatewayModule implements IModule {
     this.readiness = this.tryModule<ReadinessModule>('readiness');
     this.provenance = this.tryModule<ProvenanceModule>('provenance');
     this.commerce = this.tryModule<CommerceModule>('commerce');
+    this.payments = this.tryModule<import('@jataqi/payments').PaymentsModule>('payments');
     this.organizations = this.tryModule<OrganizationsModule>('organizations');
     this.notifications = this.tryModule<NotificationsModule>('notifications');
     this.policies = this.tryModule<PoliciesModule>('policies');
@@ -1193,6 +1195,8 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/customers/offboardings', auth('onboarding:read', () => this.customerOffboardings()));
     route('GET', '/customers/stats', auth('onboarding:read', () => this.customerStats()));
     route('GET', '/commerce/billing-state', auth('commerce:read', (req) => this.commerceBillingState(req)));
+    // Payment webhooks (public; authenticity via provider signature verification).
+    route('POST', '/payments/webhook/stripe', (req) => this.paymentsWebhookStripe(req));
     route('POST', '/commerce/invoice', auth('commerce:read', (req) => this.commerceInvoiceCreate(req)));
     route('POST', '/commerce/invoice/pay', auth('commerce:read', (req) => this.commerceInvoicePay(req)));
     route('GET', '/commerce/invoices', auth('commerce:read', (req) => this.commerceInvoicesList(req)));
@@ -1271,6 +1275,7 @@ export class ApiGatewayModule implements IModule {
         query,
         headers: req.headers as Record<string, string | undefined>,
         body,
+        ...((req as IncomingMessage & { __jataqiRawBody?: string }).__jataqiRawBody ? { rawBody: (req as IncomingMessage & { __jataqiRawBody?: string }).__jataqiRawBody } : {}),
         remoteAddress: req.socket.remoteAddress,
       };
 
@@ -1448,6 +1453,9 @@ export class ApiGatewayModule implements IModule {
     const text = Buffer.concat(chunks).toString('utf8');
     if (!text) return undefined;
     try {
+      // Keep the exact raw text for signature verification (webhooks): the
+      // parsed object is returned, and the dispatcher stores rawBody.
+      (req as IncomingMessage & { __jataqiRawBody?: string }).__jataqiRawBody = text;
       return JSON.parse(text);
     } catch {
       throw Object.assign(new Error('invalid JSON body'), { status: 400 });
@@ -7406,6 +7414,49 @@ export class ApiGatewayModule implements IModule {
     if (!this.commerce) return json(501, { error: 'commerce module not registered' });
     if (!req.query.customerId) return json(400, { error: 'field "customerId" is required' });
     return json(200, { state: await this.commerce.customerBillingState(req.query.customerId) });
+  }
+
+  /**
+   * Stripe webhook (production): verifies the HMAC signature over the exact
+   * raw payload, then applies the commercial side effects:
+   *   payment_intent.succeeded → mark the customer's outstanding invoices
+   *   PAID and reactivate the active subscription (payment → invoice →
+   *   subscription → entitlement flow). No auth header required — the
+   *   signature is the authentication.
+   */
+  private async paymentsWebhookStripe(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.payments || !this.commerce) return json(501, { error: 'payments/commerce module not registered' });
+    const raw = req.rawBody;
+    const signature = req.headers['stripe-signature'];
+    const secret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!raw) return json(400, { error: 'empty payload' });
+    if (!signature || !secret) return json(400, { error: 'missing signature header or webhook secret' });
+    const provider = this.payments.getProvider('stripe');
+    if (!provider) return json(503, { error: 'stripe provider not configured' });
+    try {
+      const event = await (provider as unknown as { constructWebhookEvent(payload: string, signatureHeader: string, secret: string): Promise<{ id: string; type: string; data: { object: Record<string, unknown> }; created: number }> })
+        .constructWebhookEvent(raw, signature, secret);
+      if (event.type === 'payment_intent.succeeded') {
+        const object = event.data.object;
+        const customerId = typeof object.customer === 'string' ? object.customer : undefined;
+        if (customerId) {
+          // Mark all outstanding invoices for the customer PAID.
+          const invoices = await this.commerce.listInvoices(customerId);
+          for (const inv of invoices.filter((i) => i.status !== 'PAID')) {
+            await this.commerce.markInvoicePaid(inv.id, typeof object.id === 'string' ? object.id : undefined);
+          }
+          // Reactivate the active subscription (dunning recovery).
+          const sub = await this.commerce.activeSubscription(customerId);
+          if (sub && (sub.status === 'SUSPENDED' || sub.status === 'PAST_DUE' || sub.status === 'GRACE_PERIOD')) {
+            await this.commerce.reactivate(sub.id);
+          }
+        }
+      }
+      return json(200, { received: true, type: event.type });
+    } catch (err) {
+      // Signature failures are 4xx — never reveal details to the caller.
+      return json(400, { error: 'invalid webhook signature' });
+    }
   }
 
   private async commerceInvoiceCreate(req: GatewayRequest): Promise<GatewayResponse> {

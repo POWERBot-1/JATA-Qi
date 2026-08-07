@@ -85,3 +85,28 @@ degraded, down if any is down.
 - [ ] Re-run `node examples/self-audit.mjs` after any release
 - [ ] Re-run `node examples/scalability-validation.mjs` after capacity changes
 - [ ] Check PQ migration phase (`jataqi pqc migration`) and advance per policy
+
+
+## 7. Production deployment (Phase 6)
+
+The full kit lives in `deploy/production/` (provision.sh, docker-compose.prod.yml,
+nginx.conf, jataqi.service, production.env.example, backup.sh, deploy.sh).
+
+```bash
+sudo bash deploy/production/provision.sh api.example.com ops@example.com   # harden + install
+# DNS: A records for example.com + api.example.com → server IP
+sudo cp deploy/production/production.env.example /opt/jataqi/production.env  # REAL secrets
+docker compose -f deploy/production/docker-compose.prod.yml run --rm certbot   certonly --webroot -w /var/www/certbot -d api.example.com -d example.com   --email ops@example.com --agree-tos --no-eff-email
+sudo bash deploy/production/deploy.sh        # build v1.0.0 → install → /readyz gate
+```
+
+Payment webhooks: `POST /payments/webhook/stripe` verifies the Stripe HMAC
+signature over the raw payload; `payment_intent.succeeded` marks invoices PAID
+and reactivates suspended subscriptions. Configure STRIPE_WEBHOOK_SECRET
+(production) in production.env — never reuse sandbox keys.
+
+Post-deploy validation:
+```bash
+node examples/phase6-validation.mjs   # 29 executable production checks
+node examples/self-audit.mjs          # independent security review (sign-off gate)
+```

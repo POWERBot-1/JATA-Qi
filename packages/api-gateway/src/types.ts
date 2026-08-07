@@ -8,6 +8,8 @@ export interface GatewayRequest {
   query: Record<string, string>;
   headers: Record<string, string | undefined>;
   body: unknown;
+  /** Exact raw request body text (webhook signature verification). */
+  rawBody?: string;
   principal?: Principal;
   /** The originating socket address for audit/logging. */
   remoteAddress?: string;

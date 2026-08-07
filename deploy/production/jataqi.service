@@ -1,0 +1,48 @@
+# JATA Qi v1.0.0 — hardened systemd unit (bare-metal alternative to Docker).
+#
+#   sudo cp deploy/production/jataqi.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now jataqi
+#
+# Hardening: non-root, no new privileges, strict read-only root FS, private
+# /tmp, and a bounded set of capabilities (no CAP_SYS_ADMIN etc).
+
+[Unit]
+Description=JATA Qi v1.0.0 — Modular AI Operating System
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jataqi
+Group=jataqi
+WorkingDirectory=/opt/jataqi
+EnvironmentFile=/opt/jataqi/production.env
+ExecStart=/usr/bin/node /opt/jataqi/packages/cli/dist/src/index.js serve 7400
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+# --- security hardening -------------------------------------------------------
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Restrict file access to the app + data dirs.
+ReadWritePaths=/opt/jataqi /var/lib/jataqi/storage /var/lib/jataqi/backups
+ReadOnlyPaths=/usr /etc /lib /bin
+
+# --- resource limits ----------------------------------------------------------
+LimitNOFILE=65536
+MemoryMax=4G
+
+[Install]
+WantedBy=multi-user.target

@@ -287,6 +287,64 @@ describe('GA v1.0.0 — deployment + validation artifacts', () => {
   });
 });
 
+
+describe('Phase 6 — production kit + payment webhook', () => {
+  it('production kit files exist and are non-trivial', () => {
+    for (const rel of [
+      'production/provision.sh', 'production/docker-compose.prod.yml', 'production/nginx.conf',
+      'production/jataqi.service', 'production/production.env.example', 'production/backup.sh',
+      'production/deploy.sh', 'production/README.md',
+    ]) {
+      const full = path.join(DEPLOY, rel);
+      assert.ok(fs.existsSync(full), `${rel} must exist`);
+      assert.ok(fs.statSync(full).size > 200, `${rel} must be non-trivial`);
+    }
+  });
+
+  it('nginx enforces HTTP→HTTPS redirect with HSTS and /ws upgrade', () => {
+    const nginx = read('production/nginx.conf');
+    assert.ok(nginx.includes('return 301 https://'), 'HTTP → HTTPS redirect');
+    assert.ok(nginx.includes('Strict-Transport-Security "max-age=31536000'), 'HSTS');
+    assert.ok(nginx.includes('proxy_set_header Upgrade $http_upgrade'), '/ws upgrade');
+    assert.ok(nginx.includes('TLSv1.2 TLSv1.3'), 'modern TLS');
+    assert.ok(nginx.includes('api.${DOMAIN}'), 'api subdomain');
+  });
+
+  it('systemd unit is hardened (non-root, NoNewPrivileges, ProtectSystem)', () => {
+    const unit = read('production/jataqi.service');
+    assert.ok(unit.includes('User=jataqi') && unit.includes('Group=jataqi'));
+    assert.ok(unit.includes('NoNewPrivileges=true'));
+    assert.ok(unit.includes('ProtectSystem=strict'));
+    assert.ok(unit.includes('PrivateTmp=true'));
+    assert.ok(unit.includes('CapabilityBoundingSet='));
+    assert.ok(unit.includes('MemoryDenyWriteExecute=true'));
+  });
+
+  it('docker-compose runs postgres+redis+jataqi with health gates and persistent volumes', () => {
+    const compose = read('production/docker-compose.prod.yml');
+    for (const probe of ['postgres:16-alpine', 'redis:7-alpine', 'ghcr.io/powerbot-1/jataqi:1.0.0', 'nginx', 'certbot', '/var/lib/jataqi/postgres', '/var/lib/jataqi/redis', 'pg_isready', 'redis-cli']) {
+      assert.ok(compose.includes(probe), `compose references ${probe}`);
+    }
+  });
+
+  it('production.env.example has placeholders only and separates sandbox/production', () => {
+    const env = read('production/production.env.example');
+    assert.ok(env.includes('CHANGE_ME'), 'placeholders only');
+    assert.ok(env.includes('STRIPE_SECRET_KEY'), 'stripe key slot');
+    assert.ok(env.includes('STRIPE_WEBHOOK_SECRET'), 'webhook secret slot');
+    assert.ok(env.includes('strictly separate from sandbox/test keys'), 'sandbox separation warning');
+    assert.ok(!env.includes('sk_live_') && !env.includes('whsec_live_'), 'no real credentials committed');
+  });
+
+  it('gateway exposes the signature-verified payment webhook route with raw body', async () => {
+    const gateway = fs.readFileSync(path.join(REPO_ROOT, 'packages/api-gateway/src/gateway-module.ts'), 'utf8');
+    assert.ok(gateway.includes("'/payments/webhook/stripe'"), 'webhook route registered');
+    assert.ok(gateway.includes('rawBody'), 'raw body captured for signature verification');
+    assert.ok(gateway.includes('constructWebhookEvent'), 'provider signature verification used');
+    assert.ok(gateway.includes('payment_intent.succeeded'), 'commercial side effects on success');
+  });
+});
+
 function variable(name: string): string {
   return `variable "${name}"`;
 }
