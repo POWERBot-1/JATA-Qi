@@ -117,7 +117,9 @@ gates; data gates B9/B10 are confirmed by writing `live-launch.conf`:
 
 ---
 
-**Decision rule (from the Phase 7 mandate):** LIVE is declared only when every
-row in section B is executed and verified. Until then, the platform is
-**deployment-ready and locally validated**, awaiting operator infrastructure
-activation.
+**Decision rule (from the Phase 7 mandate):** LIVE may only be declared when
+`scripts/live-launch-check.sh` **exits 0 on the actual production VPS** and
+all required external gates report PASS. A local/simulated run (including
+this sandbox) is **not** sufficient to declare LIVE. Until then, the platform
+is **deployment-ready and locally validated**, awaiting operator
+infrastructure activation.

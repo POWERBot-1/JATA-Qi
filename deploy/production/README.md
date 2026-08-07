@@ -58,6 +58,11 @@ crontab -e   # 0 2 * * * /opt/jataqi/deploy/production/backup.sh
 bash scripts/live-launch-check.sh            # add DOMAIN=example.com to also gate DNS+TLS
 ```
 
+> **LIVE declaration rule:** LIVE may only be declared when
+> `scripts/live-launch-check.sh` exits 0 on the **actual production VPS** and
+> all required external gates report PASS. A local/simulated run is not
+> sufficient to declare LIVE.
+
 ## deploy.sh execution modes
 
 `deploy.sh` auto-selects between two start modes and prints the choice
