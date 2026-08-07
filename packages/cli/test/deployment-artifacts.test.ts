@@ -458,6 +458,41 @@ describe('Phase 7d — live launch gate check (operator handoff executable)', ()
   });
 });
 
+describe('Phase 8b — backup.sh production hardening (rehearsal fixes)', () => {
+  it('backup.sh bootstraps the backup token from admin creds (no manual token step)', () => {
+    const script = read('production/backup.sh');
+    assert.ok(script.includes('get_backup_token'), 'token bootstrap function');
+    assert.ok(script.includes('"$BASE/auth/login"'), 'logs in via the gateway');
+    assert.ok(script.includes('JATAQI_ADMIN_USERNAME'), 'uses production admin credentials');
+    assert.ok(script.includes('.backup-token'), 'caches the token for later runs');
+    assert.ok(script.includes('token cached'), 'caching message');
+  });
+
+  it('backup.sh survives the pg_dump-absent path (guarded hash + verification)', () => {
+    const script = read('production/backup.sh');
+    assert.ok(script.includes('[ -f "$DUMP_FILE" ]'), 'hash/verify guarded on dump existence');
+    assert.ok(script.includes('WARN: pg_dump not found'), 'absent-path warning');
+    assert.ok(script.includes('verification skipped'), 'verification skipped gracefully when no dump');
+  });
+
+  it('backup.sh ownership changes only when root (non-root operators safe)', () => {
+    const script = read('production/backup.sh');
+    const rootGuard = script.indexOf('[ "$(id -u)" = "0" ]');
+    const chown = script.indexOf('chown "$APP_USER:$APP_USER" "$BACKUP_DIR"');
+    assert.ok(rootGuard > -1, 'root guard present');
+    assert.ok(chown > -1, 'chown present');
+    assert.ok(rootGuard < chown, 'chown inside the root guard block');
+  });
+
+  it('backup-rehearsal.sh exercises the real backup flow end-to-end', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'scripts/backup-rehearsal.sh'), 'utf8');
+    assert.ok(script.includes('deploy/production/backup.sh'), 'runs the real backup script');
+    assert.ok(script.includes('pg_dump absent'), 'absent-path regression');
+    assert.ok(script.includes('verification: PASSED'), 'verification regression');
+    assert.ok(script.includes('snapshot written'), 'snapshot regression');
+  });
+});
+
 
 describe('Phase 7/8 — deploy.sh production hardening (live rehearsal fixes)', () => {
   it('installs the complete tree via a per-item loop — no brace expansion, missing items skipped', () => {

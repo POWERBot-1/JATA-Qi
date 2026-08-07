@@ -87,6 +87,24 @@ payment rails. Backward compatible; the Phase-5/6 architecture is preserved.
   URL, webhook secret) — the container path is M-Pesa-capable like the
   bare-metal path.
 
+## backup.sh hardening (rehearsal fixes)
+
+- **Fixed: pg_dump-absent crash.** `sha256sum` ran unconditionally on a dump
+  that does not exist when `pg_dump` is missing → `set -e` aborted the whole
+  backup job (exit 1, zero artifacts). Hash + verification are now guarded on
+  dump existence; the absent path completes with WARNs.
+- **Fixed: no backup token existed anywhere.** `/var/lib/jataqi/.backup-token`
+  was never created by any kit script, so the snapshot + verification steps
+  could never run on a real VPS. `backup.sh` now bootstraps the token
+  automatically from `JATAQI_ADMIN_USERNAME`/`JATAQI_ADMIN_PASSWORD` via
+  `POST /auth/login` (validates cached tokens first, re-auths on staleness,
+  caches 0600).
+- **Fixed: non-root crash.** `chown` now runs only when root.
+- New `scripts/backup-rehearsal.sh` — boots a real gateway and runs the real
+  backup script end-to-end (absent path, token bootstrap, snapshot JSON,
+  dump + `verification: PASSED`, retention): **10/10**.
+- Deployment-artifacts suite: 96 → **100 checks**.
+
 ## Live launch gate check (new: scripts/live-launch-check.sh)
 
 - Operator-executed ON THE VPS: probes every external gate from the Phase-7

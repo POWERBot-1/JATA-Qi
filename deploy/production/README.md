@@ -13,7 +13,7 @@ with verification, and monitoring.
 | `nginx.conf` | HTTP→HTTPS redirect, TLS 1.2/1.3, security headers, /ws upgrade, api + app subdomains |
 | `jataqi.service` | Hardened systemd unit (non-root, NoNewPrivileges, ProtectSystem=strict, private /tmp, bounded caps) |
 | `production.env.example` | All env vars with placeholders — fill with REAL secrets, chmod 600 |
-| `backup.sh` | pg_dump + namespace snapshot + content-hash verification + retention (cron-ready) |
+| `backup.sh` | pg_dump + namespace snapshot + content-hash verification + retention (cron-ready). Auto-bootstraps its gateway token from `JATAQI_ADMIN_USERNAME`/`JATAQI_ADMIN_PASSWORD` (no manual token step); survives the pg_dump-absent path; non-root safe |
 | `deploy.sh` | Build v1.0.0 → install → env → DB/Redis probes → start → /readyz health gate |
 | `../../scripts/deploy-rehearsal.sh` | Repeatable end-to-end rehearsal of deploy.sh (both execution modes) |
 
