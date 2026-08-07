@@ -148,10 +148,17 @@ export class MpesaProvider implements PaymentProvider {
     const callbackMeta = (stkCallback.CallbackMetadata ?? {}) as Record<string, unknown>;
     const items = (callbackMeta.Item ?? []) as Array<Record<string, unknown>>;
     const amount = Number(items.find((i) => i.Name === 'Amount')?.Value ?? 0);
+    // Flatten named callback metadata (MpesaReceiptNumber, PhoneNumber,
+    // TransactionDate, …) onto the event object for invoicing/audit trails.
+    const object: Record<string, unknown> = { ...stkCallback };
+    for (const item of items) {
+      if (item && typeof item.Name === 'string') object[item.Name] = item.Value;
+    }
+    object.amount = Math.round(amount * 100); // whole units → minor units
     return {
       id: String(stkCallback.CheckoutRequestID ?? stkCallback.MerchantRequestID ?? `mpesa-${Date.now()}`),
       type: resultCode === '0' ? 'payment_intent.succeeded' : 'payment_intent.payment_failed',
-      data: { object: { ...stkCallback, amount: Math.round(amount * 100) } },
+      data: { object },
       created: Date.now(),
     };
   }

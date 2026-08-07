@@ -28,6 +28,7 @@
 | A9 | All acceptance gates re-run | ✅ | Phase 6: 29/29 · Phase 5: 33/33 · Pilot: 17/17 · GA: 31/31 · deploy-validate ✓ · self-audit **sign-off granted** (556 files, 0 blocking) |
 | A10 | Full regression suite | ✅ | **2,143 tests · 120 suites · 0 failures** |
 | A11 | Git state | ✅ | Clean working tree; `867477c` + hardening round 2 pushed to `origin/arena/019fccab-jata-qi`; tag v1.0.0 on origin |
+| A12 | M-Pesa (Daraja) payment rail | ✅ | STK Push initiation + signed-callback webhook → invoice PAID; tampered/missing HMAC 400; failed callback acked as `payment_failed`; unregistered intents not attributed; no secrets in responses/logs — **19/19** (`examples/mpesa-validation.mjs` + `docs/MPESA_VALIDATION_REPORT.md`) |
 
 ### Defects discovered in the rehearsal & remediated (Phase 7)
 
@@ -91,7 +92,7 @@ deployment-artifacts suite (85 checks) + `scripts/deploy-rehearsal.sh`.
 | B6 | Deploy + verify endpoints | `sudo bash deploy/production/deploy.sh` then `curl /health /livez /readyz` | 200s |
 | B7 | Phase 6 suite vs live infra | `node examples/phase6-validation.mjs` with POSTGRES_URL/REDIS_URL set | 29/29 |
 | B8 | HTTPS/redirect/HSTS/WS/tenant/billing/webhook/provisioning/metering/audit/backups/observability | per B6+B7 + deploy/production/backup.sh cron | check outputs |
-| B9 | One genuine production commercial transaction | real Stripe/M-Pesa key + real webhook event | invoice PAID + audit trail |
+| B9 | One genuine production commercial transaction | real Stripe key (webhook) or M-Pesa Daraja keys (STK Push + `MPESA_CALLBACK_URL`) + real provider event | invoice PAID + audit trail |
 | B10 | First external customer access | customer onboarding runbook (Phase 5 docs) | customer account + usage |
 
 ## C. Operator handoff checklist (sign-off boxes)

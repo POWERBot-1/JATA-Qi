@@ -1197,6 +1197,9 @@ export class ApiGatewayModule implements IModule {
     route('GET', '/commerce/billing-state', auth('commerce:read', (req) => this.commerceBillingState(req)));
     // Payment webhooks (public; authenticity via provider signature verification).
     route('POST', '/payments/webhook/stripe', (req) => this.paymentsWebhookStripe(req));
+    route('POST', '/payments/webhook/mpesa', (req) => this.paymentsWebhookMpesa(req));
+    // M-Pesa STK Push initiation (auth'd; the provider prompt happens on the phone).
+    route('POST', '/payments/mpesa/stk-push', auth('payments:write', (req) => this.paymentsMpesaStkPush(req)));
     route('POST', '/commerce/invoice', auth('commerce:read', (req) => this.commerceInvoiceCreate(req)));
     route('POST', '/commerce/invoice/pay', auth('commerce:read', (req) => this.commerceInvoicePay(req)));
     route('GET', '/commerce/invoices', auth('commerce:read', (req) => this.commerceInvoicesList(req)));
@@ -7417,12 +7420,27 @@ export class ApiGatewayModule implements IModule {
   }
 
   /**
+   * Shared commercial side effects of a confirmed successful payment:
+   * mark the customer's outstanding invoices PAID and reactivate a
+   * suspended/past-due subscription (payment → invoice → subscription →
+   * entitlement flow). Used by every payment webhook (Stripe, M-Pesa).
+   */
+  private async applyPaymentSucceeded(customerId: string, paymentId?: string): Promise<void> {
+    if (!this.commerce) return;
+    const invoices = await this.commerce.listInvoices(customerId);
+    for (const inv of invoices.filter((i) => i.status !== 'PAID')) {
+      await this.commerce.markInvoicePaid(inv.id, paymentId);
+    }
+    const sub = await this.commerce.activeSubscription(customerId);
+    if (sub && (sub.status === 'SUSPENDED' || sub.status === 'PAST_DUE' || sub.status === 'GRACE_PERIOD')) {
+      await this.commerce.reactivate(sub.id);
+    }
+  }
+
+  /**
    * Stripe webhook (production): verifies the HMAC signature over the exact
-   * raw payload, then applies the commercial side effects:
-   *   payment_intent.succeeded → mark the customer's outstanding invoices
-   *   PAID and reactivate the active subscription (payment → invoice →
-   *   subscription → entitlement flow). No auth header required — the
-   *   signature is the authentication.
+   * raw payload, then applies the commercial side effects.
+   * No auth header required — the signature is the authentication.
    */
   private async paymentsWebhookStripe(req: GatewayRequest): Promise<GatewayResponse> {
     if (!this.payments || !this.commerce) return json(501, { error: 'payments/commerce module not registered' });
@@ -7440,16 +7458,7 @@ export class ApiGatewayModule implements IModule {
         const object = event.data.object;
         const customerId = typeof object.customer === 'string' ? object.customer : undefined;
         if (customerId) {
-          // Mark all outstanding invoices for the customer PAID.
-          const invoices = await this.commerce.listInvoices(customerId);
-          for (const inv of invoices.filter((i) => i.status !== 'PAID')) {
-            await this.commerce.markInvoicePaid(inv.id, typeof object.id === 'string' ? object.id : undefined);
-          }
-          // Reactivate the active subscription (dunning recovery).
-          const sub = await this.commerce.activeSubscription(customerId);
-          if (sub && (sub.status === 'SUSPENDED' || sub.status === 'PAST_DUE' || sub.status === 'GRACE_PERIOD')) {
-            await this.commerce.reactivate(sub.id);
-          }
+          await this.applyPaymentSucceeded(customerId, typeof object.id === 'string' ? object.id : undefined);
         }
       }
       return json(200, { received: true, type: event.type });
@@ -7457,6 +7466,100 @@ export class ApiGatewayModule implements IModule {
       // Signature failures are 4xx — never reveal details to the caller.
       return json(400, { error: 'invalid webhook signature' });
     }
+  }
+
+  /**
+   * M-Pesa (Safaricom Daraja) callback: STK Push results arrive from
+   * Safaricom as an unauthenticated POST. When MPESA_WEBHOOK_SECRET is
+   * configured the operator-side HMAC (x-mpesa-signature, sha256 over the
+   * exact raw body) is enforced; the CheckoutRequestID is then attributed
+   * via the payments module's pending-intent registry (never trusting the
+   * callback body), and a successful result applies the same commercial
+   * side effects as a Stripe payment. No auth header — authenticity comes
+   * from the registry attribution + optional HMAC.
+   */
+  private async paymentsWebhookMpesa(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.payments || !this.commerce) return json(501, { error: 'payments/commerce module not registered' });
+    const raw = req.rawBody;
+    if (!raw) return json(400, { error: 'empty payload' });
+    const provider = this.payments.getProvider('mpesa');
+    if (!provider) return json(503, { error: 'mpesa provider not configured' });
+    const secret = process.env.MPESA_WEBHOOK_SECRET;
+    if (secret) {
+      const signature = req.headers['x-mpesa-signature'];
+      if (!signature) return json(400, { error: 'missing signature header' });
+      const ok = (provider as unknown as { verifyCallback(payload: string, signature: string, secret: string): boolean })
+        .verifyCallback(raw, signature, secret);
+      if (!ok) return json(400, { error: 'invalid webhook signature' });
+    }
+    try {
+      const event = await provider.constructWebhookEvent(raw, '', '');
+      if (event.type === 'payment_intent.succeeded') {
+        // Attribute the callback to a customer via the pending-intent
+        // registry; fall back to AccountReference only when no registration
+        // exists (e.g. callbacks for intents initiated before a restart).
+        const meta = this.payments.resolvePendingIntent(event.id);
+        const object = event.data.object;
+        const ref = typeof object.AccountReference === 'string' ? object.AccountReference : undefined;
+        const customerId = meta?.customerId ?? ref;
+        if (customerId) {
+          await this.applyPaymentSucceeded(customerId, event.id);
+        }
+      }
+      return json(200, { received: true, type: event.type });
+    } catch (err) {
+      return json(400, { error: 'invalid webhook payload' });
+    }
+  }
+
+  /**
+   * M-Pesa STK Push initiation: creates a payment intent against the Daraja
+   * API (the customer approves on their phone) and records the
+   * CheckoutRequestID → customer attribution so the callback can be applied
+   * safely. Amount is in minor units (cents of the currency, e.g. KES*100).
+   */
+  private async paymentsMpesaStkPush(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.payments) return json(501, { error: 'payments module not registered' });
+    const provider = this.payments.getProvider('mpesa');
+    if (!provider) return json(503, { error: 'mpesa provider not configured' });
+    const b = this.asObject(req.body);
+    if (typeof b.customerId !== 'string' || typeof b.amount !== 'number')
+      return json(400, { error: 'fields "customerId" (string) and "amount" (number, minor units) are required' });
+    const phone = typeof b.phone === 'string' ? b.phone : undefined;
+    const currency = typeof b.currency === 'string' ? b.currency : 'KES';
+    if (!phone) return json(400, { error: 'field "phone" (e.g. 2547XXXXXXXX) is required for STK Push' });
+    try {
+      const intent = await provider.createPaymentIntent({
+        amount: b.amount,
+        currency,
+        customerId: b.customerId,
+        description: typeof b.description === 'string' ? b.description : 'JATA Qi payment',
+        metadata: {
+          phone,
+          reference: typeof b.reference === 'string' ? b.reference : b.customerId,
+          customerId: b.customerId,
+        },
+      });
+      this.payments.recordPendingIntent(intent.id, {
+        customerId: b.customerId,
+        amount: b.amount,
+        currency,
+        reference: typeof b.reference === 'string' ? b.reference : undefined,
+      });
+      return json(201, { intent });
+    } catch (err) {
+      return this.paymentErrorResponse(err);
+    }
+  }
+
+  private paymentErrorResponse(err: unknown): GatewayResponse {
+    const e = err as { name?: string; code?: string; message?: string; statusCode?: number; declined?: boolean };
+    const status = e?.statusCode && e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 400;
+    const message = e?.message ?? 'payment failed';
+    if (e?.name === 'PaymentError' && e?.declined) {
+      return json(402, { error: 'payment declined', code: e.code });
+    }
+    return json(status, { error: message, ...(e?.code ? { code: e.code } : {}) });
   }
 
   private async commerceInvoiceCreate(req: GatewayRequest): Promise<GatewayResponse> {

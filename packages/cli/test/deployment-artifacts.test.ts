@@ -352,6 +352,52 @@ describe('Phase 6 — production kit + payment webhook', () => {
   });
 });
 
+describe('Phase 7b — M-Pesa (Daraja) payment rail', () => {
+  it('PaymentsModule registers an M-Pesa provider from config', () => {
+    const mod = fs.readFileSync(path.join(REPO_ROOT, 'packages/payments/src/payments-module.ts'), 'utf8');
+    assert.ok(mod.includes('mpesa?: MpesaConfig'), 'config slot');
+    assert.ok(mod.includes("this.providers.set('mpesa', provider)"), 'provider registered');
+    assert.ok(mod.includes("get mpesa()"), 'mpesa getter');
+    assert.ok(mod.includes('recordPendingIntent') && mod.includes('resolvePendingIntent'),
+      'pending-intent registry (CheckoutRequestID → customer attribution)');
+  });
+
+  it('gateway exposes the M-Pesa webhook + STK Push routes with shared side effects', () => {
+    const gateway = fs.readFileSync(path.join(REPO_ROOT, 'packages/api-gateway/src/gateway-module.ts'), 'utf8');
+    assert.ok(gateway.includes("'/payments/webhook/mpesa'"), 'webhook route');
+    assert.ok(gateway.includes("'/payments/mpesa/stk-push'"), 'STK Push initiation route');
+    assert.ok(gateway.includes('applyPaymentSucceeded'), 'shared payment→invoice→subscription flow');
+    assert.ok(gateway.includes('x-mpesa-signature'), 'operator-side callback HMAC enforced');
+    assert.ok(gateway.includes('resolvePendingIntent'), 'registry attribution used (never trusts callback body)');
+  });
+
+  it('bootstrap wires M-Pesa from env and the role policy grants payments perms', () => {
+    const boot = fs.readFileSync(path.join(REPO_ROOT, 'packages/cli/src/bootstrap.ts'), 'utf8');
+    for (const v of ['MPESA_CONSUMER_KEY', 'MPESA_CONSUMER_SECRET', 'MPESA_SHORTCODE', 'MPESA_PASSKEY', 'MPESA_ENVIRONMENT', 'MPESA_CALLBACK_URL', 'MPESA_API_BASE']) {
+      assert.ok(boot.includes(v), `bootstrap reads ${v}`);
+    }
+    const policy = fs.readFileSync(path.join(REPO_ROOT, 'packages/security/src/types.ts'), 'utf8');
+    assert.ok(policy.includes("'payments:read', 'payments:write'"), 'developer payments perms');
+    assert.ok(policy.includes("'payments:read'"), 'analyst payments:read');
+  });
+
+  it('production.env.example documents the M-Pesa production rail with placeholders', () => {
+    const env = read('production/production.env.example');
+    for (const v of ['MPESA_CONSUMER_KEY', 'MPESA_CONSUMER_SECRET', 'MPESA_SHORTCODE', 'MPESA_PASSKEY', 'MPESA_ENVIRONMENT=production', 'MPESA_CALLBACK_URL', 'MPESA_WEBHOOK_SECRET', 'x-mpesa-signature']) {
+      assert.ok(env.includes(v), `env example documents ${v}`);
+    }
+    assert.ok(!env.includes('MPESA_CONSUMER_KEY=sk') && !env.includes('MPESA_PASSKEY=real'), 'no real credentials');
+  });
+
+  it('MpesaProvider verifies callbacks and constructs events with receipt metadata', () => {
+    const src = fs.readFileSync(path.join(REPO_ROOT, 'packages/payments/src/mpesa.ts'), 'utf8');
+    assert.ok(src.includes('verifyCallback'), 'operator HMAC verification');
+    assert.ok(src.includes('MpesaReceiptNumber'), 'receipt metadata flattened for audit');
+    assert.ok(src.includes('stkpush/v1/processrequest') && src.includes('stkpushquery/v1/query'), 'Daraja endpoints');
+    assert.ok(src.includes('sandbox.safaricom.co.ke') && src.includes('api.safaricom.co.ke'), 'sandbox/production bases');
+  });
+});
+
 
 describe('Phase 7/8 — deploy.sh production hardening (live rehearsal fixes)', () => {
   it('installs the complete tree via a per-item loop — no brace expansion, missing items skipped', () => {

@@ -82,6 +82,8 @@ root filesystem.
 - Containers/processes run non-root with dropped capabilities, read-only root
   FS, seccomp/NoNewPrivileges (PSS-restricted on Kubernetes).
 - Secrets: production.env 0600, never committed; Stripe webhook signatures
-  verified server-side; sandbox and production credentials strictly separate.
+  and M-Pesa callback HMACs (`x-mpesa-signature` when `MPESA_WEBHOOK_SECRET`
+  is set) verified server-side; sandbox and production credentials strictly
+  separate.
 - Re-run after deploy: `node examples/self-audit.mjs`,
   `node examples/phase6-validation.mjs`.

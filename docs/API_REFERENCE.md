@@ -64,6 +64,8 @@ Every route is also reachable under `/v1/...`. OpenAPI: `GET /openapi.json`.
 | POST | /ops/backup/verify · /ops/drills | ops:write | backup verification + drills |
 | GET | /ops/oncall · /ops/health · /ops/stats | ops:read | operations reporting |
 | GET | /commerce/* · /payments/* | commerce:read | plans, subscriptions, invoices |
+| POST | /payments/webhook/stripe · /payments/webhook/mpesa | public (provider signature/HMAC is the auth) | payment callbacks → invoice PAID + subscription reactivation |
+| POST | /payments/mpesa/stk-push | payments:write | M-Pesa STK Push initiation (Daraja) |
 
 ## SDKs
 

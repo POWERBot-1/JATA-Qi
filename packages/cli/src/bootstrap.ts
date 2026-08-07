@@ -350,12 +350,26 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
       africasTalking: { apiKey: process.env.AFRICAS_TALKING_API_KEY, username: process.env.AFRICAS_TALKING_USERNAME ?? 'sandbox', ...(process.env.AFRICAS_TALKING_SENDER_ID ? { senderId: process.env.AFRICAS_TALKING_SENDER_ID } : {}) },
     } : {}),
   }));
-  kernel.register(new PaymentsModule(process.env.STRIPE_SECRET_KEY ? {
-    stripe: {
-      secretKey: process.env.STRIPE_SECRET_KEY,
-      ...(process.env.STRIPE_WEBHOOK_SECRET ? { webhookSecret: process.env.STRIPE_WEBHOOK_SECRET } : {}),
-    },
-  } : {}));
+  kernel.register(new PaymentsModule({
+    ...(process.env.STRIPE_SECRET_KEY ? {
+      stripe: {
+        secretKey: process.env.STRIPE_SECRET_KEY,
+        ...(process.env.STRIPE_WEBHOOK_SECRET ? { webhookSecret: process.env.STRIPE_WEBHOOK_SECRET } : {}),
+      },
+    } : {}),
+    ...(process.env.MPESA_CONSUMER_KEY && process.env.MPESA_CONSUMER_SECRET
+       && process.env.MPESA_SHORTCODE && process.env.MPESA_PASSKEY ? {
+      mpesa: {
+        consumerKey: process.env.MPESA_CONSUMER_KEY,
+        consumerSecret: process.env.MPESA_CONSUMER_SECRET,
+        shortCode: process.env.MPESA_SHORTCODE,
+        passkey: process.env.MPESA_PASSKEY,
+        ...(process.env.MPESA_ENVIRONMENT ? { environment: process.env.MPESA_ENVIRONMENT as 'sandbox' | 'production' } : {}),
+        ...(process.env.MPESA_CALLBACK_URL ? { callbackUrl: process.env.MPESA_CALLBACK_URL } : {}),
+        ...(process.env.MPESA_API_BASE ? { apiBase: process.env.MPESA_API_BASE } : {}),
+      },
+    } : {}),
+  }));
 
   // Register LLM providers based on environment configuration.
   const llmGateway = kernel.getModule<LLMGatewayModule>('llm-gateway');
