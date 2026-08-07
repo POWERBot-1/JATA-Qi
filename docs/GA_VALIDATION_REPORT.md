@@ -1,12 +1,12 @@
 # JATA Qi v1.0.0 — GA Deployment Validation Report
 
-- **Date:** 2026-08-07T08:46:23.839Z
+- **Date:** 2026-08-07T08:46:48.932Z
 - **Mode:** production (CLI serve, filesystem storage, admin bootstrap)
 - **Checks:** 31/31 passed
 
 ## Results
 
-- ✅ server boots in production mode (filesystem storage) — fsRoot=/tmp/jataqi-ga-OjlK9z
+- ✅ server boots in production mode (filesystem storage) — fsRoot=/tmp/jataqi-ga-29DkTS
 - ✅ GET /health — modules=68
 - ✅ GET /livez
 - ✅ GET /readyz
