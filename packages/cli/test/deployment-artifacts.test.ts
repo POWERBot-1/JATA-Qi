@@ -438,6 +438,26 @@ describe('Phase 7b — M-Pesa (Daraja) payment rail', () => {
   });
 });
 
+describe('Phase 7d — live launch gate check (operator handoff executable)', () => {
+  it('live-launch-check.sh exists and probes every external gate', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'scripts/live-launch-check.sh'), 'utf8');
+    assert.ok(script.includes('getent ahostsv4'), 'DNS gate (B2)');
+    assert.ok(script.includes('strict-transport-security'), 'HSTS check (B3)');
+    assert.ok(script.includes('return 301') || script.includes('HTTP → HTTPS 301'), '301 redirect gate (B3)');
+    assert.ok(script.includes('CHANGE_ME'), 'secrets gate (B4)');
+    assert.ok(script.includes('stat -c \'%a\''), 'mode-600 gate (B4)');
+    assert.ok(script.includes('probe_url'), 'DB/Redis TCP probe (B5)');
+    assert.ok(script.includes('for ep in readyz livez health'), 'app endpoints (B6)');
+    assert.ok(script.includes('MPESA_CALLBACK_URL'), 'M-Pesa callback gate (B7)');
+    assert.ok(script.includes('backup.sh'), 'backup cron gate (B8)');
+    assert.ok(script.includes('FIRST_TRANSACTION_CONFIRMED') && script.includes('FIRST_CUSTOMER_CONFIRMED'),
+      'data gates (B9/B10)');
+    assert.ok(script.includes('JATA Qi v1.0.0 — LIVE PRODUCTION / COMMERCIAL LAUNCH'),
+      'exact Phase-7 declaration string, printed only when all required gates pass');
+    assert.ok(script.includes('exit 1') && script.includes('exit 2'), 'fail/config exit codes');
+  });
+});
+
 
 describe('Phase 7/8 — deploy.sh production hardening (live rehearsal fixes)', () => {
   it('installs the complete tree via a per-item loop — no brace expansion, missing items skipped', () => {

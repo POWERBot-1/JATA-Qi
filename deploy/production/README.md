@@ -51,6 +51,11 @@ sudo SKIP_BUILD=1 bash scripts/deploy-rehearsal.sh       # systemd mode
 
 # 6. Backups (cron).
 crontab -e   # 0 2 * * * /opt/jataqi/deploy/production/backup.sh
+
+# 7. Verify every launch gate (DNS, TLS/HSTS/301, secrets, DB/Redis, /readyz,
+#    payment providers, backups). Prints PASS/FAIL per gate and the exact
+#    LIVE declaration only when all required gates pass.
+bash scripts/live-launch-check.sh            # add DOMAIN=example.com to also gate DNS+TLS
 ```
 
 ## deploy.sh execution modes

@@ -87,6 +87,18 @@ payment rails. Backward compatible; the Phase-5/6 architecture is preserved.
   URL, webhook secret) — the container path is M-Pesa-capable like the
   bare-metal path.
 
+## Live launch gate check (new: scripts/live-launch-check.sh)
+
+- Operator-executed ON THE VPS: probes every external gate from the Phase-7
+  mandate (B1 VPS hardening, B2 DNS, B3 HTTPS/HSTS/301 + cert expiry, B4
+  production.env 0600 + zero CHANGE_ME, B5 PostgreSQL/Redis TCP, B6
+  /readyz + /livez + /health, B7 payment providers incl. MPESA_CALLBACK_URL,
+  B8 backup cron) plus the B9/B10 data gates via `live-launch.conf`.
+- Prints per-gate PASS/FAIL/WARN and exits 0 only when all required gates
+  pass; the exact declaration string "JATA Qi v1.0.0 — LIVE PRODUCTION /
+  COMMERCIAL LAUNCH" is printed only then. It never asserts a gate on its
+  own — it probes the live endpoint/state directly.
+
 ## CI (new: .github/workflows/ci.yml)
 
 - Every push: clean install → ordered build → full regression suite →

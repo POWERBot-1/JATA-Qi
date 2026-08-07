@@ -29,6 +29,7 @@
 | A10 | Full regression suite | ✅ | **2,143 tests · 120 suites · 0 failures** |
 | A11 | Git state | ✅ | Clean working tree; `867477c` + hardening round 2 pushed to `origin/arena/019fccab-jata-qi`; tag v1.0.0 on origin |
 | A12 | M-Pesa (Daraja) payment rail | ✅ | STK Push initiation + signed-callback webhook → invoice PAID; tampered/missing HMAC 400; failed callback acked as `payment_failed`; unregistered intents not attributed; no secrets in responses/logs; operator surface (providers endpoint, CLI, web console, Python SDK, compose env pass-through) — **20/20** (`examples/mpesa-validation.mjs` + `docs/MPESA_VALIDATION_REPORT.md`) |
+| A13 | Live launch gate check (operator handoff executable) | ✅ | `scripts/live-launch-check.sh` — probes B1–B10 (DNS, HTTPS/HSTS/301, secrets 0600 + zero CHANGE_ME, Postgres/Redis TCP, /readyz+/livez+/health, payment providers, backup cron, B9/B10 via `live-launch.conf`); exit 0 only when all required gates pass; prints the exact LIVE declaration string. Syntax + negative-path tested here (missing APP_DIR → 2, failing gate → 1); full pass requires the real VPS |
 
 ### Defects discovered in the rehearsal & remediated (Phase 7)
 
@@ -97,16 +98,22 @@ deployment-artifacts suite (85 checks) + `scripts/deploy-rehearsal.sh`.
 
 ## C. Operator handoff checklist (sign-off boxes)
 
+Run **`bash scripts/live-launch-check.sh`** on the VPS (after steps B1–B8) — it
+probes every external gate (DNS, HTTPS/HSTS/301, secrets, DB/Redis, /readyz,
+payment providers, backups) and prints the verdict. The boxes below mirror its
+gates; data gates B9/B10 are confirmed by writing `live-launch.conf`:
+
 - [ ] VPS provisioned + hardened (B1)
-- [ ] DNS resolves (B2) — `dig api.example.com`
+- [ ] DNS resolves (B2) — `getent ahostsv4 api.example.com`
 - [ ] HTTPS valid + enforced (B3) — cert expiry + 301 + HSTS
 - [ ] production.env real, 0600, zero CHANGE_ME (B4)
 - [ ] PostgreSQL + Redis healthy (B5)
 - [ ] deploy.sh → /readyz 200 (B6)
-- [ ] Phase 6 suite 29/29 against live infra (B7)
-- [ ] First production transaction recorded (B9)
-- [ ] First external customer onboarded (B10)
-- [ ] All gates re-run post-launch (A9)
+- [ ] Payment providers configured (B7) — Stripe live key / Daraja keys + MPESA_CALLBACK_URL
+- [ ] Backup cron installed (B8)
+- [ ] `echo 'FIRST_TRANSACTION_CONFIRMED=1' > $APP_DIR/live-launch.conf` (B9)
+- [ ] `echo 'FIRST_CUSTOMER_CONFIRMED=1' >> $APP_DIR/live-launch.conf` (B10)
+- [ ] All gates re-run post-launch (A9) — `bash scripts/live-launch-check.sh` exits 0
 
 ---
 
