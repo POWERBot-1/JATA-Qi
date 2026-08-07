@@ -1,0 +1,21 @@
+{
+  "value": {
+    "id": "5e2932e2-430b-48db-8ecb-c202ad0fc024",
+    "ts": 1786092327879,
+    "actor": "system",
+    "action": "gateway.start",
+    "result": "success",
+    "detail": {
+      "tls": false,
+      "cors": false,
+      "apiVersion": "v1",
+      "tenantIsolation": true
+    }
+  },
+  "meta": {
+    "key": "5e2932e2-430b-48db-8ecb-c202ad0fc024",
+    "createdAt": 1786092327880,
+    "updatedAt": 1786092327880,
+    "etag": "msip98eg-bk8v5q"
+  }
+}

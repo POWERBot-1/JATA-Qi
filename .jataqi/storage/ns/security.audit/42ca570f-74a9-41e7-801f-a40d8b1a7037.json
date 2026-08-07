@@ -1,0 +1,21 @@
+{
+  "value": {
+    "id": "42ca570f-74a9-41e7-801f-a40d8b1a7037",
+    "ts": 1786090196232,
+    "actor": "system",
+    "action": "gateway.start",
+    "result": "success",
+    "detail": {
+      "tls": false,
+      "cors": false,
+      "apiVersion": "v1",
+      "tenantIsolation": true
+    }
+  },
+  "meta": {
+    "key": "42ca570f-74a9-41e7-801f-a40d8b1a7037",
+    "createdAt": 1786090196232,
+    "updatedAt": 1786090196232,
+    "etag": "msinzjm0-1s55mm"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "value": {
+    "id": "5798e77c-ba4e-43a7-a806-95e061f3eab5",
+    "ts": 1786090196538,
+    "actor": "d3ed579f-91d0-41dd-bdb2-bad6aebaa3d5",
+    "action": "auth.login",
+    "result": "success"
+  },
+  "meta": {
+    "key": "5798e77c-ba4e-43a7-a806-95e061f3eab5",
+    "createdAt": 1786090196538,
+    "updatedAt": 1786090196538,
+    "etag": "msinzjui-6cr8jr"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "value": {
+    "id": "a575b3e7-8537-49f3-997a-750090ce74ac",
+    "ts": 1786090196488,
+    "actor": "d3ed579f-91d0-41dd-bdb2-bad6aebaa3d5",
+    "action": "user.register",
+    "result": "success"
+  },
+  "meta": {
+    "key": "a575b3e7-8537-49f3-997a-750090ce74ac",
+    "createdAt": 1786090196489,
+    "updatedAt": 1786090196489,
+    "etag": "msinzjt5-w1gnn6"
+  }
+}

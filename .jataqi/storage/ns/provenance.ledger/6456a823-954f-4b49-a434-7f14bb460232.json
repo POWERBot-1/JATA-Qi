@@ -1,0 +1,21 @@
+{
+  "value": {
+    "id": "6456a823-954f-4b49-a434-7f14bb460232",
+    "seq": 1,
+    "type": "CREATOR_ROOT_CREATED",
+    "prevHash": "",
+    "hash": "2c3072fcc9a8822f48e4103b750333c37bec1e6987ded87b310923231d3634d0",
+    "ts": 1786090196191,
+    "detail": {
+      "creator": "GITANYA K",
+      "canonical_identity": "JATA-QI|CREATOR|GITANYA-K|ROOT|2026-07-29",
+      "identity_anchor_sha256": "9be651b8e7a86cd55450b170ad88d7b9f5ea4569cac7c57126482fa9b7ce4f82"
+    }
+  },
+  "meta": {
+    "key": "6456a823-954f-4b49-a434-7f14bb460232",
+    "createdAt": 1786090196192,
+    "updatedAt": 1786090196192,
+    "etag": "msinzjkw-0inrdz"
+  }
+}

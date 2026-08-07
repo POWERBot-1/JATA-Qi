@@ -1,0 +1,15 @@
+{
+  "value": {
+    "id": "e85dac6f-614a-4800-af90-78dd39068f3d",
+    "ts": 1786090299253,
+    "actor": "2dc6d269-91c0-4df4-be3f-a744b9fc524e",
+    "action": "user.register",
+    "result": "success"
+  },
+  "meta": {
+    "key": "e85dac6f-614a-4800-af90-78dd39068f3d",
+    "createdAt": 1786090299253,
+    "updatedAt": 1786090299253,
+    "etag": "msio1r3p-ufpdsc"
+  }
+}

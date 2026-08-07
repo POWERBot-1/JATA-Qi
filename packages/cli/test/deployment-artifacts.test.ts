@@ -246,6 +246,47 @@ describe('production hardening — PSS, per-pillar policies, PQ-ready TLS, multi
   });
 });
 
+describe('GA v1.0.0 — deployment + validation artifacts', () => {
+  it('package.json is version 1.0.0 and the GA tag exists', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
+    assert.equal(pkg.version, '1.0.0');
+    const chart = read('helm/jataqi/Chart.yaml');
+    assert.ok(chart.includes('version: 1.0.0'), 'helm chart v1.0.0');
+    assert.ok(chart.includes('appVersion: "1.0.0"'), 'helm appVersion v1.0.0');
+  });
+
+  it('commercial deployment artifacts exist (Dockerfile, compose, deploy-validate, ga-validation, docs)', () => {
+    for (const rel of ['Dockerfile', '.dockerignore', 'docker-compose.yml', 'scripts/deploy-validate.sh', 'examples/ga-validation.mjs', 'docs/RELEASE_NOTES_v1.0.0.md', 'docs/PRODUCTION_RUNBOOK.md', 'docs/ADMIN_GUIDE.md', 'docs/API_REFERENCE.md']) {
+      const full = path.join(REPO_ROOT, rel);
+      assert.ok(fs.existsSync(full), `${rel} must exist`);
+      assert.ok(fs.statSync(full).size > 100, `${rel} must be non-trivial`);
+    }
+  });
+
+  it('Dockerfile uses the production multi-stage pattern with a HEALTHCHECK', () => {
+    const docker = fs.readFileSync(path.join(REPO_ROOT, 'Dockerfile'), 'utf8');
+    assert.ok(docker.includes('FROM node:22-slim AS builder'));
+    assert.ok(docker.includes('FROM node:22-slim AS runtime'));
+    assert.ok(docker.includes('HEALTHCHECK'), 'docker HEALTHCHECK');
+    assert.ok(docker.includes('EXPOSE 7400'));
+    assert.ok(docker.includes('CMD ["node", "packages/cli/dist/src/index.js", "serve"]'));
+  });
+
+  it('deploy-validate.sh covers docker, k8s, helm, terraform, version, and boot', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'scripts/deploy-validate.sh'), 'utf8');
+    for (const probe of ['Dockerfile', 'deploy/k8s', 'Chart.yaml', 'dr-region.tf', 'v1.0.0', '/readyz']) {
+      assert.ok(script.includes(probe), `deploy-validate.sh references ${probe}`);
+    }
+  });
+
+  it('ga-validation.mjs validates commercial + security + resilience surfaces', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'examples/ga-validation.mjs'), 'utf8');
+    for (const probe of ['/products/install', '/onboarding/complete', '/ops/backup/verify', '/soc/report', '/defense/posture', '/resilience/regions', 'GA_VALIDATION_REPORT.md']) {
+      assert.ok(script.includes(probe), `ga-validation.mjs references ${probe}`);
+    }
+  });
+});
+
 function variable(name: string): string {
   return `variable "${name}"`;
 }

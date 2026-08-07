@@ -1,0 +1,3 @@
+{"doc":{"id":"b9048930-1266-4ac1-a319-0f4aa0ae7e55","username":"admin","passwordHash":"c9mJflMHmxxxzFpJjr4MW/4AekUw5Oa3q9p6A4hb78E=","salt":"5B2cAwNBnGvwonTegWxSpQ==","roles":["admin"],"active":true,"createdAt":1786090196186,"metadata":{"system":true}}}
+{"doc":{"id":"d3ed579f-91d0-41dd-bdb2-bad6aebaa3d5","username":"ga-user","passwordHash":"bpObesMk0WprTHEGuatSuCChnDzh8vtnECv4Sl10QGs=","salt":"rhBoW53ieeZUY//QoMsaFg==","roles":["developer"],"active":true,"createdAt":1786090196487}}
+{"doc":{"id":"2dc6d269-91c0-4df4-be3f-a744b9fc524e","username":"deploy","passwordHash":"aSbNPtBbGIhchrfHBaWO7uo8TszerpOkNuCk5Gh5mpQ=","salt":"+gmJBl8tMe28uXy6FxRhXg==","roles":["developer"],"active":true,"createdAt":1786090299252}}
