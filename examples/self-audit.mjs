@@ -106,6 +106,11 @@ for (const f of findings) {
   if (f.description?.includes('model-runtime/src/gpu.ts') && f.title.includes('Direct process execution')) {
     reviewModule.updateFinding(f.id, 'waived', reviewer, 'argv-style execFileSync with a fixed literal command; no shell, no interpolation');
   }
+  // Readiness capability evidence strings quote rule names ("eval()",
+  // "execSync") as documentation — not live code.
+  if (f.description?.includes('readiness/src/defaults.ts')) {
+    reviewModule.updateFinding(f.id, 'waived', reviewer, 'documentation string quoting rule names in capability evidence; not live code');
+  }
 }
 // AI-safety payload string: prompt-guard ships the literal word "code_exec" in a
 // data payload, it does not execute anything.

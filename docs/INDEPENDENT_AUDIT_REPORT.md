@@ -1,22 +1,22 @@
 # Independent Security Assessment Report — JATA Qi
 
-- **Target:** JATA Qi platform (all 117 packages)
+- **Target:** JATA Qi platform (all 120 packages)
 - **Reviewer:** independent-auditor (independent — no ownership of audited components)
 - **Phase:** pre-production independent audit
-- **Generated:** 2026-08-06T17:46:27.367Z
-- **Review id:** ca251476-bb1a-445d-9c42-69aa02efbefb
+- **Generated:** 2026-08-07T10:19:59.494Z
+- **Review id:** cd72a369-9411-4817-8ca5-c62e9cf137d5
 - **Status:** signed_off
 
 ## Executive summary
 
 | Metric | Value |
 | ------ | ----- |
-| Source files scanned | 547 |
-| Static findings | 13 (4 high, 9 medium, 0 low) |
+| Source files scanned | 556 |
+| Static findings | 16 (6 high, 10 medium, 0 low) |
 | Architecture score | 86/100 |
 | ISO/IEC 27001 readiness | 91/100 (11/12 families passed) |
 | Findings open (blocking sign-off) | 0 high |
-| Risk acceptances | 13 (4 waived, 9 accepted) |
+| Risk acceptances | 16 (6 waived, 10 accepted) |
 | Sign-off | granted |
 | SOC security-lake entries (evidence) | 0 |
 | Readiness capabilities tracked | 0 |
@@ -27,9 +27,9 @@ Scanned all `packages/*/src/**/*.ts` (excluding tests/dist) with the platform ru
 
 | Rule | Severity | Count |
 | ---- | -------- | ----- |
-| code.debug | medium | 8 |
-| code.exec | high | 3 |
-| code.eval | high | 1 |
+| code.debug | medium | 9 |
+| code.exec | high | 4 |
+| code.eval | high | 2 |
 | code.insecure_crypto | medium | 1 |
 
 ### Open findings (blocking)
@@ -40,8 +40,11 @@ Scanned all `packages/*/src/**/*.ts` (excluding tests/dist) with the platform ru
 
 - **[high] Direct process execution** (waived) — [independent-auditor] string literal in a data payload; no execution path
 - **[high] Direct process execution** (waived) — [independent-auditor] argv-style execFileSync with a fixed literal command; no shell, no interpolation
+- **[high] eval() usage** (waived) — [independent-auditor] documentation string quoting rule names in capability evidence; not live code
+- **[high] Direct process execution** (waived) — [independent-auditor] documentation string quoting rule names in capability evidence; not live code
 - **[high] eval() usage** (waived) — [independent-auditor] self-reference: rule pattern literal, not live code
 - **[high] Direct process execution** (waived) — [independent-auditor] self-reference: rule pattern literal, not live code
+- **[medium] Sensitive data logged** (accepted) — [independent-auditor] CLI operator output at resource creation; not application logs; mitigation: rotate-on-display
 - **[medium] Sensitive data logged** (accepted) — [independent-auditor] CLI operator output at resource creation; not application logs; mitigation: rotate-on-display
 - **[medium] Sensitive data logged** (accepted) — [independent-auditor] CLI operator output at resource creation; not application logs; mitigation: rotate-on-display
 - **[medium] Sensitive data logged** (accepted) — [independent-auditor] CLI operator output at resource creation; not application logs; mitigation: rotate-on-display

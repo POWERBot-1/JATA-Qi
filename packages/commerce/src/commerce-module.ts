@@ -219,6 +219,66 @@ export class CommerceModule implements IModule {
   }
   async pause(id: string): Promise<Subscription> { return this.setStatus(id, 'PAUSED'); }
   async resume(id: string): Promise<Subscription> { return this.setStatus(id, 'ACTIVE'); }
+
+  /** Suspend a subscription (non-payment, abuse, offboarding) — audited. */
+  async suspend(id: string, reason?: string): Promise<Subscription> {
+    const sub = await this.setStatus(id, 'SUSPENDED');
+    await this.audit(sub.customerId, 'subscription_suspended', { id, ...(reason ? { reason } : {}) });
+    return sub;
+  }
+
+  /** Reactivate a suspended subscription — audited. */
+  async reactivate(id: string): Promise<Subscription> {
+    const sub = await this.setStatus(id, 'REACTIVATED');
+    await this.audit(sub.customerId, 'subscription_reactivated', { id });
+    return sub;
+  }
+
+  /**
+   * Composed billing state for a customer: subscription, invoices, and
+   * in-period usage — the single source for billing UIs, dunning, and the
+   * commercial lifecycle validation.
+   */
+  async customerBillingState(customerId: string): Promise<{
+    customerId: string;
+    subscription?: {
+      id: string; planId: string; status: SubscriptionStatus; billingCycle: string;
+      currency: string; price: Money; autoRenew: boolean; currentPeriodStart: number;
+      currentPeriodEnd: number; trialEnd?: number; cancelAtPeriodEnd?: boolean;
+    };
+    invoices: { total: number; paid: number; outstanding: number; totalAmountMinor: number; outstandingAmountMinor: number };
+    usage: Record<string, number>;
+  }> {
+    const sub = await this.activeSubscription(customerId);
+    const invoices = await this.listInvoices(customerId);
+    const paid = invoices.filter((i) => i.status === 'PAID');
+    const outstanding = invoices.filter((i) => i.status !== 'PAID');
+    const usage: Record<string, number> = {};
+    for (const u of await this.usage.all()) {
+      if (u.customerId !== customerId) continue;
+      usage[u.metric] = (usage[u.metric] ?? 0) + u.qty;
+    }
+    return {
+      customerId,
+      ...(sub ? {
+        subscription: {
+          id: sub.id, planId: sub.planId, status: sub.status, billingCycle: sub.billingCycle,
+          currency: sub.currency, price: sub.price, autoRenew: sub.autoRenew,
+          currentPeriodStart: sub.currentPeriodStart, currentPeriodEnd: sub.currentPeriodEnd,
+          ...(sub.trialEnd ? { trialEnd: sub.trialEnd } : {}),
+          ...(sub.cancelAtPeriodEnd ? { cancelAtPeriodEnd: sub.cancelAtPeriodEnd } : {}),
+        },
+      } : {}),
+      invoices: {
+        total: invoices.length,
+        paid: paid.length,
+        outstanding: outstanding.length,
+        totalAmountMinor: invoices.reduce((s, i) => s + i.total.amount, 0),
+        outstandingAmountMinor: outstanding.reduce((s, i) => s + i.total.amount, 0),
+      },
+      usage,
+    };
+  }
   private async setStatus(id: string, status: SubscriptionStatus): Promise<Subscription> {
     const sub = await this.requireSub(id);
     const updated: Subscription = { ...sub, status, updatedAt: Date.now() };
@@ -465,6 +525,9 @@ export class CommerceModule implements IModule {
     totalSubscriptions: number; byStatus: Record<string, number>; byPlan: Record<string, number>;
     mrr: Record<string, number>; trialStarts: number; trialConversions: number;
     marketplaceOrders: number; invoices: number;
+    // Phase 5 commercial KPIs.
+    activePayingTenants: number; payingTenants: number; arr: Record<string, number>;
+    revenuePerTenantMinor: number; churnCount: number; conversionRate: number;
   }> {
     const subs = await this.subs.all();
     const byStatus: Record<string, number> = {};
@@ -473,10 +536,28 @@ export class CommerceModule implements IModule {
       byStatus[s.status] = (byStatus[s.status] ?? 0) + 1;
       byPlan[s.planId] = (byPlan[s.planId] ?? 0) + 1;
     }
+    // REACTIVATED and GRACE_PERIOD count as active for KPIs (billing truth).
+    const activeStatuses = ['ACTIVE', 'TRIAL', 'GRACE_PERIOD', 'REACTIVATED'];
+    const active = subs.filter((s) => activeStatuses.includes(s.status));
+    const paying = subs.filter((s) => (s.status === 'ACTIVE' || s.status === 'REACTIVATED') && !s.trialEnd);
+    const churnCount = subs.filter((s) => s.status === 'CANCELLED' || s.status === 'EXPIRED').length;
+    const conversionRate = this.trialStarts > 0 ? Math.round((this.trialConversions / this.trialStarts) * 1000) / 1000 : 0;
+    const totalActiveAmount = active.reduce((s, sub) => s + sub.price.amount, 0);
+    const arr: Record<string, number> = {};
+    for (const sub of active) {
+      const annual = sub.billingCycle === 'ANNUAL' ? sub.price.amount : sub.price.amount * 12;
+      arr[sub.currency] = (arr[sub.currency] ?? 0) + annual;
+    }
     return {
       totalSubscriptions: subs.length, byStatus, byPlan,
       mrr: await this.mrr(), trialStarts: this.trialStarts, trialConversions: this.trialConversions,
       marketplaceOrders: await this.orders.count(), invoices: await this.invoices.count(),
+      activePayingTenants: active.length,
+      payingTenants: paying.length,
+      arr,
+      revenuePerTenantMinor: active.length > 0 ? Math.round(totalActiveAmount / active.length) : 0,
+      churnCount,
+      conversionRate,
     };
   }
 

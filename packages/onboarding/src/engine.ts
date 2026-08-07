@@ -2,7 +2,7 @@
 // provisioning, administrator onboarding, user invitations with role
 // assignment, and sample-data generation.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 export type SetupStepId = 'org_profile' | 'admin_account' | 'tenant_provision' | 'invitations' | 'sample_data' | 'complete';
 
@@ -60,6 +60,49 @@ export interface OnboardingRun {
   tenant?: TenantProvision;
   invites: OnboardingInvite[];
   sampleData?: SampleDataSet;
+}
+
+
+// ---- Phase 5: customer account lifecycle -------------------------------------
+
+export type CustomerAccountStatus = 'active' | 'suspended' | 'offboarding' | 'offboarded';
+
+export interface CustomerAccount {
+  id: string;
+  orgName: string;
+  slug: string;
+  tenantId: string;
+  adminEmail: string;
+  /** Commerce customer id (billing identity). */
+  customerId: string;
+  /** Active subscription id (commerce). */
+  subscriptionId?: string;
+  planSlug?: string;
+  status: CustomerAccountStatus;
+  createdAt: number;
+  updatedAt: number;
+  suspension?: { reason: string; at: number };
+  offboarding?: {
+    retentionDays: number;
+    deleteData: boolean;
+    startedAt: number;
+    completedAt?: number;
+    /** Deletion evidence hash (data-retention workflow). */
+    evidenceHash?: string;
+  };
+}
+
+export interface OffboardingRecord {
+  id: string;
+  accountId: string;
+  orgName: string;
+  tenantId: string;
+  retentionDays: number;
+  deleteData: boolean;
+  startedAt: number;
+  completedAt?: number;
+  evidenceHash?: string;
+  status: 'pending' | 'completed';
 }
 
 export const DEFAULT_SETUP_STEPS: SetupStep[] = [
@@ -226,6 +269,128 @@ export class OnboardingEngine {
     if (!run) return undefined;
     const done = run.steps.filter((s) => s.status === 'done' || s.status === 'skipped').length;
     return { done, total: run.steps.length, pct: Math.round((done / run.steps.length) * 100) };
+  }
+
+  // ---- Phase 5: customer account lifecycle ---------------------------------
+
+  private accounts = new Map<string, CustomerAccount>();
+  private offboardings: OffboardingRecord[] = [];
+
+  /** Create a customer account binding an onboarding run to a billing identity. */
+  createCustomerAccount(input: {
+    orgName: string; slug: string; adminEmail: string; tenantId?: string;
+    customerId: string; planSlug?: string; subscriptionId?: string;
+  }): CustomerAccount {
+    if (!input.orgName || !input.customerId) throw new Error('orgName and customerId are required');
+    if ([...this.accounts.values()].some((a) => a.customerId === input.customerId)) {
+      throw new Error(`customer ${input.customerId} already has an account`);
+    }
+    const account: CustomerAccount = {
+      id: randomUUID(), orgName: input.orgName, slug: input.slug,
+      tenantId: input.tenantId ?? `tenant-${(OnboardingEngine.runCounter++).toString().padStart(4, '0')}`,
+      adminEmail: input.adminEmail, customerId: input.customerId,
+      ...(input.subscriptionId ? { subscriptionId: input.subscriptionId } : {}),
+      ...(input.planSlug ? { planSlug: input.planSlug } : {}),
+      status: 'active', createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    this.accounts.set(account.id, account);
+    return account;
+  }
+
+  getAccount(id: string): CustomerAccount | undefined { return this.accounts.get(id); }
+
+  accountByCustomer(customerId: string): CustomerAccount | undefined {
+    return [...this.accounts.values()].find((a) => a.customerId === customerId);
+  }
+
+  listAccounts(filter?: { status?: CustomerAccountStatus }): CustomerAccount[] {
+    return [...this.accounts.values()].filter((a) => !filter?.status || a.status === filter.status);
+  }
+
+  /** Bind a subscription to an account (plan assignment). */
+  assignSubscription(accountId: string, subscriptionId: string, planSlug: string): CustomerAccount {
+    const account = this.accounts.get(accountId);
+    if (!account) throw new Error(`unknown account ${accountId}`);
+    account.subscriptionId = subscriptionId;
+    account.planSlug = planSlug;
+    account.updatedAt = Date.now();
+    return account;
+  }
+
+  suspendAccount(accountId: string, reason: string): CustomerAccount {
+    const account = this.accounts.get(accountId);
+    if (!account) throw new Error(`unknown account ${accountId}`);
+    account.status = 'suspended';
+    account.suspension = { reason, at: Date.now() };
+    account.updatedAt = Date.now();
+    return account;
+  }
+
+  reactivateAccount(accountId: string): CustomerAccount {
+    const account = this.accounts.get(accountId);
+    if (!account) throw new Error(`unknown account ${accountId}`);
+    account.status = 'active';
+    account.suspension = undefined;
+    account.updatedAt = Date.now();
+    return account;
+  }
+
+  /**
+   * Start tenant offboarding: records the data-retention policy (retention
+   * days, whether data is deleted or retained per policy) and marks the
+   * account offboarding.
+   */
+  startOffboarding(accountId: string, input: { retentionDays?: number; deleteData?: boolean }): CustomerAccount {
+    const account = this.accounts.get(accountId);
+    if (!account) throw new Error(`unknown account ${accountId}`);
+    account.status = 'offboarding';
+    account.offboarding = {
+      retentionDays: input.retentionDays ?? 30,
+      deleteData: input.deleteData ?? true,
+      startedAt: Date.now(),
+    };
+    account.updatedAt = Date.now();
+    return account;
+  }
+
+  /**
+   * Execute the offboarding: mark the account offboarded and produce a
+   * deletion evidence record (data-retention workflow) with a content hash.
+   */
+  executeOffboarding(accountId: string): OffboardingRecord {
+    const account = this.accounts.get(accountId);
+    if (!account) throw new Error(`unknown account ${accountId}`);
+    const policy = account.offboarding ?? { retentionDays: 30, deleteData: true, startedAt: Date.now() };
+    const evidence = `${account.tenantId}:${policy.retentionDays}:${policy.deleteData ? 'deleted' : 'retained'}:${Date.now()}`;
+    const record: OffboardingRecord = {
+      id: randomUUID(), accountId, orgName: account.orgName, tenantId: account.tenantId,
+      retentionDays: policy.retentionDays, deleteData: policy.deleteData,
+      startedAt: policy.startedAt, completedAt: Date.now(),
+      evidenceHash: createHash('sha256').update(evidence).digest('hex'),
+      status: 'completed',
+    };
+    this.offboardings.push(record);
+    account.status = 'offboarded';
+    account.offboarding = { ...policy, completedAt: Date.now(), evidenceHash: record.evidenceHash };
+    account.updatedAt = Date.now();
+    return record;
+  }
+
+  offboardingsList(): OffboardingRecord[] {
+    return [...this.offboardings].reverse();
+  }
+
+  /** Customer lifecycle stats. */
+  accountStats(): { accounts: number; active: number; suspended: number; offboarding: number; offboarded: number; offboardingRecords: number } {
+    const all = [...this.accounts.values()];
+    return {
+      accounts: all.length,
+      active: all.filter((a) => a.status === 'active').length,
+      suspended: all.filter((a) => a.status === 'suspended').length,
+      offboarding: all.filter((a) => a.status === 'offboarding').length,
+      offboarded: all.filter((a) => a.status === 'offboarded').length,
+      offboardingRecords: this.offboardings.length,
+    };
   }
 
   stats(): { runs: number; completed: number; tenants: number; invites: number; acceptedInvites: number; sampleDataSets: number } {

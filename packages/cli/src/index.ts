@@ -100,6 +100,7 @@ Commands:
   border <sub>        KARIS BORDER X: posts|post|watchlist|crossing|manifests|manifest|stats.
   kitchen <sub>       NYUMBANI KITCHEN: venues|menu|tables|order|ingredients|stats.
   maza <sub>          MAZA marketplace: storefronts|listings|reviews|purchase|cart|add|checkout|orders|order|cancel|refund|payouts|categories|stats.
+  customer <sub>       Customer lifecycle: create|accounts|account|assign|suspend|reactivate|offboard|offboard-execute|stats.
   products <sub>       Product marketplace: catalog|install|upgrade|uninstall|runtime|installed|upgrades|deps|stats.
   onboard <sub>        Onboarding: start|profile|admin|tenant|invite|accept|sample|complete|stats.
   ops <sub>            Operations: rotation|oncall|chain|sla|verify-backup|drill|advance|health|stats.
@@ -1427,6 +1428,87 @@ async function main() {
             break;
           default:
             console.error('Usage: jataqi kitchen venues|venue|menu|item|tables|order|orders|ingredients|stats'); process.exit(1);
+        }
+        break;
+      }
+      case 'customer': {
+        const sub = args[1];
+        const flag = (name: string): string | undefined => {
+          const i = args.indexOf(`--${name}`);
+          return i >= 0 && args[i + 1] && !args[i + 1]!.startsWith('--') ? args[i + 1] : undefined;
+        };
+        switch (sub) {
+          case 'create': {
+            const orgName = args[2], customerId = args[3];
+            if (!orgName || !customerId) { console.error('Usage: jataqi customer create <orgName> <customerId> [--admin email] [--plan slug]'); process.exit(1); }
+            const account = onboarding.createCustomerAccount({
+              orgName, customerId,
+              slug: orgName.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+              adminEmail: flag('admin') ?? 'admin@' + orgName.toLowerCase().replace(/[^a-z0-9]/g, '') + '.org',
+              ...(flag('plan') ? { planSlug: flag('plan') } : {}),
+            });
+            console.log(`customer account ${account.id} created (tenant ${account.tenantId}) — status ${account.status}`);
+            break;
+          }
+          case 'accounts': {
+            const accounts = onboarding.listAccounts(flag('status') ? { status: flag('status') as never } : undefined);
+            for (const a of accounts) console.log(`- ${a.orgName} (${a.customerId}) [${a.status}] plan=${a.planSlug ?? '—'} tenant=${a.tenantId}`);
+            console.log(`${accounts.length} account(s)`);
+            break;
+          }
+          case 'account': {
+            const id = args[2];
+            if (!id) { console.error('Usage: jataqi customer account <accountId>'); process.exit(1); }
+            const a = onboarding.getAccount(id);
+            console.log(a ? `${a.orgName}: ${a.status} plan=${a.planSlug ?? '—'} sub=${a.subscriptionId ?? '—'} suspended=${a.suspension?.reason ?? 'no'}` : 'not found');
+            break;
+          }
+          case 'assign': {
+            const accountId = args[2], subId = args[3], plan = args[4];
+            if (!accountId || !subId || !plan) { console.error('Usage: jataqi customer assign <accountId> <subscriptionId> <planSlug>'); process.exit(1); }
+            const a = onboarding.assignSubscription(accountId, subId, plan);
+            console.log(`${a.orgName}: plan ${plan} assigned`);
+            break;
+          }
+          case 'suspend': {
+            const accountId = args[2], reason = args.slice(3).join(' ') || 'no reason';
+            if (!accountId) { console.error('Usage: jataqi customer suspend <accountId> [reason]'); process.exit(1); }
+            const a = onboarding.suspendAccount(accountId, reason);
+            console.log(`${a.orgName} SUSPENDED — ${a.suspension!.reason}`);
+            break;
+          }
+          case 'reactivate': {
+            const accountId = args[2];
+            if (!accountId) { console.error('Usage: jataqi customer reactivate <accountId>'); process.exit(1); }
+            const a = onboarding.reactivateAccount(accountId);
+            console.log(`${a.orgName} REACTIVATED`);
+            break;
+          }
+          case 'offboard': {
+            const accountId = args[2];
+            if (!accountId) { console.error('Usage: jataqi customer offboard <accountId> [--retention-days n] [--keep-data]'); process.exit(1); }
+            const a = onboarding.startOffboarding(accountId, {
+              ...(flag('retention-days') ? { retentionDays: Number(flag('retention-days')) } : {}),
+              ...(args.includes('--keep-data') ? { deleteData: false } : {}),
+            });
+            console.log(`${a.orgName} OFFBOARDING — retention ${a.offboarding!.retentionDays}d delete=${a.offboarding!.deleteData}`);
+            break;
+          }
+          case 'offboard-execute': {
+            const accountId = args[2];
+            if (!accountId) { console.error('Usage: jataqi customer offboard-execute <accountId>'); process.exit(1); }
+            const r = onboarding.executeOffboarding(accountId);
+            console.log(`offboarding complete — evidence ${(r.evidenceHash ?? "").slice(0, 16)} (${r.tenantId})`);
+            break;
+          }
+          case 'stats': {
+            const s = onboarding.accountStats();
+            console.log(`accounts: ${s.accounts} (active ${s.active}, suspended ${s.suspended}, offboarding ${s.offboarding}, offboarded ${s.offboarded})`);
+            console.log(`offboarding records: ${s.offboardingRecords}`);
+            break;
+          }
+          default:
+            console.error('Usage: jataqi customer create|accounts|account|assign|suspend|reactivate|offboard|offboard-execute|stats'); process.exit(1);
         }
         break;
       }

@@ -9,6 +9,11 @@ export const OnboardingEvents = Object.freeze({
   TenantProvisioned: 'onboarding.tenant.provisioned',
   InviteSent: 'onboarding.invite.sent',
   OnboardingCompleted: 'onboarding.completed',
+  AccountCreated: 'onboarding.account.created',
+  AccountPlanAssigned: 'onboarding.account.plan_assigned',
+  AccountSuspended: 'onboarding.account.suspended',
+  AccountReactivated: 'onboarding.account.reactivated',
+  AccountOffboardingStarted: 'onboarding.account.offboarding.started',
 } as const);
 
 export class OnboardingModule implements IModule {
@@ -63,7 +68,41 @@ export class OnboardingModule implements IModule {
   }
 
   stats() { return this.engine.stats(); }
+
+  // ---- Phase 5: customer account lifecycle --------------------------------
+
+  createCustomerAccount(input: Parameters<OnboardingEngine['createCustomerAccount']>[0]) {
+    const account = this.engine.createCustomerAccount(input);
+    try { void this.api?.bus.emit(OnboardingEvents.AccountCreated, { id: account.id, customerId: account.customerId, orgName: account.orgName }); } catch { /* noop */ }
+    return account;
+  }
+  getAccount(id: string) { return this.engine.getAccount(id); }
+  accountByCustomer(customerId: string) { return this.engine.accountByCustomer(customerId); }
+  listAccounts(filter?: { status?: string }) { return this.engine.listAccounts(filter as never); }
+  assignSubscription(accountId: string, subscriptionId: string, planSlug: string) {
+    const account = this.engine.assignSubscription(accountId, subscriptionId, planSlug);
+    try { void this.api?.bus.emit(OnboardingEvents.AccountPlanAssigned, { id: account.id, planSlug }); } catch { /* noop */ }
+    return account;
+  }
+  suspendAccount(accountId: string, reason: string) {
+    const account = this.engine.suspendAccount(accountId, reason);
+    try { void this.api?.bus.emit(OnboardingEvents.AccountSuspended, { id: account.id, reason }); } catch { /* noop */ }
+    return account;
+  }
+  reactivateAccount(accountId: string) {
+    const account = this.engine.reactivateAccount(accountId);
+    try { void this.api?.bus.emit(OnboardingEvents.AccountReactivated, { id: account.id }); } catch { /* noop */ }
+    return account;
+  }
+  startOffboarding(accountId: string, input: { retentionDays?: number; deleteData?: boolean }) {
+    const account = this.engine.startOffboarding(accountId, input);
+    try { void this.api?.bus.emit(OnboardingEvents.AccountOffboardingStarted, { id: account.id }); } catch { /* noop */ }
+    return account;
+  }
+  executeOffboarding(accountId: string) { return this.engine.executeOffboarding(accountId); }
+  offboardings() { return this.engine.offboardingsList(); }
+  accountStats() { return this.engine.accountStats(); }
 }
 
 export { OnboardingEngine, DEFAULT_SETUP_STEPS } from './engine.js';
-export type { OnboardingRun, OrgProfile, SetupStep, SetupStepId, TenantProvision, OnboardingInvite, SampleDataSet } from './engine.js';
+export type { OnboardingRun, OrgProfile, SetupStep, SetupStepId, TenantProvision, OnboardingInvite, SampleDataSet, CustomerAccount, CustomerAccountStatus, OffboardingRecord } from './engine.js';

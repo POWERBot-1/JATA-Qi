@@ -1,6 +1,6 @@
 // OnboardingModule tests — guided enterprise onboarding.
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import type { Kernel } from '@jataqi/core-kernel';
@@ -133,5 +133,70 @@ describe('Onboarding gateway integration (vs real server)', () => {
     assert.equal((stats.stats as { completed: number }).completed, 1);
     const run = await admin.onboarding.getRun(runId);
     assert.equal((run.progress as { pct: number }).pct, 100);
+  });
+});
+
+
+describe('Phase 5 — customer account lifecycle + tenant isolation', () => {
+  let kernel: Kernel;
+  let mod: OnboardingModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new OnboardingModule());
+    await kernel.boot();
+    mod = kernel.getModule<OnboardingModule>('onboarding');
+  });
+
+  it('creates a customer account bound to a billing identity', () => {
+    const account = mod.createCustomerAccount({ orgName: 'Acme Inc', slug: 'acme', adminEmail: 'admin@acme.io', customerId: 'cust-100', planSlug: 'business' });
+    assert.equal(account.status, 'active');
+    assert.ok(account.tenantId.startsWith('tenant-'));
+    assert.equal(mod.accountByCustomer('cust-100')!.id, account.id);
+    // Duplicate customer → rejected.
+    assert.throws(() => mod.createCustomerAccount({ orgName: 'Acme2', slug: 'acme2', adminEmail: 'x@y.z', customerId: 'cust-100' }), /already has an account/);
+  });
+
+  it('assigns a subscription and enforces edition through the plan binding', () => {
+    const account = mod.createCustomerAccount({ orgName: 'B', slug: 'b', adminEmail: 'b@b.io', customerId: 'cust-101' });
+    const updated = mod.assignSubscription(account.id, 'sub-9000', 'enterprise');
+    assert.equal(updated.subscriptionId, 'sub-9000');
+    assert.equal(updated.planSlug, 'enterprise');
+    assert.equal(mod.getAccount(account.id)!.planSlug, 'enterprise');
+  });
+
+  it('suspends and reactivates an account with the reason recorded', () => {
+    const account = mod.createCustomerAccount({ orgName: 'C', slug: 'c', adminEmail: 'c@c.io', customerId: 'cust-102' });
+    mod.suspendAccount(account.id, 'non-payment');
+    assert.equal(mod.getAccount(account.id)!.status, 'suspended');
+    assert.equal(mod.getAccount(account.id)!.suspension!.reason, 'non-payment');
+    mod.reactivateAccount(account.id);
+    assert.equal(mod.getAccount(account.id)!.status, 'active');
+    assert.equal(mod.getAccount(account.id)!.suspension, undefined);
+  });
+
+  it('offboards a tenant with a data-retention policy and deletion evidence', () => {
+    const account = mod.createCustomerAccount({ orgName: 'D', slug: 'd', adminEmail: 'd@d.io', customerId: 'cust-103' });
+    mod.startOffboarding(account.id, { retentionDays: 90, deleteData: true });
+    assert.equal(mod.getAccount(account.id)!.status, 'offboarding');
+    assert.equal(mod.getAccount(account.id)!.offboarding!.retentionDays, 90);
+    const record = mod.executeOffboarding(account.id);
+    assert.equal(record.status, 'completed');
+    assert.equal(record.evidenceHash!.length, 64, 'sha-256 evidence');
+    assert.equal(record.tenantId, account.tenantId);
+    assert.equal(mod.getAccount(account.id)!.status, 'offboarded');
+    assert.equal(mod.offboardings().length, 1);
+    const stats = mod.accountStats();
+    assert.equal(stats.offboarded, 1);
+    assert.equal(stats.offboardingRecords, 1);
+  });
+
+  it('tenant isolation: two customers never share accounts or tenants', () => {
+    const a1 = mod.createCustomerAccount({ orgName: 'Isolate A', slug: 'a', adminEmail: 'a@a.io', customerId: 'cust-200' });
+    const a2 = mod.createCustomerAccount({ orgName: 'Isolate B', slug: 'b', adminEmail: 'b@b.io', customerId: 'cust-201' });
+    assert.notEqual(a1.tenantId, a2.tenantId);
+    assert.equal(mod.accountByCustomer('cust-200')!.id, a1.id);
+    assert.equal(mod.accountByCustomer('cust-201')!.id, a2.id);
+    assert.equal(mod.listAccounts({ status: 'active' }).length, 2);
   });
 });

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { CommerceModule, money, UNLIMITED } from '../src/index.js';
-import type { MarketplaceItem, PaymentProvider, Plan } from '../src/index.js';
+import type { MarketplaceItem, PaymentProvider, Plan, Subscription } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
 
 const DAY = 86_400_000;
@@ -153,5 +153,73 @@ describe('CommerceModule (engine)', () => {
     assert.equal(mrr.USD, 12);
     assert.equal(mrr.KES, 500);
     assert.ok(!('EUR' in mrr)); // currencies never silently merged
+  });
+});
+
+describe('Phase 5 — commercial lifecycle + billing state + KPIs', () => {
+  let kernel: Kernel;
+  let c: CommerceModule;
+
+  beforeEach(async () => {
+    kernel = createTestKernel();
+    kernel.register(new StorageModule());
+    kernel.register(new CommerceModule());
+    await kernel.boot();
+    c = kernel.getModule<CommerceModule>('commerce');
+  });
+
+  it('commercial lifecycle: subscribe (trial) → convert → upgrade → downgrade → cancel', async () => {
+    // Personal plan offers an explicit trial (platform never auto-trials).
+    const trial = await c.subscribe('cust-1', 'personal', { trial: true });
+    assert.equal(trial.status, 'TRIAL');
+    assert.ok(trial.trialEnd && trial.trialEnd > Date.now(), 'trial period set');
+    // Upgrade converts trial → active.
+    const upgraded = await c.upgrade(trial.id, 'business');
+    assert.equal(upgraded.status, 'ACTIVE');
+    const bizPlan = await c.getPlan('business');
+    assert.equal(upgraded.planId, bizPlan!.id, 'moved to business plan');
+    // Downgrade scheduled at period end (pendingPlanId set).
+    const downgraded = await c.downgrade(upgraded.id, 'developer', { scheduleAtPeriodEnd: true });
+    assert.ok((downgraded as Subscription & { pendingPlanId?: string }).pendingPlanId, 'pending downgrade scheduled');
+    // Cancel immediate.
+    const cancelled = await c.cancel(upgraded.id, { immediate: true });
+    assert.equal(cancelled.status, 'CANCELLED');
+  });
+
+  it('billing state composes subscription + invoices + usage per customer (tenant-isolated)', async () => {
+    const sub = await c.subscribe('cust-iso-1', 'business');
+    await c.meterUsage('cust-iso-1', 'api_calls', 42);
+    await c.meterUsage('cust-iso-2', 'api_calls', 999); // other tenant
+    const state = await c.customerBillingState('cust-iso-1');
+    assert.equal(state.subscription!.status, 'ACTIVE');
+    assert.equal(state.usage.api_calls, 42, 'usage isolated per customer');
+    assert.ok(!('api_calls' in (await c.customerBillingState('cust-iso-2')).usage) || (await c.customerBillingState('cust-iso-2')).usage.api_calls === 999);
+    assert.equal(state.invoices.total, 0);
+  });
+
+  it('suspend and reactivate a subscription (audited states)', async () => {
+    const sub = await c.subscribe('cust-2', 'business');
+    const suspended = await c.suspend(sub.id, 'non-payment');
+    assert.equal(suspended.status, 'SUSPENDED');
+    const reactivated = await c.reactivate(sub.id);
+    assert.equal(reactivated.status, 'REACTIVATED');
+  });
+
+  it('commercial KPIs: active paying tenants, ARR, conversion, churn', async () => {
+    // Two active business subs + one trial + one cancelled.
+    await c.subscribe('pay-1', 'business');
+    await c.subscribe('pay-2', 'business');
+    await c.subscribe('trial-1', 'business', { trial: true });
+    const trialSub = await c.subscribe('trial-2', 'business', { trial: true });
+    await c.upgrade(trialSub.id, 'business'); // converts
+    const cancelled = await c.subscribe('gone-1', 'business');
+    await c.cancel(cancelled.id, { immediate: true });
+    const a = await c.analytics();
+    assert.ok(a.activePayingTenants >= 3, `active tenants ${a.activePayingTenants}`);
+    assert.ok(a.payingTenants >= 3);
+    assert.ok(a.arr.USD >= 0);
+    assert.equal(typeof a.revenuePerTenantMinor, 'number');
+    assert.ok(a.churnCount >= 1);
+    assert.ok(a.conversionRate > 0, 'trial conversion counted');
   });
 });

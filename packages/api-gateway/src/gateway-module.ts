@@ -1181,6 +1181,21 @@ export class ApiGatewayModule implements IModule {
     route('POST', '/onboarding/sample-data', auth('onboarding:write', (req) => this.onboardingSampleData(req)));
     route('POST', '/onboarding/complete', auth('onboarding:write', (req) => this.onboardingComplete(req)));
     route('GET', '/onboarding/stats', auth('onboarding:read', () => this.onboardingStats()));
+    // Phase 5: customer account lifecycle.
+    route('POST', '/customers/accounts', auth('onboarding:write', (req) => this.customerAccountsCreate(req)));
+    route('GET', '/customers/accounts', auth('onboarding:read', (req) => this.customerAccountsList(req)));
+    route('GET', '/customers/account', auth('onboarding:read', (req) => this.customerAccountGet(req)));
+    route('POST', '/customers/accounts/subscription', auth('onboarding:write', (req) => this.customerAccountAssignSub(req)));
+    route('POST', '/customers/accounts/suspend', auth('onboarding:write', (req) => this.customerAccountSuspend(req)));
+    route('POST', '/customers/accounts/reactivate', auth('onboarding:write', (req) => this.customerAccountReactivate(req)));
+    route('POST', '/customers/accounts/offboard', auth('onboarding:write', (req) => this.customerAccountOffboard(req)));
+    route('POST', '/customers/accounts/offboard/execute', auth('onboarding:write', (req) => this.customerAccountOffboardExecute(req)));
+    route('GET', '/customers/offboardings', auth('onboarding:read', () => this.customerOffboardings()));
+    route('GET', '/customers/stats', auth('onboarding:read', () => this.customerStats()));
+    route('GET', '/commerce/billing-state', auth('commerce:read', (req) => this.commerceBillingState(req)));
+    route('POST', '/commerce/invoice', auth('commerce:read', (req) => this.commerceInvoiceCreate(req)));
+    route('POST', '/commerce/invoice/pay', auth('commerce:read', (req) => this.commerceInvoicePay(req)));
+    route('GET', '/commerce/invoices', auth('commerce:read', (req) => this.commerceInvoicesList(req)));
     // Production Operations.
     route('POST', '/ops/rotations', auth('ops:write', (req) => this.opsRotationsCreate(req)));
     route('GET', '/ops/rotations', auth('ops:read', () => this.opsRotations()));
@@ -7343,7 +7358,9 @@ export class ApiGatewayModule implements IModule {
       if (action === 'cancel') return json(200, { subscription: await this.commerce.cancel(id, { immediate: b.immediate === true }) });
       if (action === 'pause') return json(200, { subscription: await this.commerce.pause(id) });
       if (action === 'resume') return json(200, { subscription: await this.commerce.resume(id) });
-      return json(400, { error: 'unknown action (upgrade|downgrade|cancel|pause|resume)' });
+      if (action === 'suspend') return json(200, { subscription: await this.commerce.suspend(id, typeof b.reason === 'string' ? b.reason : undefined) });
+      if (action === 'reactivate') return json(200, { subscription: await this.commerce.reactivate(id) });
+      return json(400, { error: 'unknown action (upgrade|downgrade|cancel|pause|resume|suspend|reactivate)' });
     } catch (err) {
       return json(404, { error: (err as Error).message });
     }
@@ -7383,6 +7400,158 @@ export class ApiGatewayModule implements IModule {
   private async commerceAnalytics(): Promise<GatewayResponse> {
     if (!this.commerce) return json(501, { error: 'commerce module not registered' });
     return json(200, await this.commerce.analytics());
+  }
+
+  private async commerceBillingState(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    if (!req.query.customerId) return json(400, { error: 'field "customerId" is required' });
+    return json(200, { state: await this.commerce.customerBillingState(req.query.customerId) });
+  }
+
+  private async commerceInvoiceCreate(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.customerId !== 'string' || typeof b.planSlug !== 'string')
+      return json(400, { error: 'fields "customerId" and "planSlug" are required' });
+    try {
+      const plan = await this.commerce.getPlan(b.planSlug);
+      if (!plan) return json(404, { error: `plan ${b.planSlug} not found` });
+      const currency = typeof b.currency === 'string' ? b.currency : 'USD';
+      const price = plan.prices[currency] ?? plan.prices[Object.keys(plan.prices)[0]!] ?? { amount: 0, currency: 'USD' };
+      const invoice = await this.commerce.createInvoice(b.customerId, [
+        { description: `${plan.name} — ${plan.billingCycle.toLowerCase()}`, quantity: 1, unitPrice: price, total: price },
+      ], {
+        currency: price.currency,
+        ...(typeof b.taxPct === 'number' ? { taxPct: b.taxPct } : {}),
+        ...(typeof b.discountPct === 'number' ? { discountPct: b.discountPct } : {}),
+      });
+      return json(201, { invoice });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async commerceInvoicePay(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.id !== 'string') return json(400, { error: 'field "id" is required' });
+    try {
+      const invoice = await this.commerce.markInvoicePaid(b.id, typeof b.paymentRef === 'string' ? b.paymentRef : undefined);
+      return json(200, { invoice });
+    } catch (err) {
+      return json(404, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private async commerceInvoicesList(req: GatewayRequest): Promise<GatewayResponse> {
+    if (!this.commerce) return json(501, { error: 'commerce module not registered' });
+    const invoices = await this.commerce.listInvoices(req.query.customerId);
+    return json(200, { invoices, count: invoices.length });
+  }
+
+  // ---- Phase 5: customer account lifecycle handlers ----------------------
+
+  private customerAccountsCreate(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.orgName !== 'string' || typeof b.customerId !== 'string')
+      return json(400, { error: 'fields "orgName" and "customerId" are required' });
+    try {
+      return json(201, { account: this.onboarding.createCustomerAccount({
+        orgName: b.orgName,
+        slug: typeof b.slug === 'string' ? b.slug : b.orgName.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        adminEmail: typeof b.adminEmail === 'string' ? b.adminEmail : '',
+        ...(typeof b.tenantId === 'string' ? { tenantId: b.tenantId } : {}),
+        customerId: b.customerId,
+        ...(typeof b.planSlug === 'string' ? { planSlug: b.planSlug } : {}),
+        ...(typeof b.subscriptionId === 'string' ? { subscriptionId: b.subscriptionId } : {}),
+      }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private customerAccountsList(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const accounts = this.onboarding.listAccounts(req.query.status ? { status: req.query.status } : undefined);
+    return json(200, { accounts, count: accounts.length });
+  }
+
+  private customerAccountGet(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const account = req.query.id
+      ? this.onboarding.getAccount(req.query.id)
+      : req.query.customerId ? this.onboarding.accountByCustomer(req.query.customerId) : undefined;
+    return account ? json(200, { account }) : json(404, { error: 'account not found' });
+  }
+
+  private customerAccountAssignSub(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string' || typeof b.subscriptionId !== 'string' || typeof b.planSlug !== 'string')
+      return json(400, { error: 'fields "accountId", "subscriptionId", "planSlug" are required' });
+    try {
+      return json(200, { account: this.onboarding.assignSubscription(b.accountId, b.subscriptionId, b.planSlug) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private customerAccountSuspend(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string') return json(400, { error: 'field "accountId" is required' });
+    try {
+      return json(200, { account: this.onboarding.suspendAccount(b.accountId, typeof b.reason === 'string' ? b.reason : 'no reason') });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private customerAccountReactivate(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string') return json(400, { error: 'field "accountId" is required' });
+    try {
+      return json(200, { account: this.onboarding.reactivateAccount(b.accountId) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private customerAccountOffboard(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string') return json(400, { error: 'field "accountId" is required' });
+    try {
+      return json(200, { account: this.onboarding.startOffboarding(b.accountId, {
+        ...(typeof b.retentionDays === 'number' ? { retentionDays: b.retentionDays } : {}),
+        ...(typeof b.deleteData === 'boolean' ? { deleteData: b.deleteData } : {}),
+      }) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private customerAccountOffboardExecute(req: GatewayRequest): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    const b = this.asObject(req.body);
+    if (typeof b.accountId !== 'string') return json(400, { error: 'field "accountId" is required' });
+    try {
+      return json(200, { record: this.onboarding.executeOffboarding(b.accountId) });
+    } catch (err) {
+      return json(400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  private customerOffboardings(): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    return json(200, { offboardings: this.onboarding.offboardings() });
+  }
+
+  private customerStats(): GatewayResponse {
+    if (!this.onboarding) return json(501, { error: 'onboarding module not registered' });
+    return json(200, { stats: this.onboarding.accountStats() });
   }
 
   private async marketplacePurchase(req: GatewayRequest): Promise<GatewayResponse> {

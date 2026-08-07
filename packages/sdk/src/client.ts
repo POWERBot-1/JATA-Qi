@@ -583,6 +583,21 @@ export class CommerceClient {
 export class CommerceStatsClient {
   constructor(private c: JataQiClient) {}
   async analytics(): Promise<Record<string, unknown>> { return this.c.request('GET', '/commerce/analytics'); }
+  /** Composed billing state for a customer (subscription + invoices + usage). */
+  async billingState(customerId: string): Promise<{ state: unknown }> {
+    return this.c.request('GET', '/commerce/billing-state', undefined, { customerId });
+  }
+  /** Issue an invoice for a plan (billing event). */
+  async createInvoice(customerId: string, planSlug: string, opts: { currency?: string; taxPct?: number; discountPct?: number } = {}): Promise<{ invoice: unknown }> {
+    return this.c.request('POST', '/commerce/invoice', { customerId, planSlug, ...opts });
+  }
+  /** Mark an invoice paid (payment status). */
+  async payInvoice(id: string, paymentRef?: string): Promise<{ invoice: unknown }> {
+    return this.c.request('POST', '/commerce/invoice/pay', { id, ...(paymentRef ? { paymentRef } : {}) });
+  }
+  async invoices(customerId?: string): Promise<{ invoices: unknown[]; count: number }> {
+    return this.c.request('GET', '/commerce/invoices', undefined, customerId ? { customerId } : undefined);
+  }
 }
 
 export class OrgClient {
@@ -1214,6 +1229,33 @@ export class OnboardingClient {
   }
   async complete(runId: string): Promise<{ run: unknown }> { return this.c.request('POST', '/onboarding/complete', { runId }); }
   async stats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/onboarding/stats'); }
+  // ---- Phase 5: customer account lifecycle ----
+  async createAccount(input: { orgName: string; customerId: string; slug?: string; adminEmail?: string; tenantId?: string; planSlug?: string; subscriptionId?: string }): Promise<{ account: unknown }> {
+    return this.c.request('POST', '/customers/accounts', input);
+  }
+  async accounts(opts: { status?: string } = {}): Promise<{ accounts: unknown[]; count: number }> {
+    return this.c.request('GET', '/customers/accounts', undefined, opts.status ? { status: opts.status } : undefined);
+  }
+  async account(opts: { id?: string; customerId?: string } = {}): Promise<{ account: unknown }> {
+    return this.c.request('GET', '/customers/account', undefined, opts.id ? { id: opts.id } : { customerId: opts.customerId! });
+  }
+  async assignSubscription(accountId: string, subscriptionId: string, planSlug: string): Promise<{ account: unknown }> {
+    return this.c.request('POST', '/customers/accounts/subscription', { accountId, subscriptionId, planSlug });
+  }
+  async suspendAccount(accountId: string, reason: string): Promise<{ account: unknown }> {
+    return this.c.request('POST', '/customers/accounts/suspend', { accountId, reason });
+  }
+  async reactivateAccount(accountId: string): Promise<{ account: unknown }> {
+    return this.c.request('POST', '/customers/accounts/reactivate', { accountId });
+  }
+  async offboardAccount(accountId: string, opts: { retentionDays?: number; deleteData?: boolean } = {}): Promise<{ account: unknown }> {
+    return this.c.request('POST', '/customers/accounts/offboard', { accountId, ...opts });
+  }
+  async executeOffboarding(accountId: string): Promise<{ record: unknown }> {
+    return this.c.request('POST', '/customers/accounts/offboard/execute', { accountId });
+  }
+  async offboardings(): Promise<{ offboardings: unknown[] }> { return this.c.request('GET', '/customers/offboardings'); }
+  async customerStats(): Promise<{ stats: unknown }> { return this.c.request('GET', '/customers/stats'); }
 }
 
 // --- Production Operations --------------------------------------------------------------
