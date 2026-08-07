@@ -345,6 +345,20 @@ describe('Phase 6 — production kit + payment webhook', () => {
   });
 });
 
+
+describe('Phase 7 — deploy.sh production rehearsal hardening', () => {
+  it('deploy.sh is production-hardened (surviving fallback, complete install, operator escapes)', () => {
+    const script = fs.readFileSync(path.join(REPO_ROOT, 'deploy/production/deploy.sh'), 'utf8');
+    assert.ok(script.includes('SKIP_BUILD'), 'SKIP_BUILD escape');
+    assert.ok(script.includes('FORCE_BACKGROUND'), 'FORCE_BACKGROUND escape (no-systemd envs)');
+    assert.ok(script.includes('npm ci --omit=dev'), 'production deps installed into app dir (bare-metal path)');
+    assert.ok(script.includes('"$REPO/deploy"'), 'deploy kit installed (complete tree)');
+    assert.ok(script.includes('ps -p 1 -o comm='), 'PID-1 systemd detection');
+    assert.ok(script.includes('[ -w "$(dirname "$LOG")" ]'), 'log-path writability fallback');
+    assert.ok(script.includes('setsid'), 'detached background process survives script exit');
+  });
+});
+
 function variable(name: string): string {
   return `variable "${name}"`;
 }
