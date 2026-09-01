@@ -5,6 +5,44 @@ import { StorageModule, type StorageModuleConfig } from '@jataqi/storage';
 import { VectorSearchModule, type VectorModuleConfig } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule, type KnowledgeGraphConfig } from '@jataqi/knowledge-graph';
+import { CommercialControlPlaneModule, type CommercialControlPlaneConfig } from '@jataqi/commercial-control-plane';
+import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
+import { ExternalConnectorModule } from '@jataqi/external-connectors';
+import { GitHubExecutionModule } from '@jataqi/github-execution';
+import { CopilotExecutionAdapterModule } from '@jataqi/copilot-execution-adapter';
+import { AutonomousTestRepairModule } from '@jataqi/autonomous-test-repair';
+import { AutonomousDeploymentModule } from '@jataqi/autonomous-deployment';
+import { InfrastructureStateRegistryModule } from '@jataqi/infrastructure-state-registry';
+import { PaymentsModule } from '@jataqi/payments';
+import { BillingModule } from '@jataqi/billing';
+import { RevenueLedgerModule } from '@jataqi/revenue-ledger';
+import { UniversalVisibilityFabricModule } from '@jataqi/universal-visibility-fabric';
+import { UniversalDistributionNervousSystemModule } from '@jataqi/universal-distribution-nervous-system';
+import { ReconciliationModule } from '@jataqi/reconciliation';
+import { CommercialAnalyticsModule } from '@jataqi/commercial-analytics';
+import { CommercialIntelligenceModule } from '@jataqi/commercial-intelligence';
+import { PortfolioGovernorModule } from '@jataqi/portfolio-governor';
+import { CommercialMemoryModule } from '@jataqi/commercial-memory';
+import { CommercialHealthModule } from '@jataqi/commercial-health';
+import { CommercialObservabilityModule } from '@jataqi/commercial-observability';
+import { CommercialEventStreamModule } from '@jataqi/commercial-event-stream';
+import { CommercialCommandCenterModule } from '@jataqi/commercial-command-center';
+import { AutonomousVentureFactoryModule } from '@jataqi/autonomous-venture-factory';
+import { CognitiveKernelModule } from '@jataqi/cognitive-kernel';
+import { MultiAgentCognitionModule } from '@jataqi/multi-agent-cognition';
+import { MetaReasoningModule } from '@jataqi/meta-reasoning';
+import { ProbabilisticEngineModule } from '@jataqi/probabilistic-engine';
+import { HypothesisEngineModule } from '@jataqi/hypothesis-engine';
+import { WorldModelModule } from '@jataqi/world-model';
+import { CausalEngineModule } from '@jataqi/causal-engine';
+import { TemporalEngineModule } from '@jataqi/temporal-engine';
+import { OrbitalIntelligenceModule } from '@jataqi/orbital-intelligence';
+import { ReproducibilityModule } from '@jataqi/reproducibility';
+import { ResearchEvidenceModule } from '@jataqi/research-evidence';
+import { HumanApprovalModule } from '@jataqi/human-approval';
+import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
+import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
+import { CapabilityFabricModule } from '@jataqi/capability-fabric';
 import {
   AgentRuntimeModule,
   EchoLLM,
@@ -23,6 +61,8 @@ export interface JataQiConfig {
   vector?: VectorModuleConfig;
   /** Knowledge graph config. */
   graph?: KnowledgeGraphConfig;
+  /** Governed commercial decision/action control plane config. */
+  commercialControlPlane?: CommercialControlPlaneConfig;
   /** Agent runtime config. */
   agent?: AgentModuleConfig;
 }
@@ -43,6 +83,44 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
     driverInstance: cfg.storage?.driverInstance,
   };
   kernel.register(new StorageModule(storageCfg));
+  kernel.register(new CommercialControlPlaneModule(cfg.commercialControlPlane));
+  kernel.register(new AutonomousActionRuntimeModule());
+  kernel.register(new ExternalConnectorModule());
+  kernel.register(new UniversalVisibilityFabricModule());
+  kernel.register(new UniversalDistributionNervousSystemModule());
+  kernel.register(new GitHubExecutionModule());
+  kernel.register(new CopilotExecutionAdapterModule());
+  kernel.register(new AutonomousTestRepairModule());
+  kernel.register(new AutonomousDeploymentModule());
+  kernel.register(new InfrastructureStateRegistryModule());
+  kernel.register(new PaymentsModule());
+  kernel.register(new BillingModule());
+  kernel.register(new RevenueLedgerModule());
+  kernel.register(new ReconciliationModule());
+  kernel.register(new CommercialAnalyticsModule());
+  kernel.register(new CommercialIntelligenceModule());
+  kernel.register(new AutonomousVentureFactoryModule());
+  kernel.register(new PortfolioGovernorModule());
+  kernel.register(new CommercialMemoryModule());
+  kernel.register(new CommercialHealthModule());
+  kernel.register(new CommercialObservabilityModule());
+  kernel.register(new CommercialEventStreamModule());
+  kernel.register(new CommercialCommandCenterModule());
+  kernel.register(new CognitiveKernelModule());
+  kernel.register(new MultiAgentCognitionModule());
+  kernel.register(new MetaReasoningModule());
+  kernel.register(new ProbabilisticEngineModule());
+  kernel.register(new HypothesisEngineModule());
+  kernel.register(new WorldModelModule());
+  kernel.register(new CausalEngineModule());
+  kernel.register(new TemporalEngineModule());
+  kernel.register(new OrbitalIntelligenceModule());
+  kernel.register(new ReproducibilityModule());
+  kernel.register(new ResearchEvidenceModule());
+  kernel.register(new HumanApprovalModule());
+  kernel.register(new RegulatoryGateModule());
+  kernel.register(new PermanenceFabricModule());
+  kernel.register(new CapabilityFabricModule());
   kernel.register(
     new VectorSearchModule(cfg.vector ?? { model: 'hash', hashDim: 128 }),
   );
@@ -87,6 +165,7 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     },
     agent: { llm, ...(overrides.agent ?? {}) },
     graph: overrides.graph,
+    commercialControlPlane: overrides.commercialControlPlane,
     kernel: overrides.kernel,
   });
 }

@@ -1,0 +1,49 @@
+{
+  "name": "@jataqi/commercial-command-center",
+  "version": "0.1.0",
+  "description": "JATA Qi Commercial Command Center — tenant-filtered read model and approval facade across governed commercial systems",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/test/*.test.js",
+    "pretest": "npm run build"
+  },
+  "files": ["dist", "src"],
+  "license": "MIT",
+  "dependencies": {
+    "@jataqi/autonomous-deployment": "0.1.0",
+    "@jataqi/autonomous-test-repair": "0.1.0",
+    "@jataqi/billing": "0.1.0",
+    "@jataqi/commercial-analytics": "0.1.0",
+    "@jataqi/commercial-control-plane": "0.1.0",
+    "@jataqi/commercial-event-stream": "0.1.0",
+    "@jataqi/commercial-health": "0.1.0",
+    "@jataqi/commercial-intelligence": "0.1.0",
+    "@jataqi/commercial-memory": "0.1.0",
+    "@jataqi/commercial-observability": "0.1.0",
+    "@jataqi/copilot-execution-adapter": "0.1.0",
+    "@jataqi/core-kernel": "0.1.0",
+    "@jataqi/external-connectors": "0.1.0",
+    "@jataqi/github-execution": "0.1.0",
+    "@jataqi/infrastructure-state-registry": "0.1.0",
+    "@jataqi/payments": "0.1.0",
+    "@jataqi/portfolio-governor": "0.1.0",
+    "@jataqi/reconciliation": "0.1.0",
+    "@jataqi/revenue-ledger": "0.1.0",
+    "@jataqi/universal-distribution-nervous-system": "0.1.0",
+    "@jataqi/universal-visibility-fabric": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}
