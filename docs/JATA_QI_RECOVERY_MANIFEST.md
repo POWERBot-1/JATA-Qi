@@ -83,8 +83,10 @@ real fabric, cross-engine event flows, identity/policy/audit continuity), not on
   baseline bundle; do not rewrite history after publishing.
 
 ## Recovery commit
-- Recovery commit SHA: _INSERTED BY PROVENANCE COMMIT_
-- Remote branch: _INSERTED BY PROVENANCE COMMIT_
-- Remote verification SHA: _INSERTED BY PROVENANCE COMMIT_
+- Recovery commit SHA: `ac8e68d5050c97a91a2d756bf5c091140eb95ef2`
+  (parent = baseline `5a3e47d2993ac49738b7a4252d1c3aa43812fe37`; 324 files, +35,092 / −11 —
+  322 patch files plus this manifest and the audit summary)
+- Remote branch: `arena/01a05c22-jata-qi`
+- Remote verification SHA: _recorded after remote-independent verification (follow-up provenance commit);_
 - Full audit dossier (out-of-tree, not in Git history): `/home/user/recovery/jata-qi-unification-audit/`
   (01–14 dossier files + `unification-audit.json` machine-readable summary + simulation harness/results + regression logs).
