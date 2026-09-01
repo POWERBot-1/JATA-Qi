@@ -1,0 +1,33 @@
+export { MultiAgentCognitionModule } from './module.js';
+export { MultiAgentCognitionService, MultiAgentCognitionError } from './multi-agent-cognition-service.js';
+export { MultiAgentCognitionEvents } from './types.js';
+export type {
+  ClaimPosition,
+  ConsistencyReviewStatus,
+  CreateMultiAgentDeliberationInput,
+  CritiqueActionProposal,
+  DeliberationConsistencyReview,
+  DeliberationEvidenceCheck,
+  DeliberationRecommendation,
+  DeliberationReview,
+  DeliberationReviewState,
+  DeliberationSafetyReview,
+  DeliberationStatus,
+  DeliberationSynthesis,
+  DisagreementKind,
+  EvidenceQuality,
+  MultiAgentCognitionConfig,
+  MultiAgentDeliberation,
+  MultiAgentDisagreement,
+  MultiAgentReviewer,
+  MultiAgentReviewRequest,
+  RequestedReviewRun,
+  ReviewActionDisposition,
+  ReviewClaim,
+  ReviewerDescriptor,
+  ReviewerRole,
+  ReviewVerdict,
+  SafetyReviewStatus,
+  StructuredReviewMessage,
+  SynthesisStatus,
+} from './types.js';
