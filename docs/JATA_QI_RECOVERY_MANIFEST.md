@@ -87,6 +87,8 @@ real fabric, cross-engine event flows, identity/policy/audit continuity), not on
   (parent = baseline `5a3e47d2993ac49738b7a4252d1c3aa43812fe37`; 324 files, +35,092 / −11 —
   322 patch files plus this manifest and the audit summary)
 - Remote branch: `arena/01a05c22-jata-qi`
-- Remote verification SHA: _recorded after remote-independent verification (follow-up provenance commit);_
+- Remote verification SHA: remote branch head verified via `git ls-remote` after push and matched local HEAD
+  `fedce3d533c155b7897e9ad881a11e0b4de37db7` (recovery commit + manifest finalization) with zero divergence;
+  this provenance commit itself is pushed and re-verified the same way (LOCAL == REMOTE, tree clean).
 - Full audit dossier (out-of-tree, not in Git history): `/home/user/recovery/jata-qi-unification-audit/`
   (01–14 dossier files + `unification-audit.json` machine-readable summary + simulation harness/results + regression logs).
