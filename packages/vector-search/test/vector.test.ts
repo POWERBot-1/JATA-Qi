@@ -1,5 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import {
   cosineSimilarity,
@@ -175,6 +178,36 @@ describe('VectorSearchModule (kernel integration)', () => {
     const hits = await mod2.embedAndSearch('p', 'alpha bravo', { topK: 1 });
     assert.equal(hits[0]!.id, 'x');
     await kernel2.shutdown();
+  });
+
+  it('persists opened filesystem indexes on orderly shutdown and restores them after restart', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jataqi-vector-restart-'));
+    const first = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
+    const second = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
+    try {
+      first.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
+      first.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+      await first.boot();
+      const firstVectors = first.getModule<VectorSearchModule>('vector-search');
+      await firstVectors.embedAndAdd('restart-index', [
+        { id: 'alpha', text: 'alpha bravo durable vector record' },
+        { id: 'beta', text: 'charlie delta unrelated record' },
+      ]);
+      await first.shutdown();
+
+      second.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
+      second.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+      await second.boot();
+      const secondVectors = second.getModule<VectorSearchModule>('vector-search');
+      const restored = await secondVectors.load('restart-index');
+      assert.equal(await restored.count(), 2);
+      const hits = await secondVectors.embedAndSearch('restart-index', 'alpha bravo durable vector record', { topK: 1 });
+      assert.equal(hits[0]!.id, 'alpha');
+    } finally {
+      try { await first.shutdown(); } catch { /* cleanup after failed boot/test */ }
+      try { await second.shutdown(); } catch { /* cleanup after failed boot/test */ }
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('publishes vector lifecycle events', async () => {

@@ -35,8 +35,9 @@ export class KnowledgeService implements IModule {
     this.docs = await storage.namespace(NS_DOCS);
     this.chunks = await storage.collection<Chunk>(COL_CHUNKS);
     this.vectors = kernel.getModule<VectorSearchModule>('vector-search');
-    // Ensure the vector index exists (with model dim).
-    await this.vectors.index(VEC_INDEX);
+    // Restore the known knowledge index when a development snapshot exists;
+    // load() creates an empty index when no snapshot has been written yet.
+    await this.vectors.load(VEC_INDEX);
     kernel.container.registerValue('knowledge.service', this);
     kernel.logger.info('knowledge service initialized');
   }
@@ -90,8 +91,14 @@ export class KnowledgeService implements IModule {
     }
 
     await this.docs.set(docId, doc);
-    for (const ch of storedChunks) await this.chunks.put(ch);
+    // Each put refreshes under the collection's shared filesystem mutex, so
+    // concurrent same-process ingests merge rather than racing a read/replace
+    // snapshot. Graph/vector lifecycle snapshots are batched separately.
+    for (const chunk of storedChunks) await this.chunks.put(chunk);
     await this.vectors.embedAndAdd(VEC_INDEX, vecItems);
+    // Keep the documented development filesystem flow searchable after a
+    // restart. This is a local snapshot, not a cross-resource transaction.
+    await this.vectors.persist(VEC_INDEX);
 
     this.api.logger.debug(`ingested doc ${docId} (${storedChunks.length} chunks)`);
     await this.api.bus.emit(KnowledgeEvents.DocumentIngested, { docId, chunks: storedChunks.length });
@@ -113,12 +120,12 @@ export class KnowledgeService implements IModule {
   async deleteDocument(id: string): Promise<boolean> {
     const doc = await this.docs.get<Document>(id);
     if (!doc) return false;
-    for (const cid of doc.chunkIds) {
-      await this.chunks.delete(cid);
-      // FlatIndex doesn't expose remove on the IVectorIndex via module? add remove support.
-      const idx = await this.vectors.index(VEC_INDEX);
-      await idx.remove(cid);
+    const index = await this.vectors.index(VEC_INDEX);
+    for (const chunkId of doc.chunkIds) {
+      await this.chunks.delete(chunkId);
+      await index.remove(chunkId);
     }
+    await this.vectors.persist(VEC_INDEX);
     await this.docs.delete(id);
     await this.api.bus.emit(KnowledgeEvents.DocumentDeleted, { docId: id });
     return true;

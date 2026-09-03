@@ -55,7 +55,7 @@ import { readConfig } from './config.js';
 export interface JataQiConfig {
   /** Kernel-level overrides. */
   kernel?: KernelOptions;
-  /** Storage driver: 'memory' (default) or 'filesystem'. */
+  /** Storage driver: 'memory' (default) or development-only single-process 'filesystem'. */
   storage?: StorageModuleConfig & { fsRoot?: string };
   /** Embedding + vector search config. */
   vector?: VectorModuleConfig;

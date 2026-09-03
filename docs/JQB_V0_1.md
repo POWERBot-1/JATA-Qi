@@ -21,7 +21,7 @@ A tenant-bound persistent cognitive-state service containing:
 - goals and constraints;
 - safe cognitive traces;
 - deterministic evidence/uncertainty assessment;
-- tenant isolation and filesystem persistence.
+- tenant-tagged local records and development-only filesystem persistence (not a production tenant-isolation boundary).
 
 Safe traces contain only auditable summaries:
 

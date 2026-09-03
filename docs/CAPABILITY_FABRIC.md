@@ -7,7 +7,8 @@ IMPLEMENTED: tenant-bound capability registry, machine-readable ENGINE_GENOME
              metadata, lifecycle evidence gates, scoped capability grants,
              runtime-capability requirement checks against JQ-ID runtime
              authorizations, composition/dependency graph, hash-chained audit,
-             tenant isolation, and filesystem persistence.
+             tenant-tagged local records and development-only filesystem
+             persistence (not a production tenant-isolation boundary).
 
 NOT IMPLEMENTED: autonomous capability discovery, package installation, model
                  procurement, engine code generation, deployment, marketplace

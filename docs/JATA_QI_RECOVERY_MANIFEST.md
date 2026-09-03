@@ -1,5 +1,12 @@
 # JATA QI RECOVERY MANIFEST
 
+> **Current status note — 2026-09-03:** This is a historical recovery/unification
+> record, not a current production-readiness assessment. Its historical `P0=0`
+> conclusion is superseded for filesystem persistence by
+> [`PERSISTENCE_ARCHITECTURE.md`](PERSISTENCE_ARCHITECTURE.md): filesystem mode is
+> now explicitly development-only/single-process, and its production replacement
+> remains unimplemented.
+
 Durable provenance record for the dormant Arena patchset recovery and unification audit.
 This file exists so the recovered state is reconstructible even if the original agent session disappears.
 Full evidence dossier lives outside Git history (large artifacts); this manifest carries the hashes, totals, and procedures.

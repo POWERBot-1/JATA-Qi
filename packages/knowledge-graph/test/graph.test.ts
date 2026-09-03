@@ -1,5 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
@@ -135,6 +138,48 @@ describe('KnowledgeGraphModule (kernel integration)', () => {
     assert.equal(mod2.triplesFrom('x').length, 1);
     assert.equal(mod2.triplesFrom('x')[0]!.object, 'y');
     await k2.shutdown();
+  });
+
+  it('persists graph mutations created during knowledge ingest through orderly filesystem shutdown', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jataqi-graph-shutdown-'));
+    const first = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
+    const second = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
+    try {
+      first.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
+      first.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+      first.register(new KnowledgeService());
+      first.register(new KnowledgeGraphModule());
+      await first.boot();
+
+      const knowledge = first.getModule<KnowledgeService>('knowledge');
+      const graph = first.getModule<KnowledgeGraphModule>('knowledge-graph');
+      const document = await knowledge.ingestText('The graph shutdown sentinel links Alice to Bob.');
+      graph.addEntity({ id: 'alice', type: 'Person', name: 'Alice' });
+      graph.addEntity({ id: 'bob', type: 'Person', name: 'Bob' });
+      graph.addTriple({ subject: 'alice', predicate: 'knows', object: 'bob' });
+      await graph.embedEntity('alice');
+      await first.shutdown();
+
+      const collectionFiles = await fs.readdir(path.join(root, 'collections'));
+      assert.equal(collectionFiles.filter((name) => name.includes('.tmp-')).length, 0);
+
+      second.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
+      second.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+      second.register(new KnowledgeService());
+      second.register(new KnowledgeGraphModule());
+      await second.boot();
+      const restored = second.getModule<KnowledgeGraphModule>('knowledge-graph');
+      assert.ok(restored.getEntity(`doc:${document.id}`));
+      assert.ok(restored.getEntity('alice'));
+      assert.equal(restored.triplesFrom('alice').length, 1);
+      assert.equal(restored.triplesFrom('alice')[0]!.object, 'bob');
+      const entityHits = await restored.findEntities('Alice', { topK: 1 });
+      assert.equal(entityHits[0]!.entity.id, 'alice');
+    } finally {
+      try { await first.shutdown(); } catch { /* cleanup after failed boot/test */ }
+      try { await second.shutdown(); } catch { /* cleanup after failed boot/test */ }
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('embeds entities and finds them semantically', async () => {

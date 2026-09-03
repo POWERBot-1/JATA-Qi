@@ -1,5 +1,11 @@
 # JATA Qi Commercial Control Plane
 
+> **Persistence boundary:** “Storage-backed” in this document describes local
+> implementation behavior. When `STORAGE_DRIVER=filesystem` is selected, it is
+> development-only/single-process storage—not an authoritative production ledger
+> or financial transaction system. See
+> [`PERSISTENCE_ARCHITECTURE.md`](PERSISTENCE_ARCHITECTURE.md).
+
 ## Status
 
 | Status | Capability |

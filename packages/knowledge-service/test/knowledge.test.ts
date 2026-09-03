@@ -1,5 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
@@ -161,6 +164,39 @@ describe('KnowledgeService', () => {
     assert.ok(hits.length >= 1);
     const fromDoc = hits.filter((h) => h.document.id === doc.id);
     assert.ok(fromDoc.length >= 2, `expected context expansion to add neighbor chunks, got ${fromDoc.length}`);
+  });
+
+  it('restores semantic retrieval after an orderly development-filesystem restart', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'jataqi-knowledge-restart-'));
+    const first = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
+    const second = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
+    try {
+      first.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
+      first.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+      first.register(new KnowledgeService());
+      await first.boot();
+      const initial = first.getModule<KnowledgeService>('knowledge');
+      const document = await initial.ingestText('The durable restart sentinel is a cobalt narwhal that navigates a silent archive.', {
+        title: 'Restart sentinel',
+      });
+      assert.ok((await initial.retrieve('cobalt narwhal silent archive', { topK: 1 })).some((hit) => hit.document.id === document.id));
+      await first.shutdown();
+
+      second.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
+      second.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+      second.register(new KnowledgeService());
+      await second.boot();
+      const restored = second.getModule<KnowledgeService>('knowledge');
+      const stats = await restored.stats();
+      assert.equal(stats.documents, 1);
+      assert.equal(stats.chunks, document.chunkIds.length);
+      const hits = await restored.retrieve('cobalt narwhal silent archive', { topK: 1 });
+      assert.ok(hits.some((hit) => hit.document.id === document.id), 'expected persisted semantic retrieval hit after restart');
+    } finally {
+      try { await first.shutdown(); } catch { /* cleanup after failed boot/test */ }
+      try { await second.shutdown(); } catch { /* cleanup after failed boot/test */ }
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 
   it('deletes documents, chunks, and vectors', async () => {
