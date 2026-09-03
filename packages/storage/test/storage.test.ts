@@ -169,6 +169,15 @@ describe('FsDriver', () => {
     await restarted.close();
   });
 
+  it('reacquires its local root when reused after an orderly close', async () => {
+    const first = await driver.openCollection<{ id: string; value: string }>('reused');
+    await first.put({ id: 'saved', value: 'survives-reopen' });
+    await driver.close();
+
+    const reopened = await driver.openCollection<{ id: string; value: string }>('reused');
+    assert.deepEqual(await reopened.get('saved'), { id: 'saved', value: 'survives-reopen' });
+  });
+
   it('persists collections as JSONL', async () => {
     const col = await driver.openCollection<{ id: string; v: number }>('items');
     await col.put({ id: 'x', v: 1 });

@@ -814,7 +814,15 @@ export class FsDriver implements IStorageDriver {
   }
 
   private async ensureReady(): Promise<FsRootState> {
-    if (this.closed) throw new Error('Filesystem storage driver is closed.');
+    // Match the memory driver's reset/reopen behavior after an orderly close,
+    // while still rejecting an open attempted during an in-progress close.
+    if (this.closed) {
+      if (!this.released) throw new Error('Filesystem storage driver is closing.');
+      this.closed = false;
+      this.released = false;
+      this.state = undefined;
+      this.ready = undefined;
+    }
     if (this.state) return this.state;
     if (!this.ready) {
       this.ready = acquireRoot(this.root)
@@ -873,11 +881,15 @@ export class FsDriver implements IStorageDriver {
       try {
         state = await this.ready;
       } catch {
+        this.state = undefined;
+        this.ready = undefined;
         this.released = true;
         return;
       }
     }
     if (state) await releaseRoot(state);
+    this.state = undefined;
+    this.ready = undefined;
     this.released = true;
   }
 }
