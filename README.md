@@ -7,6 +7,11 @@ event-driven API you can embed in any Node.js application or run from the CLI.
 Individual capabilities carry explicit verification and external-access status;
 this repository does not claim a live production deployment by default.
 
+> **Storage status:** `STORAGE_DRIVER=filesystem` is a development-only,
+> single-process local mode. It is not transactional, multi-process,
+> multi-host, or authoritative production storage. See
+> [`docs/PERSISTENCE_ARCHITECTURE.md`](docs/PERSISTENCE_ARCHITECTURE.md).
+
 ## Architecture
 
 ```
@@ -21,7 +26,7 @@ this repository does not claim a live production deployment by default.
 ├─────────────────────────────────────────────────────────────┤
 │  Vector Search  (embeddings + brute-force flat index)       │
 ├─────────────────────────────────────────────────────────────┤
-│  Storage Layer  (Memory / Filesystem drivers, KV+Docs+Blobs)│
+│  Storage Layer  (Memory / dev-only single-process FS, KV+Docs+Blobs) │
 ├─────────────────────────────────────────────────────────────┤
 │                        Core Kernel                          │
 │   Event Bus  ·  DI Container  ·  Lifecycle  ·  Config/Log   │
@@ -33,9 +38,9 @@ this repository does not claim a live production deployment by default.
 | Package | Description |
 |---|---|
 | `@jataqi/core-kernel` | Event bus, DI container, topological module lifecycle, config, structured logging |
-| `@jataqi/storage` | Pluggable KV / document collection / blob storage with in-memory and filesystem drivers |
-| `@jataqi/vector-search` | Embedding models (hash, OpenAI), brute-force flat vector index with cosine/euclidean/dot, manual persistence |
-| `@jataqi/knowledge-service` | Document/chunk model, paragraph+sentence+fixed chunker, semantic retrieval with context expansion |
+| `@jataqi/storage` | Pluggable KV / document collection / blob storage with in-memory and **development-only single-process** filesystem drivers |
+| `@jataqi/vector-search` | Embedding models (hash, OpenAI), brute-force flat vector index with cosine/euclidean/dot, development snapshot persistence |
+| `@jataqi/knowledge-service` | Document/chunk model, paragraph+sentence+fixed chunker, semantic retrieval with context expansion and development filesystem index restoration |
 | `@jataqi/knowledge-graph` | Entities, relations, SPO triple store, BFS traversal, heuristic extractor, Graph-RAG fusion |
 | `@jataqi/agent-runtime` | Tool system, ReAct agent loop, Echo/Scripted/OpenAI LLMs, built-in knowledge+graph tools, session memory |
 | `@jataqi/commercial-control-plane` | Default-deny commercial decision, policy, approval, budget, consent, state-machine, event, experiment, and tamper-evident action-ledger boundary |
@@ -109,16 +114,23 @@ node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
 ```
 
-## Configuring for production
+## Local development configuration
 
-Copy `.env.example` to `.env` and set:
+Copy `.env.example` to `.env` for local development or deterministic testing:
 
-- `STORAGE_DRIVER=filesystem` (persists to `STORAGE_FS_ROOT`)
-- `VECTOR_MODEL=openai` with `OPENAI_API_KEY` and `OPENAI_EMBEDDING_MODEL`
-- `AGENT_LLM=openai` with `OPENAI_CHAT_MODEL` (e.g. `gpt-4o-mini`)
-- `LOG_LEVEL=info` (or `debug` for development)
+- `STORAGE_DRIVER=memory` is the default ephemeral mode.
+- `STORAGE_DRIVER=filesystem` persists local development state to
+  `STORAGE_FS_ROOT`, but supports **one process per root only** and is not
+  production storage.
+- `VECTOR_MODEL=openai` and `AGENT_LLM=openai` configure optional external
+  model adapters when their API key/model settings are supplied. They do not
+  create a production deployment or authorize external actions.
+- `LOG_LEVEL=info` (or `debug` for development).
 
-The CLI auto-loads `.env`; library users call `createJataQiFromEnv()`.
+The CLI auto-loads `.env`; library users call `createJataQiFromEnv()`. A
+production persistence/control-plane design is documented in
+[`docs/PERSISTENCE_ARCHITECTURE.md`](docs/PERSISTENCE_ARCHITECTURE.md), but is
+not implemented in this repository.
 
 ## Commercial control-plane safety
 
@@ -179,10 +191,10 @@ node examples/demo.mjs
 ## Repository status
 
 - ✅ Core Kernel (event bus, DI, lifecycle, config, logging)
-- ✅ Storage Layer (memory + filesystem, KV/collections/blobs, pagination)
-- ✅ Vector Search (hash + OpenAI embeddings, cosine/euclidean/dot, manual index persistence)
-- ✅ Knowledge Service (ingestion, chunking, retrieval, metadata filters, context expansion)
-- ✅ Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG)
+- ✅ Development Storage Layer (memory + **single-process/non-production** filesystem KV/collections/blobs, pagination)
+- ✅ Development Vector Search (hash + OpenAI embeddings, cosine/euclidean/dot, local snapshot persistence)
+- ✅ Development Knowledge Service (ingestion, chunking, retrieval, metadata filters, context expansion, local restart restoration)
+- ✅ Development Knowledge Graph (entities, triples, traversal, heuristic extraction, graph-RAG, orderly-shutdown snapshots)
 - ✅ Agent Runtime (tools, ReAct loop, Echo/Scripted/OpenAI LLMs, built-in tools, session memory)
 - ✅ Commercial Control Plane (default-deny policy/authorization, approvals, budgets, consent, lifecycle state, events, experiments, action ledger)
 - ✅ Autonomous Action Runtime (explicit adapters, bounded retries/timeouts, dry-runs, verification/rollback recording)

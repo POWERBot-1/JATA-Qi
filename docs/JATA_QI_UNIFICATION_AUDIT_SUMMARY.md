@@ -1,5 +1,12 @@
 # JATA Qi Unification Audit — Summary (in-repo digest)
 
+> **Current status note — 2026-09-03:** This is a historical unification digest,
+> not a current production-readiness assessment. Its historical `P0=0` statement
+> is superseded for filesystem persistence by
+> [`PERSISTENCE_ARCHITECTURE.md`](PERSISTENCE_ARCHITECTURE.md): filesystem mode is
+> development-only/single-process and the transactional production replacement is
+> still a design, not an implementation.
+
 Companion to `docs/JATA_QI_RECOVERY_MANIFEST.md`. Full 14-part dossier + machine-readable
 `unification-audit.json` are preserved out-of-tree at `/home/user/recovery/jata-qi-unification-audit/`.
 

@@ -58,7 +58,13 @@ export class VectorSearchModule implements IModule {
   }
 
   async stop(_kernel: KernelApi): Promise<void> {
-    for (const idx of this.indexes.values()) await idx.clear();
+    // Persist every opened index before clearing the in-memory cache. This gives
+    // development filesystem users a safe orderly-shutdown path; abrupt process
+    // loss is still not a transactional durability guarantee.
+    for (const [name, idx] of this.indexes) {
+      await this.persist(name);
+      await idx.clear();
+    }
     this.indexes.clear();
   }
 
@@ -114,11 +120,14 @@ export class VectorSearchModule implements IModule {
     };
     const col = await storage.collection<PersistedRow>(`__vector__:${indexName}`);
     const entries = idx.entries();
-    // Clear and rewrite for simplicity; this is a snapshot, not a WAL.
-    await col.clear();
-    for (const rec of entries) {
-      await col.put({ id: rec.id, dim: rec.dim, vector: Array.from(rec.vector), metadata: rec.metadata });
-    }
+    // One complete snapshot replacement avoids O(n²) collection rewrites. It
+    // remains a development snapshot, not a write-ahead log or transaction.
+    await col.replaceAll(entries.map((rec) => ({
+      id: rec.id,
+      dim: rec.dim,
+      vector: Array.from(rec.vector),
+      metadata: rec.metadata,
+    })));
     this.api.logger.debug(`persisted index "${indexName}" (${entries.length} vectors)`);
   }
 

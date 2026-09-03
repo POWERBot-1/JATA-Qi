@@ -61,7 +61,8 @@ export class KnowledgeGraphModule implements IModule {
     this.entitiesCol = await storage.collection<PersistedEntity>('__kg__.entities');
     this.triplesCol = await storage.collection<PersistedTriple>('__kg__.triples');
     this.vectors = kernel.getModule<VectorSearchModule>('vector-search');
-    await this.vectors.index(this.entityIndexName);
+    // Restore the known graph entity index when a development snapshot exists.
+    await this.vectors.load(this.entityIndexName);
     kernel.container.registerValue('graph.store', this.store);
     kernel.container.registerValue('graph.module', this);
     await this.loadFromStorage();
@@ -88,6 +89,8 @@ export class KnowledgeGraphModule implements IModule {
   async start(_kernel: KernelApi): Promise<void> { /* no background work */ }
 
   async stop(_kernel: KernelApi): Promise<void> {
+    // Graph mutation APIs are synchronous. Persist one coherent snapshot during
+    // orderly shutdown instead of racing unawaited full-file writes per entity.
     await this.persist();
   }
 
@@ -96,7 +99,6 @@ export class KnowledgeGraphModule implements IModule {
   addEntity(input: Omit<Entity, 'createdAt' | 'updatedAt'> & { createdAt?: number }): Entity {
     const existing = this.store.getEntity(input.id);
     const ent = this.store.upsertEntity(createEntity(input));
-    void this.entitiesCol.put(ent);
     void this.api.bus.emit(existing ? GraphEvents.EntityUpdated : GraphEvents.EntityAdded, { id: ent.id, type: ent.type });
     return ent;
   }
@@ -115,7 +117,6 @@ export class KnowledgeGraphModule implements IModule {
   removeEntity(id: EntityId): boolean {
     const removed = this.store.removeEntity(id);
     if (removed) {
-      void this.entitiesCol.delete(id);
       void this.api.bus.emit(GraphEvents.EntityRemoved, { id });
     }
     return removed;
@@ -130,7 +131,6 @@ export class KnowledgeGraphModule implements IModule {
     source?: { chunkId?: string; documentId?: string };
   }): Triple {
     const t = this.store.addTriple(createTriple(input));
-    void this.triplesCol.put(t);
     void this.api.bus.emit(GraphEvents.TripleAdded, { id: t.id, subject: t.subject, predicate: t.predicate, object: t.object });
     return t;
   }
@@ -138,7 +138,6 @@ export class KnowledgeGraphModule implements IModule {
   removeTriple(id: TripleId): boolean {
     const removed = this.store.removeTriple(id);
     if (removed) {
-      void this.triplesCol.delete(id);
       void this.api.bus.emit(GraphEvents.TripleRemoved, { id });
     }
     return removed;
@@ -243,12 +242,10 @@ export class KnowledgeGraphModule implements IModule {
     return out;
   }
 
-  /** Persist all entities/triples to the storage collection (called on stop; safe to call manually). */
+  /** Persist all entities/triples to storage as one snapshot per collection. */
   async persist(): Promise<void> {
-    await this.entitiesCol.clear();
-    await this.triplesCol.clear();
-    for (const e of this.store.allEntities()) await this.entitiesCol.put(e as PersistedEntity);
-    for (const t of this.allTriples()) await this.triplesCol.put(t as PersistedTriple);
+    await this.entitiesCol.replaceAll(this.store.allEntities() as PersistedEntity[]);
+    await this.triplesCol.replaceAll(this.allTriples() as PersistedTriple[]);
   }
 
   /** Iterate all triples in the store. */

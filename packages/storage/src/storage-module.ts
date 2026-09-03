@@ -10,9 +10,9 @@ import {
 } from './types.js';
 
 export interface StorageModuleConfig {
-  /** 'memory' (default) or 'filesystem'. SQLite added later. */
+  /** 'memory' (default) or development-only single-process 'filesystem'. */
   driver?: 'memory' | 'filesystem' | string;
-  /** Root dir for filesystem driver. */
+  /** Development-only root dir for the filesystem driver; never authoritative production state. */
   fsRoot?: string;
   /** Pre-configured driver instance (overrides driver option). */
   driverInstance?: IStorageDriver;
@@ -57,6 +57,9 @@ export class StorageModule implements IModule {
     kernel.container.registerValue('storage.module', this);
     kernel.container.registerFactory('storage', () => this);
     kernel.logger.info(`storage driver initialized: ${this.driver.id}`);
+    if (this.driver.id === 'filesystem') {
+      kernel.logger.warn('filesystem storage is development-only, single-process, and not authoritative production persistence');
+    }
     await kernel.bus.emit(StorageEvents.DriverRegistered, { driverId: this.driver.id });
   }
 

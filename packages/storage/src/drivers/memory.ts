@@ -111,8 +111,17 @@ export class MemoryCollection<T extends { id: string }> implements ICollection<T
   async count(): Promise<number> {
     return this.store.size;
   }
+  async replaceAll(docs: readonly T[]): Promise<void> {
+    const next = new Map<string, T>();
+    for (const doc of docs) {
+      if (!doc.id) throw new Error(`Collection "${this.name}": document must have an id`);
+      if (next.has(doc.id)) throw new Error(`Collection "${this.name}": duplicate document id "${doc.id}" in replacement snapshot`);
+      next.set(doc.id, doc);
+    }
+    this.store = next;
+  }
   async clear(): Promise<void> {
-    this.store.clear();
+    await this.replaceAll([]);
   }
 }
 

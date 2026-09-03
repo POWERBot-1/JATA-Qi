@@ -39,8 +39,9 @@ export interface QueryOptions<T> {
 }
 
 /**
- * A Namespace is a logical key-value bucket. Backed by memory, disk, SQLite, etc.
- * All methods are async to accommodate any backend.
+ * A Namespace is a logical key-value bucket. The bundled filesystem driver is
+ * development-only/single-process; a future transactional backend is required
+ * for authoritative production state. All methods are async to accommodate it.
  */
 export interface INamespace {
   readonly name: string;
@@ -69,6 +70,8 @@ export interface ICollection<T extends { id: string } = { id: string }> {
   query(opts?: QueryOptions<T>): Promise<T[]>;
   all(): Promise<T[]>;
   count(): Promise<number>;
+  /** Replace the complete collection atomically where the selected driver supports it. */
+  replaceAll(docs: readonly T[]): Promise<void>;
   clear(): Promise<void>;
 }
 
