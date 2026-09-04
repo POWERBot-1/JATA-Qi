@@ -7,9 +7,10 @@ import { StorageModule } from '@jataqi/storage';
 import { VectorSearchModule } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
-import { CommercialControlPlaneModule, type CommercialActor } from '@jataqi/commercial-control-plane';
+import { CommercialControlPlaneModule, type CommercialActor, type CommercialEvidence } from '@jataqi/commercial-control-plane';
 import { AutonomousActionRuntimeModule, type ActionExecutionAdapter } from '@jataqi/autonomous-action-runtime';
 import { ExternalConnectorModule } from '@jataqi/external-connectors';
+import { InfrastructureStateRegistryModule } from '@jataqi/infrastructure-state-registry';
 import { PaymentsModule } from '@jataqi/payments';
 import { BillingModule } from '@jataqi/billing';
 import { RevenueLedgerModule } from '@jataqi/revenue-ledger';
@@ -36,8 +37,8 @@ import { ResearchEvidenceModule } from '@jataqi/research-evidence';
 import { HumanApprovalModule } from '@jataqi/human-approval';
 import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
-import { CapabilityFabricModule } from '@jataqi/capability-fabric';
-import { UnifiedLoopModule } from '../src/index.js';
+import { CapabilityFabricModule, type CapabilityLifecycleState } from '@jataqi/capability-fabric';
+import { buildDefaultCapabilities, UnifiedLoopModule } from '../src/index.js';
 
 export interface Harness {
   kernel: ReturnType<typeof createTestKernel>;
@@ -49,7 +50,14 @@ export interface Harness {
   createPolicy(admin: CommercialActor, opts: { actionType: string; allowExecution?: boolean; maxAutonomy?: 1 | 2 | 3; maxRisk?: number }): Promise<void>;
 }
 
-export async function buildHarness(): Promise<Harness> {
+export interface HarnessOptions {
+  /** Seed capability-fabric grants for governed execution capabilities (default true). */
+  seedGrants?: boolean;
+  /** Seed an active default regulatory gate for W23 gate tests (default true). */
+  seedRegulatoryGate?: boolean;
+}
+
+export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> {
   // Deterministic monotonic clock.
   let t = 1_700_000_000_000;
   const now = (): number => t;
@@ -61,6 +69,7 @@ export async function buildHarness(): Promise<Harness> {
   kernel.register(new CommercialControlPlaneModule({ now }));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
+  kernel.register(new InfrastructureStateRegistryModule());
   kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 128 }));
   kernel.register(new KnowledgeService());
   kernel.register(new KnowledgeGraphModule({}));
@@ -100,6 +109,9 @@ export async function buildHarness(): Promise<Harness> {
 
   const runtime = kernel.getModule<AutonomousActionRuntimeModule>('autonomous-action-runtime').getService();
   const control = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
+
+  if (opts.seedGrants !== false) await seedGovernedCapabilityGrants(kernel, actor, admin);
+  if (opts.seedRegulatoryGate !== false) await seedDefaultRegulatoryGate(kernel, admin);
 
   return {
     kernel,
@@ -157,6 +169,95 @@ export function sandboxAdapter(
       };
     },
   };
+}
+
+async function seedGovernedCapabilityGrants(
+  kernel: ReturnType<typeof createTestKernel>,
+  actor: CommercialActor,
+  admin: CommercialActor,
+): Promise<void> {
+  const fabric = kernel.getModule<CapabilityFabricModule>('capability-fabric').getService();
+  const caps = buildDefaultCapabilities().filter((c) => c.requiredGrants.length > 0);
+  const now = Date.now();
+  const provenance = { source: 'unified-loop-test', collectedAt: now };
+  const evidence = (id: string): CommercialEvidence => ({
+    id,
+    status: 'OBSERVED',
+    source: 'unified-loop-test',
+    observedAt: now,
+    confidence: 100,
+    summary: 'Seeded governed capability lifecycle evidence.',
+    provenance,
+  });
+  const transitions: CapabilityLifecycleState[] = [
+    'DISCOVERED',
+    'REGISTERED',
+    'VERIFIED',
+    'SANDBOXED',
+    'CERTIFIED',
+    'AVAILABLE',
+  ];
+  for (const cap of caps) {
+    const registered = await fabric.registerCapability(admin, {
+      name: cap.capabilityId,
+      version: '0.1.0',
+      capabilityClass: 'AGENT_ORCHESTRATION',
+      description: `Governed unified-loop capability ${cap.operation}.`,
+      requiredPermissionIds: [...cap.requiredGrants],
+      safetyClass: 'CLASS_1_REVERSIBLE_DIGITAL',
+      riskScore: 20,
+      authorizationPolicySummary: 'Granted only for governed unified-loop execution.',
+      verificationMethod: 'unified-loop',
+      provenance,
+    });
+    let current = registered;
+    for (const state of transitions) {
+      current = await fabric.transitionCapability(admin, current.id, {
+        state,
+        reason: `Seed ${state} for W23 governed capability.`,
+        evidence: [evidence(`seed:${cap.capabilityId}:${state}`)],
+        provenance,
+      });
+    }
+    await fabric.grantCapability(admin, current.id, {
+      subjectActorId: actor.id,
+      permissionIds: [...cap.requiredGrants],
+      provenance,
+    });
+  }
+}
+
+async function seedDefaultRegulatoryGate(
+  kernel: ReturnType<typeof createTestKernel>,
+  admin: CommercialActor,
+): Promise<void> {
+  const regulatory = kernel.getModule<RegulatoryGateModule>('regulatory-gates').getService();
+  const now = Date.now();
+  const gate = await regulatory.createGate(admin, {
+    name: 'W23 default regulatory gate',
+    jurisdictionLabel: 'demo',
+    regulatoryContextSummary: 'Local demo gate for W23 human/regulatory integration tests.',
+    domainScopes: ['ALL'],
+    safetyClassifications: ['STANDARD'],
+    requirements: [
+      {
+        id: 'human-review',
+        kind: 'HUMAN_APPROVAL',
+        label: 'Human safety/regulatory review',
+        rationaleSummary: 'Requires the configured human review quorum before a local review pass is recorded.',
+        requiredHumanReviewTypes: ['SAFETY', 'REGULATORY'],
+        minimumApprovedRequests: 1,
+      },
+      {
+        id: 'external-confirmation',
+        kind: 'EXTERNAL_REGULATORY_CONFIRMATION',
+        label: 'External regulatory confirmation',
+        rationaleSummary: 'External confirmation remains pending; this registry never authorizes based on it.',
+      },
+    ],
+    provenance: { source: 'unified-loop-test', collectedAt: now },
+  });
+  await regulatory.activateGate(admin, gate.id);
 }
 
 export const OBSERVATIONS = [

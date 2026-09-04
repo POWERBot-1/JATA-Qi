@@ -159,6 +159,12 @@ export interface LoopTask {
    * pure reasoning task (the loop will then reach POLICY and hold the boundary).
    */
   proposedAction?: ProposedAction;
+  /**
+   * Optional guarded identity boundary: when explicitly supplied, WAKE may
+   * read/verify it through permanence-fabric. The loop never creates or issues
+   * identity material and never calls signer-dependent APIs.
+   */
+  identityId?: string;
   /** Desired continuation policy; default TERMINATE. */
   continuation?: 'TERMINATE' | 'SLEEP';
 }
@@ -175,6 +181,12 @@ export interface ProposedAction {
   evidenceStrength: number;
   /** Requested autonomy level 1..3 (3 = highest delegable authority). */
   authorizationLevel: number;
+  /**
+   * Explicitly require the human/regulatory gate (regardless of autonomy
+   * level). High autonomy (>=3) always implies a gate. Never satisfied by the
+   * loop itself.
+   */
+  gateRequired?: boolean;
   /** Product/venture context for the commercial decision. */
   productId: string;
   ventureId?: string;

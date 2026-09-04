@@ -31,6 +31,16 @@ export class UnifiedLoopModule implements IModule {
     'meta-reasoning',
     'reconciliation',
     'commercial-memory',
+    'research-evidence',
+    'human-approval',
+    'regulatory-gates',
+    'capability-fabric',
+    'external-connectors',
+    'permanence-fabric',
+    'commercial-health',
+    'commercial-command-center',
+    'infrastructure-state-registry',
+    'commercial-observability',
   ] as const;
 
   private service: UnifiedLoopService | undefined;
