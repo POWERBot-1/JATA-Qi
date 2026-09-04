@@ -44,6 +44,7 @@ import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
 import { CapabilityFabricModule } from '@jataqi/capability-fabric';
 import { UnifiedLoopModule } from '@jataqi/unified-loop';
+import { LoopHostModule } from '@jataqi/loop-host';
 import {
   AgentRuntimeModule,
   EchoLLM,
@@ -66,6 +67,13 @@ export interface JataQiConfig {
   commercialControlPlane?: CommercialControlPlaneConfig;
   /** Agent runtime config. */
   agent?: AgentModuleConfig;
+  /**
+   * O-01 continuous-operation host. Disabled by default: the module is only
+   * registered when `enabled` is explicitly true, and even then the host
+   * starts IDLE — an operator must call `start()` and `tick()`/`recover()`.
+   * There is no automatic production start.
+   */
+  loopHost?: { enabled?: boolean; leaseTtlMs?: number; maxBatch?: number; sleepDelayMs?: number; autoTickMs?: number };
 }
 
 export interface JataQiInstance {
@@ -137,6 +145,18 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // orchestration over the existing fabric; it adds no engine and performs no
   // external action unless explicitly governed and authorized.
   kernel.register(new UnifiedLoopModule());
+  // O-01: durable continuous-operation host driver. Opt-in only (disabled by
+  // default); registers IDLE and never auto-starts background work.
+  if (cfg.loopHost?.enabled === true) {
+    kernel.register(
+      new LoopHostModule({
+        leaseTtlMs: cfg.loopHost.leaseTtlMs,
+        maxBatch: cfg.loopHost.maxBatch,
+        sleepDelayMs: cfg.loopHost.sleepDelayMs,
+        autoTickMs: cfg.loopHost.autoTickMs,
+      }),
+    );
+  }
 
   await kernel.boot();
   return {

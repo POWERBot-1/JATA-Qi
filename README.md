@@ -223,8 +223,14 @@ node examples/demo.mjs
 - ✅ Research Evidence Foundation (tenant-bound high-level claim/evidence provenance, reproducibility references, regulated-domain human/review routing, and no physical execution capability)
 - ✅ Human Approval Foundation (upstream attestation records, competency-aware research review quorum, immutable vote ledger, and no physical-execution authorization)
 - ✅ Regulatory Gate Foundation (administrator-managed local evidence/reproducibility/human-review checklists, explicit external-verification pending state, and no compliance/physical-authorization claim)
+- ✅ Loop Host Driver (O-01 scheduler/wake/leased-queue/checkpoint-resume over the governed loop; opt-in `loopHost.enabled`, idle by default, no auto-start; crash detection + resume-or-fail-closed on the available storage abstraction, not production durability)
 - ✅ CLI + Bootstrap (.env support, ask/ingest/stats/search/entities/repl)
 - ⬜ GitHub recovery, remote push, and pull-request operations (`PENDING_EXTERNAL_ACCESS`; no remote write is claimed from this checkout)
+
+## License
+
+MIT
+ no remote write is claimed from this checkout)
 
 ## License
 

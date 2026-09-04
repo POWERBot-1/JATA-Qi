@@ -61,6 +61,7 @@
     "@jataqi/permanence-fabric": "0.1.0",
     "@jataqi/capability-fabric": "0.1.0",
     "@jataqi/unified-loop": "0.1.0",
+    "@jataqi/loop-host": "0.1.0",
     "@jataqi/agent-runtime": "0.1.0"
   },
   "devDependencies": {
