@@ -42,6 +42,7 @@ import { HumanApprovalModule } from '@jataqi/human-approval';
 import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
 import { CapabilityFabricModule } from '@jataqi/capability-fabric';
+import { LoopHostModule } from '@jataqi/loop-host';
 describe('createJataQi bootstrap', () => {
   it('boots the full stack and exposes all modules', async () => {
     const qi = await createJataQi();
@@ -89,6 +90,16 @@ describe('createJataQi bootstrap', () => {
     assert.ok(qi.kernel.getModule<CommercialCommandCenterModule>('commercial-command-center'));
     await qi.shutdown();
     assert.equal(qi.kernel.isBooted(), false);
+  });
+
+  it('leaves the O-01 loop host unregistered by default; opt-in registers it IDLE', async () => {
+    const plain = await createJataQi();
+    assert.throws(() => plain.kernel.getModule('loop-host'), /loop-host/);
+    await plain.shutdown();
+    const opted = await createJataQi({ loopHost: { enabled: true } });
+    const host = opted.kernel.getModule<LoopHostModule>('loop-host').getService();
+    assert.equal(host.getLifecycle(), 'IDLE');
+    await opted.shutdown();
   });
 
   it('runs a simple question against the default agent', async () => {
