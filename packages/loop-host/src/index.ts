@@ -3,6 +3,7 @@ export { LoopHostService, type LoopRunner, type LoopHostConfig } from './host-se
 export { WorkQueue, WORK_COLLECTION, computeBackoffMs } from './work-queue.js';
 export { CheckpointJournal, CHECKPOINT_COLLECTION, canonicalJson, sha256Hex, fingerprintTask } from './checkpoints.js';
 export { isDispatchEligible, isReclaimable, nextWakeInMs } from './scheduler.js';
+export { HostRuntime, assertDurableStorage, isDurableDriver, type HostRuntimeConfig } from './runtime.js';
 export { LoopHostEvents, LOOP_HOST_CHECKPOINT_SCHEMA_VERSION } from './types.js';
 export {
   LoopHostError,
@@ -13,6 +14,8 @@ export {
   IncompatibleCheckpointError,
   InvalidWorkTransitionError,
   HostLifecycleError,
+  HostRuntimeError,
+  NonDurableStorageError,
 } from './types.js';
 export type {
   HostedWorkItem,
@@ -26,4 +29,6 @@ export type {
   TickSummary,
   RecoverSummary,
   LoopHostAuditEvent,
+  HostRuntimeStatus,
+  HostRuntimeCycle,
 } from './types.js';

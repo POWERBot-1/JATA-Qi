@@ -140,6 +140,24 @@ export interface RecoverSummary {
   untouched: number;
 }
 
+/** R-01 supervision status of the host runtime process. */
+export type HostRuntimeStatus = 'CREATED' | 'STARTING' | 'RUNNING' | 'STOPPING' | 'STOPPED';
+
+/**
+ * R-01 record of one completed supervision cycle. Observability only: it
+ * carries no task content and confers no authority.
+ */
+export interface HostRuntimeCycle {
+  index: number;
+  at: number;
+  examined: number;
+  dispatched: number;
+  completed: number;
+  sleeping: number;
+  /** Set when the cycle's tick threw; the runtime continues fail-closed. */
+  error?: string;
+}
+
 /** Privacy-minimized host lifecycle event payload (no task content, no secrets). */
 export interface LoopHostAuditEvent {
   workId?: string;
@@ -171,6 +189,9 @@ export const LoopHostEvents = Object.freeze({
   Sleeping: 'loop-host.work.sleeping',
   HostStarted: 'loop-host.host.started',
   HostStopped: 'loop-host.host.stopped',
+  // R-01 supervision lifecycle (process-level, not work-level).
+  RuntimeStarted: 'loop-host.runtime.started',
+  RuntimeStopped: 'loop-host.runtime.stopped',
 } as const);
 
 export class LoopHostError extends Error {
@@ -227,5 +248,25 @@ export class HostLifecycleError extends LoopHostError {
   constructor(message: string) {
     super(message);
     this.name = 'HostLifecycleError';
+  }
+}
+
+/** R-01: invalid host-runtime supervision configuration or lifecycle use. */
+export class HostRuntimeError extends LoopHostError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'HostRuntimeError';
+  }
+}
+
+/**
+ * R-01: an unattended host refused to start because the resolved storage
+ * driver is development-only and would lose state. Fail-closed, never a
+ * silent degrade to memory.
+ */
+export class NonDurableStorageError extends LoopHostError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NonDurableStorageError';
   }
 }

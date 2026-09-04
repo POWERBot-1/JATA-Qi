@@ -53,6 +53,7 @@ import {
   type ILLM,
 } from '@jataqi/agent-runtime';
 import { readConfig } from './config.js';
+import { resolveStorageDriver } from './storage-driver.js';
 
 export interface JataQiConfig {
   /** Kernel-level overrides. */
@@ -168,6 +169,12 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 /** Build JATA Qi using environment variables / .env (see .env.example). */
 export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise<JataQiInstance> {
   const env = readConfig();
+  // R-01: resolve a durable driver instance when one is selected by name.
+  // Returns undefined for memory/filesystem so default behaviour is unchanged.
+  // Fails closed (throws) when 'postgres' is selected without configuration.
+  const driverName = overrides.storage?.driver ?? env.STORAGE_DRIVER ?? 'memory';
+  const resolvedDriver =
+    overrides.storage?.driverInstance ?? (await resolveStorageDriver(String(driverName)));
   const llm: ILLM =
     overrides.agent?.llm ??
     (env.AGENT_LLM === 'openai' && env.OPENAI_API_KEY
@@ -175,9 +182,12 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
       : new EchoLLM());
   return createJataQi({
     storage: {
-      driver: env.STORAGE_DRIVER as any ?? 'memory',
+      driver: (driverName as any) ?? 'memory',
       fsRoot: env.STORAGE_FS_ROOT,
       ...(overrides.storage ?? {}),
+      // A resolved durable instance wins: StorageModule then never looks the
+      // driver up by name (it cannot resolve 'postgres' without inverting deps).
+      ...(resolvedDriver ? { driverInstance: resolvedDriver } : {}),
     },
     vector: {
       model: (env.VECTOR_MODEL as any) ?? 'hash',
@@ -192,6 +202,9 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     graph: overrides.graph,
     commercialControlPlane: overrides.commercialControlPlane,
     kernel: overrides.kernel,
+    // R-01: forward the host opt-in. Still disabled unless a caller explicitly
+    // sets it (the `jataqi host` command does); default remains off.
+    loopHost: overrides.loopHost,
   });
 }
 
