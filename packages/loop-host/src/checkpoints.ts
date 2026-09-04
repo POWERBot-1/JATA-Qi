@@ -6,7 +6,7 @@
 // SHA-256 integrity tag. Anything missing, corrupt, incompatible, or
 // ambiguous throws; callers must fail closed.
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
@@ -22,6 +22,17 @@ import {
 } from './types.js';
 
 export const CHECKPOINT_COLLECTION = 'loop-host.checkpoints';
+
+/**
+ * Deterministic checkpoint id derived from the work item and its monotonic
+ * sequence. This makes a checkpoint row for a given (work item, sequence)
+ * single-valued, so a concurrent writer can never silently create a divergent
+ * duplicate for the same sequence; ordering is enforced by the work item's
+ * atomic sequence advance (see WorkQueue.markDispatched CAS).
+ */
+export function checkpointIdFor(workItemId: string, sequence: number): string {
+  return `ckpt:${workItemId}#${sequence}`;
+}
 
 /** Deterministic canonical JSON (sorted keys) for hashing and fingerprinting. */
 export function canonicalJson(value: unknown): string {
@@ -118,7 +129,11 @@ export class CheckpointJournal {
       taskFingerprint: fingerprintTask(item.task),
       createdAt: at,
     };
-    const checkpoint: LoopCheckpoint = { ...core, id: randomUUID(), integrity: sha256Hex(canonicalJson(core)) };
+    const checkpoint: LoopCheckpoint = {
+      ...core,
+      id: checkpointIdFor(item.id, sequence),
+      integrity: sha256Hex(canonicalJson(core)),
+    };
     await this.checkpoints.put(checkpoint);
     return copy(checkpoint);
   }

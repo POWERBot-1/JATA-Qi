@@ -59,6 +59,8 @@ export interface HarnessOptions {
   hostId?: string;
   leaseTtlMs?: number;
   sleepDelayMs?: number;
+  /** Inject a specific storage module (e.g. PostgreSQL-backed) instead of default memory. */
+  storageModule?: StorageModule;
 }
 
 export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -67,7 +69,7 @@ export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> 
   const advance = (ms: number): void => { t += ms; };
 
   const kernel = createTestKernel();
-  kernel.register(new StorageModule());
+  kernel.register(opts.storageModule ?? new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now }));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());

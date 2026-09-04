@@ -1,6 +1,7 @@
 // In-memory storage driver. Used for tests, caches, and ephemeral environments.
 
 import {
+  CasWriteResult,
   Entry,
   EntryMeta,
   IBlobStore,
@@ -122,6 +123,18 @@ export class MemoryCollection<T extends { id: string }> implements ICollection<T
   }
   async clear(): Promise<void> {
     await this.replaceAll([]);
+  }
+
+  async cas(id: string, guard: (current: T | undefined) => boolean, makeNext: (current: T) => T): Promise<CasWriteResult<T>> {
+    // Single-threaded JS makes the read-guard-write below synchronous, so no
+    // await can interleave another writer between the read and the write. That
+    // makes this compare-and-swap atomic within one process.
+    const current = this.store.get(id);
+    if (!guard(current)) return { ok: false, doc: current };
+    const next = makeNext(current as T);
+    if (!next.id) throw new Error(`Collection "${this.name}": document must have an id`);
+    this.store.set(id, next);
+    return { ok: true, doc: next };
   }
 }
 

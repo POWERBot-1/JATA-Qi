@@ -1,7 +1,7 @@
 {
-  "name": "@jataqi/loop-host",
+  "name": "@jataqi/storage-postgres",
   "version": "0.1.0",
-  "description": "JATA Qi O-01 durable continuous-operation host — scheduler, wake-sleep, leased queue, and checkpoint-resume driver over the existing governed unified loop (not a second orchestrator)",
+  "description": "JATA Qi P-01 authoritative, transactional PostgreSQL storage driver implementing @jataqi/storage's IStorageDriver, ICollection compare-and-swap, and multi-operation transactions. Persistence only — no cognition, policy, or authorization.",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -23,14 +23,13 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@jataqi/commercial-control-plane": "0.1.0",
-    "@jataqi/core-kernel": "0.1.0",
     "@jataqi/storage": "0.1.0",
-    "@jataqi/unified-loop": "0.1.0"
+    "pg": "^8.11.3"
   },
   "devDependencies": {
-    "@jataqi/storage-postgres": "0.1.0",
+    "@jataqi/core-kernel": "0.1.0",
     "@types/node": "^20.11.0",
+    "@types/pg": "^8.11.0",
     "embedded-postgres": "^18.4.0-beta.17",
     "typescript": "^5.4.0"
   }
