@@ -16,6 +16,19 @@
 > F-01 remains open; **C-1** (loop orchestration) and **C-2** (AMBER engines in
 > unified-loop context) remain open. Verdict unchanged:
 > **CONDITIONALLY_UNIFIED**.
+>
+> **Status note — 2026-09-04 (W22):** Condition **C-1** (native in-repo loop
+> orchestration) is **addressed** by the new `@jataqi/unified-loop` package — a
+> deterministic 34-stage governed orchestrator that drives the existing engines
+> through a governed capability boundary (see
+> [`W22_NATIVE_ORCHESTRATION.md`](W22_NATIVE_ORCHESTRATION.md)). The loop is
+> in-repo, in-process, and single-task; it adds no engine and activates no
+> external side effect (sandbox adapters only). **C-2** is partially advanced
+> (multiple formerly-AMBER engines are now exercised natively) but not closed;
+> the older single-turn ReAct path in `agent-runtime` remains separate. **F-01**
+> remains open (loop events are well-formed on the in-memory bus, but the
+> two-plane split is not unified and there is no durable pump). Verdict unchanged:
+> **CONDITIONALLY_UNIFIED**.
 
 Companion to `docs/JATA_QI_RECOVERY_MANIFEST.md`. Full 14-part dossier + machine-readable
 `unification-audit.json` are preserved out-of-tree at `/home/user/recovery/jata-qi-unification-audit/`.

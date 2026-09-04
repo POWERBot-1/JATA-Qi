@@ -43,6 +43,7 @@ import { HumanApprovalModule } from '@jataqi/human-approval';
 import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
 import { CapabilityFabricModule } from '@jataqi/capability-fabric';
+import { UnifiedLoopModule } from '@jataqi/unified-loop';
 import {
   AgentRuntimeModule,
   EchoLLM,
@@ -132,6 +133,10 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
       ...cfg.agent,
     }),
   );
+  // W22 (C-1): native in-repo unified cognitive/execution loop driver. It owns
+  // orchestration over the existing fabric; it adds no engine and performs no
+  // external action unless explicitly governed and authorized.
+  kernel.register(new UnifiedLoopModule());
 
   await kernel.boot();
   return {
