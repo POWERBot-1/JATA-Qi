@@ -3,6 +3,8 @@
 
 import { createJataQiFromEnv } from './bootstrap.js';
 import { loadEnv } from './config.js';
+import { parseHostArgs, runHostCommand } from './host-command.js';
+import { runHostInspectCommand } from './host-inspect.js';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
@@ -21,12 +23,41 @@ Commands:
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
+
+Host runtime (R-01):
+  host [options]      Run the supervised, unattended governed host process.
+                      Requires a durable storage driver (STORAGE_DRIVER=postgres
+                      + JATAQI_PG_CONNECTION_STRING); refuses to start on
+                      development-only storage. Ctrl-C / SIGTERM drains cleanly.
+        --max-cycles <n>              Stop after n supervision cycles.
+        --min-idle-ms <n>             Floor on the pause between cycles.
+        --max-idle-ms <n>             Ceiling on the pause between cycles.
+        --allow-non-durable-storage   Local development only; state is lost.
+
+  host:work [status]  Read-only: list hosted work items (operator inspection).
+  host:dlq            Read-only: list dead-lettered / quarantined work items.
+  host:health         Read-only: print host lifecycle, storage driver, next wake.
+
+Host inspection commands are strictly read-only: they never dispatch, resume,
+retry, approve, or settle anything.
 `;
 
 async function main() {
   loadEnv();
   const args = process.argv.slice(2);
   const cmd = args[0] ?? 'repl';
+
+  // R-01: the host runtime and its read-only inspection commands own their own
+  // kernel lifecycle (the host module must be explicitly enabled for them), so
+  // they are dispatched before the standard agent-oriented boot below.
+  if (cmd === 'host') {
+    const code = await runHostCommand(parseHostArgs(args.slice(1)));
+    process.exit(code);
+  }
+  if (cmd === 'host:work' || cmd === 'host:dlq' || cmd === 'host:health') {
+    const code = await runHostInspectCommand(cmd, args.slice(1));
+    process.exit(code);
+  }
 
   const jataqi = await createJataQiFromEnv();
   const kernel = jataqi.kernel;

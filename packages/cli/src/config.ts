@@ -5,7 +5,8 @@ import * as path from 'node:path';
 
 export interface EnvConfig {
   LOG_LEVEL?: string;
-  STORAGE_DRIVER?: 'memory' | 'filesystem';
+  /** 'memory' | 'filesystem' (development-only) | 'postgres' (R-01 durable). */
+  STORAGE_DRIVER?: 'memory' | 'filesystem' | 'postgres';
   STORAGE_FS_ROOT?: string;
   VECTOR_MODEL?: 'hash' | 'openai';
   VECTOR_HASH_DIM?: number;
