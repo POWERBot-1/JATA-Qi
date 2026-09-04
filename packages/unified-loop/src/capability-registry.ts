@@ -43,6 +43,13 @@ export class CapabilityRegistry {
     this.byId.set(capability.capabilityId, capability);
   }
 
+  /** Stages that have a registered capability. T-01: used to detect
+   *  mandatory-stage gaps (a missing capability for a mandatory stage is
+   *  treated as a structural violation). */
+  registeredStages(): ReadonlySet<LoopStage> {
+    return new Set(this.byStage.keys());
+  }
+
   get(stage: LoopStage): GovernedCapability | undefined {
     return this.byStage.get(stage);
   }

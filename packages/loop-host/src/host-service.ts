@@ -369,22 +369,75 @@ export class LoopHostService {
 
       // 2. Whole-loop redispatch with a host-level time bound. The loop keeps
       // its own per-capability timeouts; this bound only classifies host waits.
+      //
+      // T-01: a timeout MUST NOT race a retry. When the host-level time
+      // bound fires, the runner is signalled to stop AND the host waits for
+      // the runner to actually settle (so a retry cannot run concurrently
+      // with a still-executing attempt). If the runner does not stop within
+      // a bounded grace period, the host leaves the work item in its current
+      // state (DISPATCHED) with the lease still held; the work item cannot
+      // be redispatched until the lease expires (and even then, recovery
+      // performs a full-loop redispatch — never a parallel retry). The
+      // work item's leaseToken is the ownership boundary: recordFailure /
+      // settleTerminal / markDispatched all require the live token, so even
+      // a leaked in-flight runner cannot issue a conflicting state mutation.
       const actor: CommercialActor = {
         id: dispatched.actor.id,
         tenantId: dispatched.actor.tenantId,
         roles: [...dispatched.actor.roles],
       };
-      const timeout = new Promise<never>((_, reject) => {
+      const runnerPromise = runner(actor, copy(dispatched.task), { correlationId: dispatched.correlationId, now: this.clock, signal: controller.signal });
+      const timeoutPromise = new Promise<never>((_, reject) => {
         const timer = setTimeout(() => reject(new Error(`Host dispatch timed out after ${this.leaseTtlMs} ms.`)), this.leaseTtlMs);
         if (typeof timer.unref === 'function') timer.unref();
       });
       let result: LoopRunResult;
       try {
-        result = await Promise.race([
-          runner(actor, copy(dispatched.task), { correlationId: dispatched.correlationId, now: this.clock, signal: controller.signal }),
-          timeout,
-        ]);
+        result = await Promise.race([runnerPromise, timeoutPromise]);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const timedOut = /timed out|timeout/i.test(message);
+        if (timedOut) {
+          // Signal the runner to stop, then wait for it to actually settle.
+          // We MUST wait here so a retry cannot execute concurrently with
+          // the still-running attempt.
+          controller.abort();
+          const settled = await Promise.race([
+            runnerPromise.then(() => 'settled' as const, () => 'settled' as const),
+            new Promise<'grace-expired'>((resolve) => {
+              const graceTimer = setTimeout(() => resolve('grace-expired'), this.leaseTtlMs);
+              if (typeof graceTimer.unref === 'function') graceTimer.unref();
+            }),
+          ]);
+          if (settled === 'grace-expired') {
+            // The runner did not stop in time. The ownership boundary
+            // (leaseToken) prevents ANY concurrent retry from issuing
+            // conflicting state mutations: recordFailure/settleTerminal/
+            // markDispatched all require the live token. We do not retry
+            // the work item; the lease stays held and the work item will
+            // be reclaimed at expiry by recovery (which re-dispatches
+            // from a clean state). The runner call is left to settle in
+            // the background.
+            this.api.logger.warn(
+              `loop-host dispatch ${leased.id}: runner did not stop within grace period after timeout; lease left held for expiry reclaim (no concurrent retry possible; ownership boundary enforced).`,
+            );
+            void this.emit(LoopHostEvents.Failed, {
+              workId: leased.id,
+              tenantId: leased.tenantId,
+              correlationId: leased.correlationId,
+              attempt: leased.attemptCount,
+              status: leased.status,
+              reason: `Runner did not honour abort within grace period after timeout; left for recovery.`,
+              summary: `Work ${leased.id}: runner did not stop within grace period; lease left held for expiry reclaim (no retry issued; ownership boundary prevents concurrent execution).`,
+            });
+            return;
+          }
+          // Settled: now record the timeout as a TIMEOUT failure so a
+          // bounded retry can be scheduled by recordFailure. recordFailure
+          // requires the live leaseToken, which we still hold.
+          await this.handleRunnerFailure(dispatched, token, new Error(`Host dispatch timed out after ${this.leaseTtlMs} ms (runner settled).`), at, summary);
+          return;
+        }
         await this.handleRunnerFailure(dispatched, token, err, at, summary);
         return;
       }

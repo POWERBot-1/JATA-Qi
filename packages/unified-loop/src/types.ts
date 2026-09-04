@@ -8,9 +8,16 @@
 import type { CommercialActor, CommercialProvenance } from '@jataqi/commercial-control-plane';
 
 /**
- * Canonical loop stages, in mandated order. The driver transitions through
- * these explicitly; skipping an order-dependent stage (e.g. PLAN→EXECUTE)
- * fails closed.
+ * Canonical loop stages, in mandated order (T-01). The driver transitions
+ * through these explicitly; skipping an order-dependent stage (e.g.
+ * PLAN→EXECUTE) fails closed. The order is the single source of truth and
+ * MUST agree with the executable state machine in `state-machine.ts`,
+ * with the documented canonical contract, and with the unit tests.
+ *
+ * T-01 hardening: `AUTHORIZE` is the deterministic gate that runs
+ * AFTER the human/regulatory gate and BEFORE capability selection, plan,
+ * plan-verification, and execution. A plan can never authorize itself;
+ * authorization is an upstream authority decision.
  */
 export type LoopStage =
   | 'WAKE'
@@ -35,10 +42,10 @@ export type LoopStage =
   | 'SAFETY'
   | 'AUTHORITY'
   | 'HUMAN_OR_REGULATORY_GATE'
+  | 'AUTHORIZE'
   | 'CAPABILITY_SELECTION'
   | 'PLAN'
   | 'VERIFY_PLAN'
-  | 'AUTHORIZE'
   | 'EXECUTE'
   | 'OBSERVE_RESULT'
   | 'VERIFY_RESULT'

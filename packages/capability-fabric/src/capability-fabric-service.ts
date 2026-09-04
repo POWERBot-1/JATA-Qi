@@ -73,6 +73,10 @@ export class CapabilityFabricService {
   private assessments!: ICollection<CapabilityAccessAssessment>;
   private engines!: ICollection<EngineGenome>;
   private audit!: ICollection<CapabilityFabricAuditEntry>;
+  /** Per-tenant atomic sequence counter. The CAS on this document
+   * is the concurrency-safe sequence advance that replaces the
+   * earlier query-then-write (`previous?.sequence + 1`) pattern. */
+  private auditSequence!: ICollection<{ id: string; tenantId: string; sequence: number }>;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
@@ -82,6 +86,7 @@ export class CapabilityFabricService {
     this.assessments = await storage.collection<CapabilityAccessAssessment>(COLLECTIONS.assessments);
     this.engines = await storage.collection<EngineGenome>(COLLECTIONS.engines);
     this.audit = await storage.collection<CapabilityFabricAuditEntry>(COLLECTIONS.audit);
+    this.auditSequence = await storage.collection<{ id: string; tenantId: string; sequence: number }>('capability-fabric.audit-seq');
     this.permanence = kernel.getModule<PermanenceFabricModule>('permanence-fabric').getService();
   }
 
@@ -419,15 +424,56 @@ export class CapabilityFabricService {
     if (!identity || identity.tenantId !== actor.tenantId) throw new CapabilityFabricError('Capability/engine JQ-ID link is not available in this tenant.');
   }
 
+  /**
+   * Concurrency-safe audit append.
+   *
+   * T-01-I fix: the previous implementation did
+   *   const previous = (await this.audit.query(...))[0];
+   *   sequence: (previous?.sequence ?? 0) + 1
+   * which is a query-then-write race: two concurrent writers can
+   * both read the same `previous` and both produce sequence=N+1,
+   * creating a hash-chain fork. The replacement uses a per-tenant
+   * atomic counter document with a CAS, so concurrent writers
+   * cannot both observe the same pre-state. The previousHash is
+   * then derived from the most recent committed entry at
+   * (tenantId, sequence = current - 1); if that entry is not yet
+   * committed (concurrent writer still in flight), we retry by
+   * re-reading.
+   */
   private async appendAudit(tenantId: string, eventType: CapabilityFabricAuditEntry['eventType'], subjectId: string, actorId: string, detailHash: string): Promise<CapabilityFabricAuditEntry> {
-    const previous = (await this.audit.query({ where: (entry) => entry.tenantId === tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
-    const draft: Omit<CapabilityFabricAuditEntry, 'hash'> = {
-      id: randomUUID(), tenantId, sequence: (previous?.sequence ?? 0) + 1, previousHash: previous?.hash ?? 'GENESIS',
-      eventType, subjectId, actorId, detailHash, createdAt: Date.now(),
-    };
-    const entry: CapabilityFabricAuditEntry = { ...draft, hash: hashAudit({ ...draft, hash: '' }) };
-    await this.audit.put(entry);
-    return entry;
+    const counterId = `seq:${tenantId}`;
+    // Initialize the counter if it does not exist (idempotent).
+    await this.auditSequence.cas(counterId, (cur) => cur === undefined, () => ({ id: counterId, tenantId, sequence: 0 }));
+    // CAS-advance the per-tenant counter.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const current = await this.auditSequence.get(counterId);
+      const cur = current ?? { id: counterId, tenantId, sequence: 0 };
+      const nextSequence = cur.sequence + 1;
+      const next = { id: counterId, tenantId, sequence: nextSequence };
+      const res = await this.auditSequence.cas(counterId, (c) => (c?.sequence ?? 0) === cur.sequence, () => next);
+      if (res.ok) {
+        // Look up the previous entry by sequence. For the first
+        // entry the previous is GENESIS. For subsequent entries,
+        // the previous entry must be committed BEFORE we read its
+        // hash (otherwise the chain has a gap). We poll briefly.
+        let previousHash = 'GENESIS';
+        if (cur.sequence > 0) {
+          for (let i = 0; i < 8; i += 1) {
+            const previous = (await this.audit.query({ where: (entry) => entry.tenantId === tenantId && entry.sequence === cur.sequence, limit: 1 }))[0];
+            if (previous) { previousHash = previous.hash; break; }
+            await new Promise<void>((r) => setTimeout(r, 5 * (i + 1)));
+          }
+        }
+        const draft: Omit<CapabilityFabricAuditEntry, 'hash'> = {
+          id: randomUUID(), tenantId, sequence: nextSequence, previousHash,
+          eventType, subjectId, actorId, detailHash, createdAt: Date.now(),
+        };
+        const entry: CapabilityFabricAuditEntry = { ...draft, hash: hashAudit({ ...draft, hash: '' }) };
+        await this.audit.put(entry);
+        return entry;
+      }
+    }
+    throw new CapabilityFabricError('Audit counter CAS exhausted retries.');
   }
 }
 

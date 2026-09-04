@@ -23,6 +23,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@jataqi/authentication": "0.1.0",
     "@jataqi/autonomous-action-runtime": "0.1.0",
     "@jataqi/capability-fabric": "0.1.0",
     "@jataqi/causal-engine": "0.1.0",

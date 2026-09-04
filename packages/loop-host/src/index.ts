@@ -4,6 +4,8 @@ export { WorkQueue, WORK_COLLECTION, computeBackoffMs } from './work-queue.js';
 export { CheckpointJournal, CHECKPOINT_COLLECTION, canonicalJson, sha256Hex, fingerprintTask } from './checkpoints.js';
 export { isDispatchEligible, isReclaimable, nextWakeInMs } from './scheduler.js';
 export { HostRuntime, assertDurableStorage, isDurableDriver, type HostRuntimeConfig } from './runtime.js';
+export { OutboxInbox, OUTBOX_COLLECTION, INBOX_COLLECTION, newOutboxEventId } from './outbox-inbox.js';
+export type { OutboxRecord, InboxRecord } from './outbox-inbox.js';
 export { LoopHostEvents, LOOP_HOST_CHECKPOINT_SCHEMA_VERSION } from './types.js';
 export {
   LoopHostError,
