@@ -141,7 +141,10 @@ The action runtime ships with **no live connector adapters or credentials**. A p
 response is recorded as `VERIFYING`, not `COMPLETED`, until independent verification
 is attached. Sandbox and dry-run results remain explicitly marked as simulated.
 See [`docs/COMMERCIAL_CONTROL_PLANE.md`](docs/COMMERCIAL_CONTROL_PLANE.md) for the
-implemented contract, safety boundary, and external-integration status. See
+implemented contract, safety boundary, and external-integration status. The
+two-plane event-surface contract (commercial-plane envelopes vs core/knowledge-plane
+plain payloads, nominated consumers, and publish-only intent) is documented in
+[`docs/EVENT_SURFACE_CONTRACT.md`](docs/EVENT_SURFACE_CONTRACT.md). See
 [`docs/JQB_V0_1.md`](docs/JQB_V0_1.md) for the separately classified classical
 cognitive, structured multi-agent critique, and meta-reasoning foundation, plus its scientific-integrity limits. Frontier research evidence and physical-safety boundaries are documented in [`docs/FRONTIER_RESEARCH_SAFETY.md`](docs/FRONTIER_RESEARCH_SAFETY.md).
 

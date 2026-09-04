@@ -6,6 +6,16 @@
 > [`PERSISTENCE_ARCHITECTURE.md`](PERSISTENCE_ARCHITECTURE.md): filesystem mode is
 > development-only/single-process and the transactional production replacement is
 > still a design, not an implementation.
+>
+> **Status note — 2026-09-04 (W20):** Of the carry-forward items below:
+> **F-02** (runner fail-fast semantics) is retired — the workspace runner now
+> aggregates every test-suite result and exits non-zero on any failure while
+> build mode stays fail-fast; the **F-03** publish-only intent is confirmed and
+> the two-plane schema (**F-01**) is documented by
+> [`EVENT_SURFACE_CONTRACT.md`](EVENT_SURFACE_CONTRACT.md) — documentation only,
+> F-01 remains open; **C-1** (loop orchestration) and **C-2** (AMBER engines in
+> unified-loop context) remain open. Verdict unchanged:
+> **CONDITIONALLY_UNIFIED**.
 
 Companion to `docs/JATA_QI_RECOVERY_MANIFEST.md`. Full 14-part dossier + machine-readable
 `unification-audit.json` are preserved out-of-tree at `/home/user/recovery/jata-qi-unification-audit/`.

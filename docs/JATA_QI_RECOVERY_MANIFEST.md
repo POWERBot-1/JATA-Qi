@@ -6,6 +6,15 @@
 > [`PERSISTENCE_ARCHITECTURE.md`](PERSISTENCE_ARCHITECTURE.md): filesystem mode is
 > now explicitly development-only/single-process, and its production replacement
 > remains unimplemented.
+>
+> **Status note — 2026-09-04 (W20):** Historical findings below are preserved
+> unchanged. Since this record: audit finding **F-02** (runner fail-fast masking)
+> is retired — `scripts/run-workspaces.mjs` now aggregates all workspace test
+> suites and exits non-zero on any failure (build mode remains fail-fast);
+> conditions **C-3** and **C-4** are satisfied at the documentation level by
+> [`EVENT_SURFACE_CONTRACT.md`](EVENT_SURFACE_CONTRACT.md). **F-01** remains open
+> (documentation is not schema unification), and **C-1**/**C-2** remain open.
+> The verdict remains **CONDITIONALLY_UNIFIED**.
 
 Durable provenance record for the dormant Arena patchset recovery and unification audit.
 This file exists so the recovered state is reconstructible even if the original agent session disappears.
