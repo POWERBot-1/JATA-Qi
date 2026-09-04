@@ -23,6 +23,30 @@ import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
 import { ReconciliationModule } from '@jataqi/reconciliation';
 import { CommercialMemoryModule } from '@jataqi/commercial-memory';
+import { ResearchEvidenceModule } from '@jataqi/research-evidence';
+import { HumanApprovalModule } from '@jataqi/human-approval';
+import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
+import { CapabilityFabricModule } from '@jataqi/capability-fabric';
+import { ExternalConnectorModule } from '@jataqi/external-connectors';
+import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
+import { CommercialHealthModule } from '@jataqi/commercial-health';
+import { CommercialCommandCenterModule } from '@jataqi/commercial-command-center';
+import { InfrastructureStateRegistryModule } from '@jataqi/infrastructure-state-registry';
+import { CommercialObservabilityModule } from '@jataqi/commercial-observability';
+
+import type {
+  CapabilityAccessAssessment,
+  CapabilityFabricService,
+} from '@jataqi/capability-fabric';
+import type { ConnectorContractReport, ExternalConnectorRegistry } from '@jataqi/external-connectors';
+import type { CommercialHealthService } from '@jataqi/commercial-health';
+import type { CommercialCommandCenterService } from '@jataqi/commercial-command-center';
+import type { InfrastructureStateRegistry } from '@jataqi/infrastructure-state-registry';
+import type { CommercialObservabilityService } from '@jataqi/commercial-observability';
+import type { PermanenceFabricService } from '@jataqi/permanence-fabric';
+import type { ResearchEvidenceService } from '@jataqi/research-evidence';
+import type { HumanApprovalService } from '@jataqi/human-approval';
+import type { RegulatoryGateService } from '@jataqi/regulatory-gates';
 
 import type {
   CapabilityInvocationContext,
@@ -50,6 +74,16 @@ interface Services {
   runtime: ReturnType<AutonomousActionRuntimeModule['getService']>;
   reconciliation: ReturnType<ReconciliationModule['getService']>;
   memory: ReturnType<CommercialMemoryModule['getService']>;
+  research: ResearchEvidenceService;
+  humanApproval: HumanApprovalService;
+  regulatory: RegulatoryGateService;
+  capability: CapabilityFabricService;
+  connectors: ExternalConnectorRegistry;
+  permanence?: PermanenceFabricService;
+  health?: CommercialHealthService;
+  commandCenter?: CommercialCommandCenterService;
+  infra?: InfrastructureStateRegistry;
+  observability?: CommercialObservabilityService;
 }
 
 function services(kernel: KernelApi): Services {
@@ -69,7 +103,27 @@ function services(kernel: KernelApi): Services {
     runtime: kernel.getModule<AutonomousActionRuntimeModule>('autonomous-action-runtime').getService(),
     reconciliation: kernel.getModule<ReconciliationModule>('reconciliation').getService(),
     memory: kernel.getModule<CommercialMemoryModule>('commercial-memory').getService(),
+    research: kernel.getModule<ResearchEvidenceModule>('research-evidence').getService(),
+    humanApproval: kernel.getModule<HumanApprovalModule>('human-approval').getService(),
+    regulatory: kernel.getModule<RegulatoryGateModule>('regulatory-gates').getService(),
+    capability: kernel.getModule<CapabilityFabricModule>('capability-fabric').getService(),
+    connectors: kernel.getModule<ExternalConnectorModule>('external-connectors').getRegistry(),
+    // Read-only / optional governed evidence engines. These are resolved
+    // lazily and may gracefully SKIP if a minimal composition omits them.
+    permanence: optionalService(() => kernel.getModule<PermanenceFabricModule>('permanence-fabric').getService()),
+    health: optionalService(() => kernel.getModule<CommercialHealthModule>('commercial-health').getService()),
+    commandCenter: optionalService(() => kernel.getModule<CommercialCommandCenterModule>('commercial-command-center').getService()),
+    infra: optionalService(() => kernel.getModule<InfrastructureStateRegistryModule>('infrastructure-state-registry').getRegistry()),
+    observability: optionalService(() => kernel.getModule<CommercialObservabilityModule>('commercial-observability').getService()),
   };
+}
+
+function optionalService<T>(resolve: () => T): T | undefined {
+  try {
+    return resolve();
+  } catch {
+    return undefined;
+  }
 }
 
 function provenance(ctx: CapabilityInvocationContext, source = 'unified-loop'): CommercialProvenance {
@@ -125,10 +179,52 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
   const caps: GovernedCapability[] = [];
 
   // --- Loop entry ---
-  caps.push(cap('WAKE', 'wake-on-task', async (_svc, ctx) => {
+  caps.push(cap('WAKE', 'wake-on-task', async (svc, ctx) => {
+    const outputs: Record<string, unknown> = {
+      woken: true,
+      tenantId: ctx.actor.tenantId,
+      hasProposedAction: Boolean(ctx.task.proposedAction),
+    };
+    // Optional guarded identity boundary: read/verify ONLY when an identity id
+    // is explicitly supplied. No signer API, no identity issuance, no creation.
+    if (ctx.task.identityId) {
+      if (!svc.permanence) {
+        outputs.identityEvidence = {
+          identityId: ctx.task.identityId,
+          present: false,
+          verified: false,
+          identityRead: false,
+          skipped: 'permanence-fabric unavailable; read-only identity verification skipped.',
+        };
+      } else {
+        let present = false;
+        let verified = false;
+        let reason: string | undefined;
+        try {
+          const identity = await svc.permanence.getIdentity(ctx.actor, ctx.task.identityId);
+          present = Boolean(identity);
+          if (identity) {
+            const verification = await svc.permanence.verifyIdentity(ctx.actor, ctx.task.identityId);
+            verified = verification.valid;
+            reason = verification.reason;
+          } else {
+            reason = 'Identity id not present in this tenant.';
+          }
+        } catch (err) {
+          reason = `Identity read/verify failed: ${(err as Error).message}`;
+        }
+        outputs.identityEvidence = {
+          identityId: ctx.task.identityId,
+          present,
+          verified,
+          identityRead: true,
+          reason,
+        };
+      }
+    }
     return {
       summary: `Woken for task in tenant ${ctx.actor.tenantId}; correlation ${ctx.correlationId}; objective "${ctx.task.objective.slice(0, 60)}".`,
-      outputs: { woken: true, tenantId: ctx.actor.tenantId, hasProposedAction: Boolean(ctx.task.proposedAction) },
+      outputs,
     };
   }));
 
@@ -461,9 +557,22 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
   caps.push(cap('UNCERTAINTY_ASSESSMENT', 'assess-uncertainty', async (svc, ctx) => {
     if (!ctx.state.cognitiveStateId) throw new Error('Cognitive state missing.');
     const assessment = await svc.cognitive.assess(ctx.actor, ctx.state.cognitiveStateId);
+    // Commercial-health is integrated as advisory evidence only; anomaly/drift
+    // may raise the reported uncertainty but never autonomously remediate.
+    const healthAdvisory = await readCommercialHealthAdvisory(svc, ctx);
+    const advisoryWarnings = Number(healthAdvisory.warningCount ?? 0) +
+      Number(healthAdvisory.criticalCount ?? 0) +
+      Number(healthAdvisory.reviewRequiredCount ?? 0) +
+      Number(healthAdvisory.driftDetectedCount ?? 0);
     return {
-      summary: `Uncertainty: ${assessment.uncertainBeliefs.length} uncertain belief(s); ${assessment.recommendedInformationNeeds.length} information need(s).`,
-      outputs: { uncertainBeliefs: assessment.uncertainBeliefs.length, informationNeeds: assessment.recommendedInformationNeeds.length },
+      summary: `Uncertainty: ${assessment.uncertainBeliefs.length} uncertain belief(s); ${assessment.recommendedInformationNeeds.length} information need(s); health advisory ${healthAdvisory.available ? `anomalies=${healthAdvisory.anomalyCount}/drift=${healthAdvisory.driftCount}` : 'unavailable'}.`,
+      outputs: {
+        uncertainBeliefs: assessment.uncertainBeliefs.length,
+        informationNeeds: assessment.recommendedInformationNeeds.length,
+        healthAdvisory,
+        healthAdvisoryWarnings: advisoryWarnings,
+        remediationExecuted: false,
+      },
     };
   }));
 
@@ -483,13 +592,29 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
     };
   }, { authority: 'POLICY_ONLY' }));
 
-  caps.push(cap('SAFETY', 'safety-screen', async (_svc, ctx) => {
+  caps.push(cap('SAFETY', 'safety-screen', async (svc, ctx) => {
     const a = ctx.task.proposedAction;
     if (!a) return { summary: 'No action; safety screen trivially satisfied.', outputs: { safetyScreened: false } };
     const safe = a.riskScore <= 100 && a.complianceScore >= 0;
+    // Commercial-health anomaly/drift is advisory evidence only. It may lift the
+    // reported advisory risk, but it never autonomously remediates and does not
+    // change the W22 pass/fail semantics (only the control plane authorizes).
+    const healthAdvisory = await readCommercialHealthAdvisory(svc, ctx);
+    const advisoryRiskElevated = Number(healthAdvisory.warningCount ?? 0) > 0 ||
+      Number(healthAdvisory.criticalCount ?? 0) > 0 ||
+      Number(healthAdvisory.reviewRequiredCount ?? 0) > 0 ||
+      Number(healthAdvisory.driftDetectedCount ?? 0) > 0;
     return {
-      summary: safe ? `Safety screen passed (risk=${a.riskScore}, compliance=${a.complianceScore}).` : 'Safety screen failed.',
-      outputs: { riskScore: a.riskScore, complianceScore: a.complianceScore },
+      summary: safe
+        ? `Safety screen passed (risk=${a.riskScore}, compliance=${a.complianceScore}); health advisory ${healthAdvisory.available ? `elevated=${advisoryRiskElevated}` : 'unavailable'} (advisory only).`
+        : 'Safety screen failed.',
+      outputs: {
+        riskScore: a.riskScore,
+        complianceScore: a.complianceScore,
+        healthAdvisory,
+        advisoryRiskElevated,
+        remediationExecuted: false,
+      },
       boundaryHeld: !safe,
     };
   }));
@@ -503,30 +628,92 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
     };
   }));
 
-  caps.push(cap('HUMAN_OR_REGULATORY_GATE', 'human-regulatory-gate', async (_svc, ctx) => {
+  caps.push(cap('HUMAN_OR_REGULATORY_GATE', 'human-regulatory-gate', async (svc, ctx) => {
     const a = ctx.task.proposedAction;
     if (!a) return { summary: 'No external effect; human/regulatory gate not invoked.', outputs: { gateRequired: false } };
-    // The loop never self-approves. High autonomy requests always require an
-    // explicit external human/regulatory gate, represented as a held boundary.
-    // Low-level sandbox actions proceed to deterministic policy authorization.
-    const requiresGate = a.authorizationLevel >= 3;
+    // High autonomy (>=3) or an explicitly gate-required task always routes
+    // through the real human-approval and regulatory-gates services. The loop
+    // never casts a vote, never self-satisfies approval, and never treats
+    // pending external verification as authorization.
+    const requiresGate = a.authorizationLevel >= 3 || a.gateRequired === true;
+    if (!requiresGate) {
+      return {
+        summary: 'Action is within delegable sandbox authority; human/regulatory gate is not required.',
+        outputs: { gateRequired: false },
+      };
+    }
+    const evaluated = await runHumanRegulatoryGate(svc, ctx);
+    const held = Boolean(
+      evaluated.gateRequired && !evaluated.approvalQuorumSatisfied ||
+      evaluated.gateRequired && evaluated.externalVerificationPending ||
+      evaluated.gateRequired && !evaluated.gateConfigured,
+    );
     return {
-      summary: requiresGate
-        ? 'Human/regulatory gate REQUIRED and not satisfiable in-loop; boundary held (no self-approval).'
-        : 'Action is within delegable sandbox authority; gate proceeds to authorization.',
-      outputs: { gateRequired: requiresGate },
-      boundaryHeld: requiresGate,
+      summary: held
+        ? `Human/regulatory gate REQUIRED and not satisfiable in-loop; boundary held (no self-approval). ${evaluated.gateConfigured ? `Regulatory status=${evaluated.regulatoryStatus}; pending external=${evaluated.externalVerificationPending}.` : 'No active regulatory gate configured.'}`
+        : 'Human/regulatory gate recorded; loop continues (this is still not execution authorization).',
+      outputs: evaluated,
+      boundaryHeld: held,
     };
   }));
 
-  caps.push(cap('CAPABILITY_SELECTION', 'select-capability', async (_svc, ctx) => {
+  caps.push(cap('CAPABILITY_SELECTION', 'select-capability', async (svc, ctx) => {
     const a = ctx.task.proposedAction;
     if (!a) return { summary: 'No action; no execution capability selected.', outputs: { capabilitySelected: false } };
+    // Enforced constraint: capability-fabric assesses the governed execution
+    // capability. Missing/denied grants fail closed; capability-fabric may not
+    // override control-plane authority (AUTHORIZE still gates EXECUTE).
+    const executeId = 'unified-loop.execute';
+    let access: CapabilityAccessAssessment | undefined;
+    try {
+      const record = (await svc.capability.listCapabilities(ctx.actor)).find(
+        (candidate) => candidate.tenantId === ctx.actor.tenantId && candidate.name === executeId,
+      );
+      if (!record) throw new Error(`Capability ${executeId} is not registered in capability-fabric for this tenant.`);
+      access = await svc.capability.assessCapabilityAccess(ctx.actor, record.id, {});
+    } catch (err) {
+      return {
+        summary: `Capability access assessment failed closed: ${(err as Error).message}`,
+        outputs: { capabilitySelected: false, accessDenied: true, accessError: (err as Error).message },
+        boundaryHeld: true,
+      };
+    }
+    // Read-only external-connector contract discovery/reporting only. Never
+    // activates a connector; activation remains gated/default-deny.
+    let connectorContract: ConnectorContractReport | undefined;
+    let connectorRegistered = false;
+    try {
+      const registrations = svc.connectors.list(ctx.actor);
+      const registration = registrations.find((item) => item.targetSystem === a.targetSystem);
+      if (registration) {
+        connectorRegistered = true;
+        connectorContract = await svc.connectors.contractReport(ctx.actor, registration.id);
+      }
+    } catch (err) {
+      connectorContract = undefined;
+    }
+    const allowed = access.outcome === 'AVAILABLE_AND_AUTHORIZED';
+    const connectorBlocked = connectorRegistered ? connectorContract?.status === 'BLOCKED' : false;
     return {
-      summary: `Selected governed execution capability for target system "${a.targetSystem}" action "${a.actionType}".`,
-      outputs: { capabilitySelected: true, targetSystem: a.targetSystem, actionType: a.actionType },
+      summary: allowed
+        ? `Selected governed execution capability ${executeId}: ${access.outcome}; connector read-only contract ${connectorRegistered ? connectorContract?.status ?? 'UNKNOWN' : 'not registered'} (activation default-deny).`
+        : `Capability selection denied: ${access.outcome} — ${access.reason}`,
+      outputs: {
+        capabilitySelected: allowed,
+        targetSystem: a.targetSystem,
+        actionType: a.actionType,
+        capabilityId: executeId,
+        accessOutcome: access.outcome,
+        accessAssessmentId: access.id,
+        accessDenied: !allowed,
+        connectorRegistered,
+        connectorContractStatus: connectorContract?.status,
+        connectorContractReasons: connectorContract?.reasons ?? [],
+        connectorActivated: false,
+      },
+      boundaryHeld: !allowed || connectorBlocked,
     };
-  }));
+  }, { requiredGrants: ['unified-loop.select-capability'] }));
 
   caps.push(cap('PLAN', 'plan-action', async (svc, ctx) => {
     const a = ctx.task.proposedAction;
@@ -606,14 +793,23 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
       records: [{ kind: 'ACTION', source: 'autonomous-action-runtime', externalRef: result.action.id, at: ctx.now(), summary: `Action execution ${result.action.executionStatus}`, provenance: provenance(ctx) }],
       outputs: { actionId: result.action.id, executionStatus: result.action.executionStatus, executedExternally: result.executedExternally },
     };
-  }, { sideEffect: 'SANDBOX', authority: 'AUTHORIZED_ACTION' }));
+  }, { sideEffect: 'SANDBOX', authority: 'AUTHORIZED_ACTION', requiredGrants: ['unified-loop.execute-action'] }));
 
   caps.push(cap('OBSERVE_RESULT', 'observe-result', async (svc, ctx) => {
     if (!ctx.state.actionId) return { summary: 'No action; no result to observe.', outputs: { observed: false } };
     const action = await svc.control.getAction(ctx.actor, ctx.state.actionId);
+    // Commercial command-center snapshot is read-only evidence.
+    const commandCenter = await readCommandCenterEvidence(svc, ctx);
+    // Infrastructure expected-vs-observed evidence is read-only and optional.
+    const infra = await readInfrastructureEvidence(svc, ctx);
     return {
-      summary: `Observed action result: execution=${action?.executionStatus ?? 'UNKNOWN'}, verification=${action?.verificationStatus ?? 'UNKNOWN'}.`,
-      outputs: { executionStatus: action?.executionStatus, verificationStatus: action?.verificationStatus },
+      summary: `Observed action result: execution=${action?.executionStatus ?? 'UNKNOWN'}, verification=${action?.verificationStatus ?? 'UNKNOWN'}; command-center evidence ${commandCenter.available ? 'captured' : 'unavailable'}; infra evidence ${infra.available ? 'captured' : 'unavailable'}.`,
+      outputs: {
+        executionStatus: action?.executionStatus,
+        verificationStatus: action?.verificationStatus,
+        commandCenterEvidence: commandCenter,
+        infrastructureEvidence: infra,
+      },
     };
   }));
 
@@ -657,12 +853,26 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
     if (!ctx.state.actionId) {
       return { summary: 'No external action; internal reconciliation limited to cognitive state.', outputs: { reconciled: false } };
     }
-    // Reconciliation is read-only; provider state is not fetched in-repo.
-    ctx.state.reconciled = true;
+    // Real reconciliation service invocation. pending-external / disputed /
+    // unreconciled states are surfaced honestly; success is never fabricated.
+    const run = await svc.reconciliation.reconcile(ctx.actor, {});
+    ctx.state.reconciled = run.status === 'RECONCILED';
+    const blocked = run.status === 'UNRECONCILED' || run.status === 'DISPUTED' || run.status === 'FAILED';
     const action = await svc.control.getAction(ctx.actor, ctx.state.actionId);
     return {
-      summary: `Reconciliation: action state ${action?.executionStatus ?? 'UNKNOWN'}; external/provider reconciliation remains read-only/pending.`,
-      outputs: { reconciled: true, executionStatus: action?.executionStatus },
+      summary: `Reconciliation run ${run.id}: status=${run.status}; internalReconciled=${run.internalReconciled}; externalObserved=${run.externalObserved}; discrepancies=${run.discrepancies.length}; action state ${action?.executionStatus ?? 'UNKNOWN'}.`,
+      outputs: {
+        reconciled: ctx.state.reconciled,
+        reconciliationRunId: run.id,
+        reconciliationStatus: run.status,
+        internalReconciled: run.internalReconciled,
+        externalObserved: run.externalObserved,
+        reconciliationDiscrepancies: run.discrepancies.map((d) => ({ kind: d.kind, detail: d.detail })),
+        pendingExternal: run.status === 'PENDING_EXTERNAL',
+        disputed: run.status === 'DISPUTED',
+        executionStatus: action?.executionStatus,
+      },
+      boundaryHeld: blocked,
     };
   }));
 
@@ -700,9 +910,12 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
         actionId: ctx.state.actionId,
       }).catch(() => undefined);
     }
+    // Commercial-observability provides privacy-minimized trace/projection
+    // output. Read failures gracefully SKIP (they must not mask the loop audit).
+    const observability = await readObservabilityEvidence(svc, ctx);
     return {
-      summary: 'Audit trail emitted: structured trace + commercial-memory audit record (privacy-minimized).',
-      outputs: { audited: true },
+      summary: 'Audit trail emitted: structured trace + commercial-memory audit record + commercial-observability trace/projection counts (privacy-minimized).',
+      outputs: { audited: true, observabilityEvidence: observability },
     };
   }));
 
@@ -738,6 +951,185 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
   }));
 
   return caps;
+}
+
+async function readCommercialHealthAdvisory(
+  svc: Services,
+  ctx: CapabilityInvocationContext,
+): Promise<Record<string, unknown>> {
+  if (!svc.health) return { available: false, skipped: true, reason: 'commercial-health unavailable; advisory skipped.' };
+  try {
+    const [anomalies, drift] = await Promise.all([
+      svc.health.listAnomalies(ctx.actor),
+      svc.health.listDrift(ctx.actor),
+    ]);
+    return {
+      available: true,
+      anomalyCount: anomalies.length,
+      driftCount: drift.length,
+      warningCount: anomalies.filter((a) => a.severity === 'WARNING' || a.severity === 'UNUSUAL').length,
+      criticalCount: anomalies.filter((a) => a.severity === 'CRITICAL').length,
+      reviewRequiredCount: drift.filter((d) => d.state === 'REVIEW_REQUIRED').length,
+      driftDetectedCount: drift.filter((d) => d.state === 'DRIFT_DETECTED').length,
+      remediationExecuted: false,
+    };
+  } catch (err) {
+    return { available: false, skipped: true, reason: (err as Error).message };
+  }
+}
+
+async function readCommandCenterEvidence(
+  svc: Services,
+  ctx: CapabilityInvocationContext,
+): Promise<Record<string, unknown>> {
+  if (!svc.commandCenter) return { available: false, skipped: true, reason: 'commercial-command-center unavailable; read skipped.' };
+  try {
+    const snapshot = await svc.commandCenter.snapshot(ctx.actor);
+    return {
+      available: true,
+      approvals: snapshot.approvals.length,
+      decisions: snapshot.decisions.length,
+      authorizations: snapshot.authorizations.length,
+      actions: snapshot.actions.length,
+      killSwitches: snapshot.activeKillSwitches.length,
+      connectors: snapshot.connectors.length,
+      healthAnomalies: snapshot.health?.anomalies.length ?? 0,
+      healthDrift: snapshot.health?.drift.length ?? 0,
+      observability: snapshot.observability ? {
+        capturedEvents: snapshot.observability.snapshot.capturedEventCount,
+        traces: snapshot.observability.snapshot.traceCount,
+        activeAlerts: snapshot.observability.activeAlerts.length,
+        activeIncidents: snapshot.observability.activeIncidents.length,
+      } : undefined,
+      unavailable: snapshot.unavailable,
+    };
+  } catch (err) {
+    return { available: false, skipped: true, reason: (err as Error).message };
+  }
+}
+
+async function readInfrastructureEvidence(
+  svc: Services,
+  ctx: CapabilityInvocationContext,
+): Promise<Record<string, unknown>> {
+  if (!svc.infra) return { available: false, skipped: true, reason: 'infrastructure-state-registry unavailable; read skipped.' };
+  try {
+    const resources = await svc.infra.listResources(ctx.actor);
+    return {
+      available: true,
+      resourceCount: resources.length,
+      inSync: resources.filter((r) => r.driftState === 'IN_SYNC').length,
+      driftDetected: resources.filter((r) => r.driftState === 'DRIFT_DETECTED').length,
+      reconciliationRequired: resources.filter((r) => r.driftState === 'RECONCILIATION_REQUIRED').length,
+      failed: resources.filter((r) => r.health === 'FAILED' || r.health === 'UNREACHABLE').length,
+      observedStatePresent: resources.filter((r) => r.observedState !== undefined).length,
+    };
+  } catch (err) {
+    return { available: false, skipped: true, reason: (err as Error).message };
+  }
+}
+
+async function readObservabilityEvidence(
+  svc: Services,
+  ctx: CapabilityInvocationContext,
+): Promise<Record<string, unknown>> {
+  if (!svc.observability) return { available: false, skipped: true, reason: 'commercial-observability unavailable; read skipped.' };
+  try {
+    const [snapshot, traces, projections] = await Promise.all([
+      svc.observability.snapshot(ctx.actor),
+      svc.observability.listTraces(ctx.actor),
+      svc.observability.listEventProjections(ctx.actor),
+    ]);
+    return {
+      available: true,
+      projectionCount: projections.length,
+      traceCount: traces.length,
+      capturedEventCount: snapshot.capturedEventCount,
+      metricCount: snapshot.metricCount,
+      activeAlertCount: snapshot.activeAlertCount,
+      activeIncidentCount: snapshot.activeIncidentCount,
+      criticalAlertCount: snapshot.criticalAlertCount,
+      simulatedMetricCount: snapshot.simulatedMetricCount,
+    };
+  } catch (err) {
+    return { available: false, skipped: true, reason: (err as Error).message };
+  }
+}
+
+async function runHumanRegulatoryGate(
+  svc: Services,
+  ctx: CapabilityInvocationContext,
+): Promise<Record<string, unknown>> {
+  const a = ctx.task.proposedAction!;
+  if (!ctx.state.cognitiveStateId) {
+    throw new Error('Human/regulatory gate requires established cognitive context.');
+  }
+  // Real human-approval integration: create a research claim and an approval
+  // request. The loop never submits votes and never self-satisfies approval.
+  const claim = await svc.research.createClaim(ctx.actor, {
+    cognitiveStateId: ctx.state.cognitiveStateId,
+    domain: 'SOFTWARE',
+    safetyClassification: 'STANDARD',
+    hypothesis: ctx.task.objective.slice(0, 240) || 'Unified loop governed action.',
+    assumptions: ['Loop advisory claim for human/regulatory gate review.'],
+    limitations: ['No external legal or regulatory verification is implied.'],
+    privacyClassification: 'INTERNAL',
+    provenance: provenance(ctx, 'research-evidence'),
+  });
+  const request = await svc.humanApproval.createRequest(ctx.actor, {
+    claimId: claim.id,
+    purposeSummary: `Governed action ${a.actionType} on ${a.targetSystem}`.slice(0, 800),
+    requiredReviewTypes: ['SAFETY', 'REGULATORY'],
+    requiredCompetencyIds: ['unified-loop-governance'],
+    requiredApprovalCount: 1,
+    privacyClassification: 'INTERNAL',
+    provenance: provenance(ctx, 'human-approval'),
+  });
+  const progress = await svc.humanApproval.getProgress(ctx.actor, request.id);
+  const votes = await svc.humanApproval.listVotes(ctx.actor, request.id).catch(() => []);
+  const gates = await svc.regulatory.listGates(ctx.actor);
+  const gate = gates.find((candidate) =>
+    candidate.status === 'ACTIVE' &&
+    (candidate.domainScopes.includes('ALL') || candidate.domainScopes.includes(claim.domain)) &&
+    candidate.safetyClassifications.includes(claim.safetyClassification),
+  );
+  const regulatoryResult: Record<string, unknown> = {
+    gateConfigured: Boolean(gate),
+    gateId: gate?.id,
+    evaluationId: undefined,
+    regulatoryStatus: undefined,
+    localRequirementsSatisfied: false,
+    externalVerificationPending: false,
+    physicalExecutionAuthorization: 'NOT_AUTHORIZED',
+  };
+  if (gate) {
+    const evaluation = await svc.regulatory.evaluate(ctx.actor, {
+      gateId: gate.id,
+      claimId: claim.id,
+      approvalRequestIds: [request.id],
+      documentationReferences: [`loop:${ctx.loopId}`],
+      provenance: provenance(ctx, 'regulatory-gates'),
+    });
+    regulatoryResult.gateId = gate.id;
+    regulatoryResult.evaluationId = evaluation.id;
+    regulatoryResult.regulatoryStatus = evaluation.status;
+    regulatoryResult.localRequirementsSatisfied = evaluation.localRequirementsSatisfied;
+    regulatoryResult.externalVerificationPending = evaluation.externalRegulatoryVerificationPending;
+    regulatoryResult.physicalExecutionAuthorization = evaluation.physicalExecutionAuthorization;
+  }
+  return {
+    gateRequired: true,
+    claimId: claim.id,
+    approvalRequestId: request.id,
+    approvalRequestStatus: request.status,
+    approvalQuorumSatisfied: progress.quorumSatisfied,
+    approvedVoteCount: progress.approvedVoteCount,
+    rejectedVoteCount: progress.rejectedVoteCount,
+    votesCastByLoop: votes.length,
+    selfApproved: false,
+    doesNotAuthorizePhysicalExecution: true,
+    ...regulatoryResult,
+  };
 }
 
 async function proposeActionDecision(

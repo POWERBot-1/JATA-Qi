@@ -14,9 +14,23 @@ import type {
 } from './types.js';
 import { UnifiedLoopError } from './types.js';
 
+/**
+ * Optional capability access enforcer. It is invoked before any capability
+ * that declares `requiredGrants`; a throw fails the invocation closed.
+ */
+export type CapabilityAccessEnforcer = (
+  capability: GovernedCapability,
+  ctx: CapabilityInvocationContext,
+) => Promise<void>;
+
 export class CapabilityRegistry {
   private readonly byStage = new Map<LoopStage, GovernedCapability>();
   private readonly byId = new Map<string, GovernedCapability>();
+  private readonly enforceAccess?: CapabilityAccessEnforcer;
+
+  constructor(enforceAccess?: CapabilityAccessEnforcer) {
+    this.enforceAccess = enforceAccess;
+  }
 
   register(capability: GovernedCapability): void {
     if (this.byStage.has(capability.stage)) {
@@ -56,14 +70,38 @@ export class CapabilityRegistry {
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), capability.timeoutMs);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        controller.abort();
+        reject(new UnifiedLoopError(`Capability ${capability.capabilityId} exceeded ${capability.timeoutMs}ms timeout (fail-closed).`));
+      }, capability.timeoutMs);
+    });
     // Link caller cancellation.
     const onAbort = (): void => controller.abort();
+    const cancellation = new Promise<never>((_, reject) => {
+      if (ctx.signal.aborted) {
+        reject(new UnifiedLoopError('Capability invocation cancelled by caller.'));
+        return;
+      }
+      ctx.signal.addEventListener('abort', () => {
+        controller.abort();
+        reject(new UnifiedLoopError('Capability invocation cancelled by caller.'));
+      }, { once: true });
+    });
     ctx.signal.addEventListener('abort', onAbort, { once: true });
     try {
-      return await capability.invoke({ ...ctx, signal: controller.signal });
+      // requiredGrants is an enforced selection constraint. A missing/denied
+      // grant throws (fail-closed) before the capability may run.
+      const work = async (): Promise<CapabilityResult> => {
+        if (capability.requiredGrants.length > 0 && this.enforceAccess) {
+          await this.enforceAccess(capability, { ...ctx, signal: controller.signal });
+        }
+        return capability.invoke({ ...ctx, signal: controller.signal });
+      };
+      return await Promise.race([work(), timeout, cancellation]);
     } finally {
-      clearTimeout(timer);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       ctx.signal.removeEventListener('abort', onAbort);
     }
   }

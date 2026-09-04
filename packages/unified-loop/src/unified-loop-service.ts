@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import { CapabilityFabricModule } from '@jataqi/capability-fabric';
 
 import { CapabilityRegistry } from './capability-registry.js';
 import { buildDefaultCapabilities } from './capability-adapters.js';
@@ -56,7 +57,42 @@ export class UnifiedLoopService {
   constructor(private readonly kernel: KernelApi) {}
 
   private registry(extra?: GovernedCapability[]): CapabilityRegistry {
-    const registry = new CapabilityRegistry();
+    const registry = new CapabilityRegistry(async (capability, ctx) => {
+      // Capability-fabric is the enforced grant authority for governed
+      // capabilities that declare requiredGrants. It never overrides the
+      // control plane; it only inspects lifecycle, grants, runtime, and safety.
+      let fabric;
+      try {
+        fabric = this.kernel.getModule<CapabilityFabricModule>('capability-fabric').getService();
+      } catch (err) {
+        throw new UnifiedLoopError(
+          `Capability ${capability.capabilityId} requires capability-fabric grants but capability-fabric is unavailable (fail-closed): ${(err as Error).message}`,
+        );
+      }
+      // The fabric uses a generated record id as its internal capability id; the
+      // governed capability's logical id is stored as the fabric record name.
+      const record = (await fabric.listCapabilities(ctx.actor)).find(
+        (candidate) => candidate.tenantId === ctx.actor.tenantId && candidate.name === capability.capabilityId,
+      );
+      if (!record) {
+        throw new UnifiedLoopError(
+          `Capability ${capability.capabilityId} is not registered in capability-fabric for this tenant (fail-closed).`,
+        );
+      }
+      let assessment;
+      try {
+        assessment = await fabric.assessCapabilityAccess(ctx.actor, record.id, {});
+      } catch (err) {
+        throw new UnifiedLoopError(
+          `Capability ${capability.capabilityId} access check failed (fail-closed): ${(err as Error).message}`,
+        );
+      }
+      if (assessment.outcome !== 'AVAILABLE_AND_AUTHORIZED') {
+        throw new UnifiedLoopError(
+          `Capability ${capability.capabilityId} denied: ${assessment.outcome} — ${assessment.reason}`,
+        );
+      }
+    });
     for (const cap of extra ?? buildDefaultCapabilities()) registry.register(cap);
     return registry;
   }

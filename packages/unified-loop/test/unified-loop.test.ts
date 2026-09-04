@@ -1,5 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { HumanApprovalModule } from '@jataqi/human-approval';
+import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
+import { ReconciliationModule } from '@jataqi/reconciliation';
+import { CommercialHealthModule } from '@jataqi/commercial-health';
 import {
   LOOP_STAGES,
   UnifiedLoopEvents,
@@ -14,7 +18,7 @@ import { buildHarness, sandboxAdapter, OBSERVATIONS, type Harness } from './help
 const ACTION_TYPE = 'campaign.reengage';
 const TARGET = 'sandbox-crm';
 
-function actionTask(overrides: { executeForReal?: boolean; authorizationLevel?: number; riskScore?: number } = {}) {
+function actionTask(overrides: { executeForReal?: boolean; authorizationLevel?: number; riskScore?: number; gateRequired?: boolean } = {}) {
   return {
     objective: 'Decide whether to run a bounded re-engagement action and execute it only if authorized.',
     observations: OBSERVATIONS,
@@ -28,6 +32,7 @@ function actionTask(overrides: { executeForReal?: boolean; authorizationLevel?: 
       complianceScore: 95,
       evidenceStrength: 85,
       authorizationLevel: overrides.authorizationLevel ?? 2,
+      gateRequired: overrides.gateRequired,
       executeForReal: overrides.executeForReal ?? false,
     },
   };
@@ -251,6 +256,220 @@ describe('W22 native unified loop — C-1', () => {
 function stageOutputs(result: LoopRunResult, stage: LoopStage): Record<string, unknown> | undefined {
   return result.stageOutputs[stage];
 }
+
+describe('W23 C-2 governed engine integration — native loop', () => {
+  it('T1: high-autonomy gate invokes real human-approval + regulatory-gates; held, never self-authorized', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 3 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, authorizationLevel: 3 }));
+    assert.equal(result.outcome, 'HELD_AT_GATE');
+    const gate = stageOutputs(result, 'HUMAN_OR_REGULATORY_GATE');
+    assert.equal(gate?.gateRequired, true);
+    assert.equal(gate?.selfApproved, false);
+    assert.equal(gate?.votesCastByLoop, 0);
+    assert.equal(gate?.physicalExecutionAuthorization, 'NOT_AUTHORIZED');
+    assert.ok(typeof gate?.approvalRequestId === 'string');
+    assert.equal(gate?.externalVerificationPending, true);
+    // Real service invocation proof, not simulation.
+    const human = h.kernel.getModule<HumanApprovalModule>('human-approval').getService();
+    const request = await human.getRequest(h.actor, gate?.approvalRequestId as string);
+    assert.ok(request, 'human-approval request was created by the real service');
+    const votes = await human.listVotes(h.actor, request!.id);
+    assert.equal(votes.filter((v) => v.reviewerActorId === h.actor.id).length, 0, 'loop never casts votes');
+    const regulatory = h.kernel.getModule<RegulatoryGateModule>('regulatory-gates').getService();
+    const evaluations = await regulatory.listEvaluations(h.actor);
+    assert.equal(evaluations.length, 1, 'real regulatory gate evaluation was recorded');
+    assert.equal(evaluations[0]!.status, 'PENDING_EXTERNAL_VERIFICATION');
+    assert.equal(evaluations[0]!.physicalExecutionAuthorization, 'NOT_AUTHORIZED');
+  });
+
+  it('T1b: explicit gateRequired at autonomy 2 routes through the real gate and holds (pending external ≠ authorization)', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 3 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, authorizationLevel: 2, gateRequired: true }));
+    assert.equal(result.outcome, 'HELD_AT_GATE');
+    const gate = stageOutputs(result, 'HUMAN_OR_REGULATORY_GATE');
+    assert.equal(gate?.gateRequired, true);
+    assert.equal(gate?.selfApproved, false);
+    assert.equal(gate?.externalVerificationPending, true);
+    assert.equal(gate?.physicalExecutionAuthorization, 'NOT_AUTHORIZED');
+    const human = h.kernel.getModule<HumanApprovalModule>('human-approval').getService();
+    const request = await human.getRequest(h.actor, gate?.approvalRequestId as string);
+    assert.ok(request, 'gate-required task creates a real human-approval request');
+    assert.equal((await human.listVotes(h.actor, request!.id)).length, 0, 'no votes cast by the loop');
+  });
+
+  it('T2: autonomy-2 sandbox verified path remains intact (W22 regression)', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, riskScore: 20 }));
+    assert.equal(result.outcome, 'COMPLETED_VERIFIED');
+    assert.equal(stageOutputs(result, 'AUTHORIZE')?.allowed, true);
+    assert.equal(stageOutputs(result, 'EXECUTE')?.executedExternally, true);
+    assert.equal(stageOutputs(result, 'VERIFY_RESULT')?.verified, true);
+  });
+
+  it('T3a: missing/denied capability grants fail closed before selection', async () => {
+    const h = await buildHarness({ seedGrants: false });
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, riskScore: 20 }));
+    assert.equal(result.outcome, 'FAILED_CLOSED');
+    assert.equal(result.trace.find((t) => t.stage === 'CAPABILITY_SELECTION')?.status, 'FAILED');
+  });
+
+  it('T3b: valid capability grant proceeds to execution', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, riskScore: 20 }));
+    assert.equal(result.outcome, 'COMPLETED_VERIFIED');
+    const selection = stageOutputs(result, 'CAPABILITY_SELECTION');
+    assert.equal(selection?.capabilityId, 'unified-loop.execute');
+    assert.equal(selection?.accessOutcome, 'AVAILABLE_AND_AUTHORIZED');
+    assert.equal(selection?.connectorActivated, false);
+  });
+
+  it('T4: real reconciliation service invoked; pending-external surfaced honestly', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, riskScore: 20 }));
+    assert.equal(result.outcome, 'COMPLETED_VERIFIED');
+    const reconcile = stageOutputs(result, 'RECONCILE');
+    assert.ok(reconcile, 'RECONCILE stage output present');
+    assert.equal(typeof reconcile?.reconciliationRunId, 'string');
+    assert.equal(reconcile?.reconciled, false, 'no fabricated reconciliation success');
+    assert.equal(reconcile?.reconciliationStatus, 'PENDING_EXTERNAL');
+    assert.equal(reconcile?.pendingExternal, true);
+    const service = h.kernel.getModule<ReconciliationModule>('reconciliation').getService();
+    const runs = await service.listRuns(h.actor);
+    assert.ok(runs.some((r) => r.id === reconcile?.reconciliationRunId), 'real reconciliation run persisted');
+  });
+
+  it('T5: commercial-health anomaly/drift reaches uncertainty as advisory evidence only', async () => {
+    const h = await buildHarness();
+    const health = h.kernel.getModule<CommercialHealthModule>('commercial-health').getService();
+    const provenance = { source: 'unified-loop-w23-test', collectedAt: h.now() };
+    const ev = (id: string) => ({ id, status: 'OBSERVED' as const, source: 'unified-loop-w23-test', observedAt: h.now(), confidence: 90, summary: 'Advisory health evidence.', provenance });
+    await health.recordObservation(h.actor, {
+      metric: 'SPEND',
+      value: 200,
+      unit: 'usd',
+      baseline: 100,
+      evidence: [ev('health-observation')],
+      provenance,
+    });
+    await health.assessDrift(h.actor, {
+      dimension: 'PMF',
+      baseline: 100,
+      observed: 80,
+      evidence: [ev('health-drift')],
+      provenance,
+    });
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: false, riskScore: 20 }));
+    const uncertainty = stageOutputs(result, 'UNCERTAINTY_ASSESSMENT');
+    const advisory = uncertainty?.healthAdvisory as Record<string, unknown> | undefined;
+    assert.ok(advisory, 'health advisory present in uncertainty assessment');
+    assert.equal(advisory?.available, true);
+    assert.ok(Number(advisory?.anomalyCount ?? 0) > 0);
+    assert.ok(Number(advisory?.driftCount ?? 0) > 0);
+    assert.equal(advisory?.remediationExecuted, false, 'no autonomous remediation');
+    assert.equal(uncertainty?.remediationExecuted, false);
+    const safety = stageOutputs(result, 'SAFETY');
+    const safetyAdvisory = safety?.healthAdvisory as Record<string, unknown> | undefined;
+    assert.ok(safetyAdvisory, 'health advisory reaches SAFETY as evidence');
+    assert.equal(safetyAdvisory?.available, true);
+    assert.equal(safety?.remediationExecuted, false, 'safety never auto-remediates');
+  });
+
+  it('T6: OBSERVE_RESULT reads command-center evidence; AUDIT reads observability evidence', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, riskScore: 20 }));
+    const observe = stageOutputs(result, 'OBSERVE_RESULT');
+    assert.ok(observe, 'OBSERVE_RESULT stage output present');
+    const cc = observe?.commandCenterEvidence as Record<string, unknown> | undefined;
+    assert.ok(cc, 'command-center evidence present');
+    assert.equal(cc?.available, true);
+    const infra = observe?.infrastructureEvidence as Record<string, unknown> | undefined;
+    assert.ok(infra, 'infrastructure evidence present');
+    assert.equal(infra?.available, true);
+    const audit = stageOutputs(result, 'AUDIT');
+    const obs = audit?.observabilityEvidence as Record<string, unknown> | undefined;
+    assert.ok(obs, 'observability evidence present in audience');
+    assert.equal(obs?.available, true);
+  });
+
+  it('T7: agent-runtime is never a native loop stage and no second orchestration loop exists', async () => {
+    const h = await buildHarness();
+    const result = await runLoop(h, reasoningTask());
+    assert.deepEqual(result.trace.map((t) => t.stage), [...LOOP_STAGES]);
+    assert.ok(!result.trace.some((t) => t.capabilityId?.includes('agent-runtime')));
+    const caps = (await import('../src/index.js')).buildDefaultCapabilities();
+    assert.ok(caps.every((c) => (c.stage as string) !== 'AGENT_RUNTIME' && !c.capabilityId.includes('agent-runtime')));
+    assert.equal(LOOP_STAGES.length, 34);
+  });
+
+  it('T8a: missing regulatory-gate configuration fails closed without fabricating gate success', async () => {
+    const h = await buildHarness({ seedRegulatoryGate: false, seedGrants: true });
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 3 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, authorizationLevel: 3 }));
+    assert.equal(result.outcome, 'HELD_AT_GATE');
+    const gate = stageOutputs(result, 'HUMAN_OR_REGULATORY_GATE');
+    assert.equal(gate?.gateRequired, true);
+    assert.equal(gate?.gateConfigured, false);
+    assert.equal(gate?.approvalQuorumSatisfied, false);
+  });
+
+  it('T8b: injected governed-engine failure fails closed', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const svc = h.kernel.getModule<UnifiedLoopModule>('unified-loop').getService();
+    const { buildDefaultCapabilities } = await import('../src/index.js');
+    const caps = buildDefaultCapabilities().map((c) =>
+      c.stage === 'RECONCILE'
+        ? { ...c, invoke: async (): Promise<CapabilityResult> => { throw new Error('injected reconcile failure'); } }
+        : c,
+    );
+    const result = await svc.runLoop(h.actor, actionTask({ executeForReal: true, riskScore: 20 }), { now: h.now, capabilities: caps });
+    assert.equal(result.outcome, 'FAILED_CLOSED');
+    assert.equal(result.trace.find((t) => t.stage === 'RECONCILE')?.status, 'FAILED');
+  });
+
+  it('W23 tenant/correlation continuity on the full action path', async () => {
+    const h = await buildHarness();
+    await h.createPolicy(h.admin, { actionType: ACTION_TYPE, maxAutonomy: 2, maxRisk: 60 });
+    h.registerAdapter(sandboxAdapter(ACTION_TYPE, TARGET));
+    const result = await runLoop(h, actionTask({ executeForReal: true, riskScore: 20 }));
+    assert.ok(result.trace.every((t) => t.tenantId === 'acme'));
+    assert.ok(result.trace.every((t) => t.correlationId === result.correlationId));
+    assert.equal(result.tenantId, 'acme');
+  });
+
+  it('W23 optional identity boundary: read/verify only, no issuance or signer call', async () => {
+    const h = await buildHarness();
+    const svc = h.kernel.getModule<UnifiedLoopModule>('unified-loop').getService();
+    const result = await svc.runLoop(h.actor, {
+      ...reasoningTask(),
+      identityId: 'identity-not-present',
+    }, { now: h.now });
+    const wake = stageOutputs(result, 'WAKE');
+    const identity = wake?.identityEvidence as Record<string, unknown> | undefined;
+    assert.ok(identity, 'identity evidence present when explicitly supplied');
+    assert.equal(identity?.identityRead, true);
+    assert.equal(identity?.present, false);
+    assert.equal(identity?.verified, false);
+  });
+});
 
 function summarize(result: LoopRunResult): string {
   return result.trace
