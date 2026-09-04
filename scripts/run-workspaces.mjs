@@ -5,6 +5,17 @@
  * npm's workspace iteration order is not a build graph. This runner derives the
  * graph from local @jataqi/* dependencies so TypeScript declarations exist before
  * dependent packages compile or test.
+ *
+ * Failure semantics differ per mode:
+ *
+ * - `build` is fail-fast: a downstream compilation may depend on artifacts from
+ *   an upstream workspace, so continuing after an upstream build failure can
+ *   produce misleading compilation results.
+ *
+ * - `test` aggregates: every eligible suite runs to completion even if earlier
+ *   suites fail, each suite outcome is reported, and the runner exits non-zero
+ *   at the end if one or more suites failed. A failing suite must never mask
+ *   the results of downstream suites in the same run (audit finding F-02).
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -89,6 +100,10 @@ function dependencyOrder(workspaces) {
   return order;
 }
 
+// test = aggregate (never mask downstream suites); build = fail-fast.
+const aggregateFailures = script === 'test';
+const results = [];
+
 try {
   const order = dependencyOrder(discoverWorkspaces());
   console.log(`Workspace ${script} order: ${order.map((workspace) => workspace.manifest.name).join(' -> ')}`);
@@ -96,6 +111,7 @@ try {
   for (const workspace of order) {
     if (!workspace.manifest.scripts?.[script]) {
       console.log(`Skipping ${workspace.manifest.name}: no ${script} script.`);
+      results.push({ name: workspace.manifest.name, outcome: 'SKIPPED' });
       continue;
     }
     console.log(`\n=== ${script} ${workspace.manifest.name} ===`);
@@ -103,8 +119,36 @@ try {
       cwd: root,
       stdio: 'inherit',
     });
-    if (result.error) throw result.error;
-    if (result.status !== 0) process.exit(result.status ?? 1);
+    if (result.error) {
+      if (aggregateFailures) {
+        results.push({ name: workspace.manifest.name, outcome: 'ERROR', detail: result.error.message });
+        continue;
+      }
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      if (aggregateFailures) {
+        results.push({ name: workspace.manifest.name, outcome: 'FAILED', detail: `exit ${result.status}` });
+        continue;
+      }
+      process.exit(result.status ?? 1);
+    }
+    results.push({ name: workspace.manifest.name, outcome: 'PASSED' });
+  }
+
+  if (aggregateFailures) {
+    const failed = results.filter((entry) => entry.outcome === 'FAILED' || entry.outcome === 'ERROR');
+    const passed = results.filter((entry) => entry.outcome === 'PASSED').length;
+    const skipped = results.filter((entry) => entry.outcome === 'SKIPPED').length;
+    console.log(`\n=== Workspace ${script} summary ===`);
+    for (const entry of results) {
+      console.log(`${entry.outcome}\t${entry.name}${entry.detail ? ` (${entry.detail})` : ''}`);
+    }
+    console.log(`Total: ${results.length} · Passed: ${passed} · Failed: ${failed.length} · Skipped: ${skipped}`);
+    if (failed.length > 0) {
+      console.error(`Workspace ${script} run completed with ${failed.length} failing workspace(s).`);
+      process.exit(1);
+    }
   }
 } catch (error) {
   console.error(`Workspace ${script} orchestration failed: ${error.message}`);
