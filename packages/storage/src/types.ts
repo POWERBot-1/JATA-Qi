@@ -56,9 +56,33 @@ export interface INamespace {
   size(): Promise<number>;
 }
 
+/** Result of a single-document compare-and-swap. */
+export interface CasWriteResult<T> {
+  /**
+   * true when the document was atomically changed to `makeNext(current)`.
+   * false when the guard rejected the current document (no write occurred).
+   */
+  ok: boolean;
+  /**
+   * - when `ok`: the newly persisted document (the result of `makeNext`).
+   * - when `!ok`: the current document that made the guard false
+   *   (`undefined` when no document exists for the id).
+   */
+  doc: T | undefined;
+}
+
 /**
  * A Collection stores structured documents keyed by a string id.
  * Supports basic predicate queries (adapters may add indexing).
+ *
+ * Drivers that back authoritative/concurrent state additionally implement
+ * `cas` — a single-document, driver-level-atomic compare-and-swap used for
+ * concurrency-safe transitions (leases, queue state, checkpoints). The guard
+ * is a pure synchronous predicate on the current document (`undefined` when
+ * absent); drivers evaluate it under an exclusive per-document lock or a
+ * database row lock so that two concurrent writers cannot both observe the
+ * same pre-state. Implementers must not leave the collection in a partial
+ * state if the guard throws.
  */
 export interface ICollection<T extends { id: string } = { id: string }> {
   readonly name: string;
@@ -73,6 +97,34 @@ export interface ICollection<T extends { id: string } = { id: string }> {
   /** Replace the complete collection atomically where the selected driver supports it. */
   replaceAll(docs: readonly T[]): Promise<void>;
   clear(): Promise<void>;
+
+  /**
+   * Atomically transition one document.
+   *
+   * @param id      target document id.
+   * @param guard   synchronous predicate on the current document; must not
+   *                perform async work. `current` is `undefined` when absent.
+   * @param makeNext pure synchronous builder of the replacement document from
+   *                the *current* document. Only invoked when `guard` is true.
+   */
+  cas(
+    id: string,
+    guard: (current: T | undefined) => boolean,
+    makeNext: (current: T) => T,
+  ): Promise<CasWriteResult<T>>;
+}
+
+/**
+ * A single transaction scope over one or more collections. Obtained from a
+ * driver that supports real transactions (`IStorageDriver.beginTransaction`).
+ * Every `collection()` handle returned from a scope is bound to one backend
+ * transaction/connection, so operations across collections commit or roll back
+ * together. Non-transactional drivers do not implement `beginTransaction`.
+ */
+export interface IStorageTransaction {
+  collection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
 }
 
 /**
@@ -97,6 +149,11 @@ export interface IStorageDriver {
   openBlobStore(name: string): Promise<IBlobStore>;
   /** Close the driver and release resources (file handles, db connections). */
   close(): Promise<void>;
+  /**
+   * Start a real multi-operation transaction when the driver supports one
+   * (e.g. a transactional database). Undefined for development-only drivers.
+   */
+  beginTransaction?(): Promise<IStorageTransaction>;
 }
 
 /** Events published on the kernel event bus. */

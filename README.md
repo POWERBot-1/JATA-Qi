@@ -38,7 +38,8 @@ this repository does not claim a live production deployment by default.
 | Package | Description |
 |---|---|
 | `@jataqi/core-kernel` | Event bus, DI container, topological module lifecycle, config, structured logging |
-| `@jataqi/storage` | Pluggable KV / document collection / blob storage with in-memory and **development-only single-process** filesystem drivers |
+| `@jataqi/storage` | Pluggable KV / document collection / blob storage with in-memory and **development-only single-process** filesystem drivers, plus an atomic compare-and-swap primitive (`cas`) and optional transaction seam (P-01) |
+| `@jataqi/storage-postgres` | P-01 authoritative, transactional PostgreSQL storage driver implementing `@jataqi/storage` interfaces: row-lock compare-and-swap for leases/queue/checkpoints, real multi-collection transactions, versioned schema guard, externalized config (persistence infrastructure only — no cognition/authorization) |
 | `@jataqi/vector-search` | Embedding models (hash, OpenAI), brute-force flat vector index with cosine/euclidean/dot, development snapshot persistence |
 | `@jataqi/knowledge-service` | Document/chunk model, paragraph+sentence+fixed chunker, semantic retrieval with context expansion and development filesystem index restoration |
 | `@jataqi/knowledge-graph` | Entities, relations, SPO triple store, BFS traversal, heuristic extractor, Graph-RAG fusion |
@@ -223,7 +224,8 @@ node examples/demo.mjs
 - ✅ Research Evidence Foundation (tenant-bound high-level claim/evidence provenance, reproducibility references, regulated-domain human/review routing, and no physical execution capability)
 - ✅ Human Approval Foundation (upstream attestation records, competency-aware research review quorum, immutable vote ledger, and no physical-execution authorization)
 - ✅ Regulatory Gate Foundation (administrator-managed local evidence/reproducibility/human-review checklists, explicit external-verification pending state, and no compliance/physical-authorization claim)
-- ✅ Loop Host Driver (O-01 scheduler/wake/leased-queue/checkpoint-resume over the governed loop; opt-in `loopHost.enabled`, idle by default, no auto-start; crash detection + resume-or-fail-closed on the available storage abstraction, not production durability)
+- ✅ Loop Host Driver (O-01 scheduler/wake/leased-queue/checkpoint-resume over the governed loop; opt-in `loopHost.enabled`, idle by default, no auto-start; crash detection + resume-or-fail-closed on the available storage abstraction)
+- ✅ Production Durable Persistence Substrate (P-01 `@jataqi/storage-postgres` PostgreSQL driver behind the existing storage abstraction: atomic `cas` for leases/queue/checkpoints across concurrent workers, real multi-collection transactions, versioned schema guard, crash/restart recovery, retry→DLQ, tenant isolation, and a full 34-stage governed-loop dispatch validated against a real PostgreSQL backend; persistence only — no new cognition or authorization)
 - ✅ CLI + Bootstrap (.env support, ask/ingest/stats/search/entities/repl)
 - ⬜ GitHub recovery, remote push, and pull-request operations (`PENDING_EXTERNAL_ACCESS`; no remote write is claimed from this checkout)
 

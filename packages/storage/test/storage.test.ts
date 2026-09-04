@@ -431,3 +431,36 @@ describe('StorageModule (kernel integration)', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 });
+
+describe('compare-and-swap (cas) atomic transition', () => {
+  it('MemoryCollection cas wins only when the guard holds and writes atomically', async () => {
+    const col = new MemoryCollection<{ id: string; n: number }>('cas-mem');
+    await col.put({ id: 'a', n: 1 });
+    const won = await col.cas('a', (cur) => cur?.n === 1, (cur) => ({ id: cur!.id, n: 2 }));
+    assert.equal(won.ok, true);
+    assert.equal(won.doc?.n, 2);
+    const lost = await col.cas('a', (cur) => cur?.n === 99, (cur) => ({ id: cur!.id, n: 3 }));
+    assert.equal(lost.ok, false);
+    assert.equal(lost.doc?.n, 2);
+    assert.equal((await col.get('a'))?.n, 2);
+    // guard can create an absent document (insert-if-absent)
+    const created = await col.cas('b', (cur) => cur === undefined, () => ({ id: 'b', n: 5 }));
+    assert.equal(created.ok, true);
+    assert.equal((await col.get('b'))?.n, 5);
+  });
+
+  it('FsCollection cas is atomic under its per-file lock and persists', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jataqi-cas-'));
+    const driver = new FsDriver({ root: tmpDir });
+    const col = await driver.openCollection<{ id: string; n: number }>('cas-fs');
+    await col.put({ id: 'a', n: 1 });
+    // Two concurrent cas transitions on the same doc: exactly one can advance from n===1.
+    const outcomes = await Promise.all(
+      [1, 2].map(() => col.cas('a', (cur) => cur?.n === 1, (cur) => ({ id: cur!.id, n: cur!.n + 1 }))),
+    );
+    assert.equal(outcomes.filter((o) => o.ok).length, 1);
+    assert.equal((await col.get('a'))?.n, 2);
+    await driver.close();
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+});

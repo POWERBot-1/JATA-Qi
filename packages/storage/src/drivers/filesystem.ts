@@ -15,6 +15,7 @@ import * as fs from 'node:fs/promises';
 import type { Dirent, Stats } from 'node:fs';
 import * as path from 'node:path';
 import {
+  CasWriteResult,
   Entry,
   EntryMeta,
   IBlobStore,
@@ -633,6 +634,26 @@ export class FsCollection<T extends { id: string }> implements ICollection<T> {
     return this.lock.run(async () => {
       await this.loadUnlocked(true);
       return this.cache.size;
+    });
+  }
+
+  /** Atomically replace the local collection snapshot in one file rewrite. */
+  async cas(
+    id: string,
+    guard: (current: T | undefined) => boolean,
+    makeNext: (current: T) => T,
+  ): Promise<CasWriteResult<T>> {
+    return this.lock.run(async () => {
+      await this.loadUnlocked(true);
+      const current = this.cache.get(id);
+      if (!guard(current)) return { ok: false, doc: current };
+      const next = makeNext(current as T);
+      if (!next.id) throw new Error(`Collection "${this.name}": document must have an id`);
+      const snapshot = new Map(this.cache);
+      snapshot.set(id, next);
+      await this.writeSnapshotUnlocked(snapshot);
+      this.cache = snapshot;
+      return { ok: true, doc: next };
     });
   }
 

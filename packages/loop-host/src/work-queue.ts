@@ -1,12 +1,15 @@
 // Tenant-scoped durable work queue with lease ownership and bounded retries.
 //
-// Leases live *inside* the work record (no cross-collection transaction is
-// available from the storage abstraction), so every mutation is a single
-// collection put. Ownership is proven by an unguessable lease token: only the
-// holder that presents the current token may settle, release, or fail the
-// record. Expired leases may be reclaimed; active leases cannot be taken.
+// Every guarded state transition runs as a single-document atomic
+// compare-and-swap (`ICollection.cas`) so that it is concurrency-safe even
+// across multiple workers/processes on a database-backed driver: the backend
+// (PostgreSQL row lock for @jataqi/storage-postgres, per-document lock for the
+// memory/filesystem drivers) serializes the read-guard-write of each
+// transition. Ownership is proven by an unguessable lease token: only the
+// holder that presents the current token may settle, release, renew, or fail
+// the record. Expired leases may be reclaimed; active leases cannot be taken.
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
@@ -67,11 +70,47 @@ export function computeBackoffMs(attempt: number, baseDelayMs: number, maxDelayM
   return Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt - 1));
 }
 
+/** Deterministic work-item id from tenant + idempotency key (concurrency-safe dedup). */
+function deterministicIdFor(tenantId: string, key: string): string {
+  return `work:${createHash('sha256').update(`tenant:${tenantId}\0key:${key}`).digest('hex').slice(0, 40)}`;
+}
+
 export class WorkQueue {
   private items!: ICollection<HostedWorkItem>;
 
   async init(kernel: KernelApi): Promise<void> {
     this.items = await kernel.getModule<StorageModule>('storage').collection<HostedWorkItem>(WORK_COLLECTION);
+  }
+
+  /**
+   * Run one guarded state transition as a single atomic compare-and-swap.
+   * Typed errors raised by `guard` propagate unchanged; a plain `false` from
+   * `guard` (a lost concurrent race with no more specific condition) becomes a
+   * LeaseConflictError and no write is applied.
+   */
+  private async transition(
+    id: string,
+    guard: (current: HostedWorkItem | undefined) => boolean,
+    makeNext: (current: HostedWorkItem) => HostedWorkItem,
+  ): Promise<HostedWorkItem> {
+    const res = await this.items.cas(id, guard, makeNext);
+    if (!res.ok) {
+      throw new LeaseConflictError(
+        `Work item "${id}" transition lost a concurrent race (state changed since read); no write was applied.`,
+      );
+    }
+    return copy(res.doc as HostedWorkItem);
+  }
+
+  /** Reusable lease-holder precondition guard that throws StaleLeaseError. */
+  private leaseHolderGuard(id: string, token: string): (cur: HostedWorkItem | undefined) => boolean {
+    return (cur) => {
+      if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
+      if (!cur.leaseToken || cur.leaseToken !== token) {
+        throw new StaleLeaseError(`Lease token for work item "${id}" is stale or unknown; the record was not modified.`);
+      }
+      return true;
+    };
   }
 
   /**
@@ -82,16 +121,28 @@ export class WorkQueue {
     assertActor(actor);
     if (!input.task || !input.task.objective.trim()) throw new LoopHostError('A loop task objective is required.');
     const at = now ?? Date.now();
-    const key = input.idempotencyKey?.trim() ? input.idempotencyKey.trim() : `work:${randomUUID()}`;
-    const existing = (
-      await this.items.query({
-        where: (item) => item.tenantId === actor.tenantId && item.idempotencyKey === key,
-        limit: 1,
-      })
-    )[0];
-    if (existing) return copy(existing);
+    const callerKey = input.idempotencyKey?.trim();
+    const key = callerKey ? callerKey : `work:${randomUUID()}`;
+
+    // Back-compatible idempotency: if a record already exists for this
+    // tenant+key (created earlier under any id), return it unchanged.
+    if (callerKey) {
+      const existing = (
+        await this.items.query({
+          where: (item) => item.tenantId === actor.tenantId && item.idempotencyKey === callerKey,
+          limit: 1,
+        })
+      )[0];
+      if (existing) return copy(existing);
+    }
+
+    // Concurrency-safe create. A caller-supplied idempotency key maps to a
+    // deterministic id so that two concurrent enqueues of the same key can
+    // never produce two distinct records — the compare-and-swap is insert-if-
+    // absent and the loser returns the winner's record.
+    const id = callerKey ? deterministicIdFor(actor.tenantId, callerKey) : randomUUID();
     const item: HostedWorkItem = {
-      id: randomUUID(),
+      id,
       tenantId: actor.tenantId,
       correlationId: input.correlationId?.trim() ? input.correlationId.trim() : `host:${randomUUID()}`,
       idempotencyKey: key,
@@ -107,8 +158,37 @@ export class WorkQueue {
       availableAt: input.availableAt ?? at,
       checkpointSequence: 0,
     };
-    await this.items.put(item);
-    return copy(item);
+    const res = await this.items.cas(id, (cur) => cur === undefined, () => item);
+    if (res.ok) return copy(res.doc as HostedWorkItem);
+    // A concurrent enqueue won with the same deterministic id — return its
+    // record (idempotent) rather than creating a duplicate.
+    return copy(res.doc as HostedWorkItem);
+  }
+
+  /**
+   * Renew a live lease (same holder only). Fails closed for any stale holder.
+   * Not wired into the current fixed-TTL host flow but available for bounded
+   * long-running dispatches and exercised by tests.
+   */
+  async renewLease(id: string, token: string, ttlMs: number, now: number): Promise<HostedWorkItem> {
+    if (!token.trim()) throw new LoopHostError('A lease token is required to renew.');
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > 3_600_000) throw new LoopHostError('Lease TTL must be between 1 and 3600000 ms.');
+    const res = await this.items.cas(
+      id,
+      (cur) => {
+        if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
+        if (!cur.leaseToken || cur.leaseToken !== token) {
+          throw new StaleLeaseError(`Work item "${id}" is not held by the presented lease token; renewal refused (no write applied).`);
+        }
+        if (cur.status !== 'LEASED' && cur.status !== 'DISPATCHED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot renew from status ${cur.status}.`);
+        }
+        return true;
+      },
+      (cur) => ({ ...copy(cur), leaseExpiry: now + Math.floor(ttlMs), updatedAt: now }),
+    );
+    if (!res.ok) throw new LeaseConflictError(`Work item "${id}" lease renewal lost a concurrent race; no write applied.`);
+    return copy(res.doc as HostedWorkItem);
   }
 
   /** Raw read without actor scoping (host-internal paths re-check tenancy at the boundary). */
@@ -170,61 +250,60 @@ export class WorkQueue {
   async acquireLease(id: string, owner: string, ttlMs: number, now: number): Promise<{ item: HostedWorkItem; token: string }> {
     if (!owner.trim()) throw new LoopHostError('A lease owner identity is required.');
     if (!Number.isFinite(ttlMs) || ttlMs <= 0 || ttlMs > 3_600_000) throw new LoopHostError('Lease TTL must be between 1 and 3600000 ms.');
-    const item = await this.items.get(id);
-    if (!item) throw new LoopHostError(`Work item "${id}" was not found.`);
-    if (item.status === 'LEASED' || item.status === 'DISPATCHED') {
-      // An in-flight record is never re-leased here: active holders keep
-      // exclusivity and expired holders go through reclaim/recover instead.
-      throw new LeaseConflictError(
-        `Work item "${id}" is already leased by ${item.leaseOwner ?? 'an unknown holder'}; use reclaim/recover, never a second lease.`,
-      );
-    }
-    if (item.status !== 'QUEUED' && item.status !== 'SLEEPING') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot be leased from status ${item.status}.`);
-    }
-    if (item.availableAt > now) {
-      throw new InvalidWorkTransitionError(`Work item "${id}" is not yet eligible for dispatch.`);
-    }
-    if (item.leaseToken !== undefined && item.leaseExpiry !== undefined && item.leaseExpiry > now) {
-      throw new LeaseConflictError(`Work item "${id}" is already leased until ${item.leaseExpiry}.`);
-    }
     const token = randomUUID();
-    const leased: HostedWorkItem = {
-      ...copy(item),
-      status: 'LEASED',
-      leaseOwner: owner,
-      leaseToken: token,
-      leaseExpiry: now + Math.floor(ttlMs),
-      updatedAt: now,
-    };
-    await this.items.put(leased);
+    const leased = await this.transition(
+      id,
+      (cur) => {
+        if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
+        if (cur.status === 'LEASED' || cur.status === 'DISPATCHED') {
+          throw new LeaseConflictError(
+            `Work item "${id}" is already leased by ${cur.leaseOwner ?? 'an unknown holder'}; use reclaim/recover, never a second lease.`,
+          );
+        }
+        if (cur.status !== 'QUEUED' && cur.status !== 'SLEEPING') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot be leased from status ${cur.status}.`);
+        }
+        if (cur.availableAt > now) {
+          throw new InvalidWorkTransitionError(`Work item "${id}" is not yet eligible for dispatch.`);
+        }
+        if (cur.leaseToken !== undefined && cur.leaseExpiry !== undefined && cur.leaseExpiry > now) {
+          throw new LeaseConflictError(`Work item "${id}" is already leased until ${cur.leaseExpiry}.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'LEASED',
+        leaseOwner: owner,
+        leaseToken: token,
+        leaseExpiry: now + Math.floor(ttlMs),
+        updatedAt: now,
+      }),
+    );
     return { item: copy(leased), token };
-  }
-
-  private async requireLeaseHolder(id: string, token: string): Promise<HostedWorkItem> {
-    const item = await this.items.get(id);
-    if (!item) throw new LoopHostError(`Work item "${id}" was not found.`);
-    if (!item.leaseToken || item.leaseToken !== token) {
-      throw new StaleLeaseError(`Lease token for work item "${id}" is stale or unknown; the record was not modified.`);
-    }
-    return item;
   }
 
   /** Release a live lease back to QUEUED (operator path; never modifies terminal records). */
   async releaseLease(id: string, token: string, now: number): Promise<HostedWorkItem> {
-    const item = await this.requireLeaseHolder(id, token);
-    if (item.status !== 'LEASED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot be released from status ${item.status}.`);
-    }
-    const released: HostedWorkItem = {
-      ...copy(item),
-      status: 'QUEUED',
-      leaseOwner: undefined,
-      leaseToken: undefined,
-      leaseExpiry: undefined,
-      updatedAt: now,
-    };
-    await this.items.put(released);
+    const holder = this.leaseHolderGuard(id, token);
+    const released = await this.transition(
+      id,
+      (cur) => {
+        holder(cur);
+        if (cur!.status !== 'LEASED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot be released from status ${cur!.status}.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'QUEUED',
+        leaseOwner: undefined,
+        leaseToken: undefined,
+        leaseExpiry: undefined,
+        updatedAt: now,
+      }),
+    );
     return copy(released);
   }
 
@@ -233,42 +312,52 @@ export class WorkQueue {
    * touched; active leases throw instead of being stolen.
    */
   async reclaimExpired(id: string, now: number): Promise<HostedWorkItem> {
-    const item = await this.items.get(id);
-    if (!item) throw new LoopHostError(`Work item "${id}" was not found.`);
-    if (item.status !== 'LEASED' && item.status !== 'DISPATCHED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" holds no lease to reclaim (status ${item.status}).`);
-    }
-    if (item.leaseExpiry === undefined || item.leaseExpiry > now) {
-      throw new LeaseConflictError(`Lease for work item "${id}" is still active; reclaim refused.`);
-    }
-    const reclaimed: HostedWorkItem = {
-      ...copy(item),
-      status: 'QUEUED',
-      leaseOwner: undefined,
-      leaseToken: undefined,
-      leaseExpiry: undefined,
-      lastError: `Lease expired at ${item.leaseExpiry}; reclaimed for safe redispatch.`,
-      updatedAt: now,
-    };
-    await this.items.put(reclaimed);
+    const reclaimed = await this.transition(
+      id,
+      (cur) => {
+        if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
+        if (cur.status !== 'LEASED' && cur.status !== 'DISPATCHED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" holds no lease to reclaim (status ${cur.status}).`);
+        }
+        if (cur.leaseExpiry === undefined || cur.leaseExpiry > now) {
+          throw new LeaseConflictError(`Lease for work item "${id}" is still active; reclaim refused.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'QUEUED',
+        leaseOwner: undefined,
+        leaseToken: undefined,
+        leaseExpiry: undefined,
+        lastError: `Lease expired at ${cur.leaseExpiry}; reclaimed for safe redispatch.`,
+        updatedAt: now,
+      }),
+    );
     return copy(reclaimed);
   }
 
   /** Mark the leased record as handed to the unified loop (attempt counted). */
   async markDispatched(id: string, token: string, checkpointId: string, now: number): Promise<HostedWorkItem> {
-    const item = await this.requireLeaseHolder(id, token);
-    if (item.status !== 'LEASED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot be dispatched from status ${item.status}.`);
-    }
-    const dispatched: HostedWorkItem = {
-      ...copy(item),
-      status: 'DISPATCHED',
-      attemptCount: item.attemptCount + 1,
-      checkpointId,
-      checkpointSequence: item.checkpointSequence + 1,
-      updatedAt: now,
-    };
-    await this.items.put(dispatched);
+    const holder = this.leaseHolderGuard(id, token);
+    const dispatched = await this.transition(
+      id,
+      (cur) => {
+        holder(cur);
+        if (cur!.status !== 'LEASED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot be dispatched from status ${cur!.status}.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'DISPATCHED',
+        attemptCount: cur.attemptCount + 1,
+        checkpointId,
+        checkpointSequence: cur.checkpointSequence + 1,
+        updatedAt: now,
+      }),
+    );
     return copy(dispatched);
   }
 
@@ -286,24 +375,30 @@ export class WorkQueue {
       if (current.loopId === settlement.loopId) return copy(current);
       throw new InvalidWorkTransitionError(`Work item "${id}" is already terminal; a different settlement was refused.`);
     }
-    const item = await this.requireLeaseHolder(id, token);
-    if (item.status !== 'DISPATCHED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot settle from status ${item.status}.`);
-    }
-    const settled: HostedWorkItem = {
-      ...copy(item),
-      status: settlement.status,
-      loopId: settlement.loopId,
-      loopOutcome: settlement.loopOutcome,
-      checkpointId,
-      checkpointSequence: item.checkpointSequence + 1,
-      leaseOwner: undefined,
-      leaseToken: undefined,
-      leaseExpiry: undefined,
-      settledAt: now,
-      updatedAt: now,
-    };
-    await this.items.put(settled);
+    const holder = this.leaseHolderGuard(id, token);
+    const settled = await this.transition(
+      id,
+      (cur) => {
+        holder(cur);
+        if (cur!.status !== 'DISPATCHED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot settle from status ${cur!.status}.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: settlement.status,
+        loopId: settlement.loopId,
+        loopOutcome: settlement.loopOutcome,
+        checkpointId,
+        checkpointSequence: cur.checkpointSequence + 1,
+        leaseOwner: undefined,
+        leaseToken: undefined,
+        leaseExpiry: undefined,
+        settledAt: now,
+        updatedAt: now,
+      }),
+    );
     return copy(settled);
   }
 
@@ -320,57 +415,69 @@ export class WorkQueue {
     reason: string,
     now: number,
   ): Promise<HostedWorkItem> {
-    const item = await this.requireLeaseHolder(id, token);
-    if (item.status !== 'DISPATCHED' && item.status !== 'LEASED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot record failure from status ${item.status}.`);
-    }
-    if (failureClass === 'PERMANENT' || failureClass === 'CHECKPOINT_CORRUPT' || item.attemptCount >= item.maxAttempts) {
-      const dead: HostedWorkItem = {
-        ...copy(item),
-        status: 'DLQ',
-        dlqReason: reason,
-        lastError: reason,
-        leaseOwner: undefined,
-        leaseToken: undefined,
-        leaseExpiry: undefined,
-        updatedAt: now,
-      };
-      await this.items.put(dead);
-      return copy(dead);
-    }
-    const delay = computeBackoffMs(item.attemptCount, item.baseDelayMs, item.maxDelayMs);
-    const requeued: HostedWorkItem = {
-      ...copy(item),
-      status: 'QUEUED',
-      lastError: reason,
-      availableAt: now + delay,
-      leaseOwner: undefined,
-      leaseToken: undefined,
-      leaseExpiry: undefined,
-      updatedAt: now,
-    };
-    await this.items.put(requeued);
-    return copy(requeued);
+    const holder = this.leaseHolderGuard(id, token);
+    const failed = await this.transition(
+      id,
+      (cur) => {
+        holder(cur);
+        if (cur!.status !== 'DISPATCHED' && cur!.status !== 'LEASED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot record failure from status ${cur!.status}.`);
+        }
+        return true;
+      },
+      (cur) => {
+        if (failureClass === 'PERMANENT' || failureClass === 'CHECKPOINT_CORRUPT' || cur.attemptCount >= cur.maxAttempts) {
+          return {
+            ...cur,
+            status: 'DLQ',
+            dlqReason: reason,
+            lastError: reason,
+            leaseOwner: undefined,
+            leaseToken: undefined,
+            leaseExpiry: undefined,
+            updatedAt: now,
+          } as HostedWorkItem;
+        }
+        const delay = computeBackoffMs(cur.attemptCount, cur.baseDelayMs, cur.maxDelayMs);
+        return {
+          ...cur,
+          status: 'QUEUED',
+          lastError: reason,
+          availableAt: now + delay,
+          leaseOwner: undefined,
+          leaseToken: undefined,
+          leaseExpiry: undefined,
+          updatedAt: now,
+        } as HostedWorkItem;
+      },
+    );
+    return copy(failed);
   }
 
   /** Park the record until `availableAt` (SLEEP_PENDING outcome path). */
   async parkSleeping(id: string, token: string, availableAt: number, loopId: string, now: number): Promise<HostedWorkItem> {
-    const item = await this.requireLeaseHolder(id, token);
-    if (item.status !== 'DISPATCHED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot sleep from status ${item.status}.`);
-    }
-    const sleeping: HostedWorkItem = {
-      ...copy(item),
-      status: 'SLEEPING',
-      availableAt,
-      loopId,
-      loopOutcome: 'SLEEP_PENDING',
-      leaseOwner: undefined,
-      leaseToken: undefined,
-      leaseExpiry: undefined,
-      updatedAt: now,
-    };
-    await this.items.put(sleeping);
+    const holder = this.leaseHolderGuard(id, token);
+    const sleeping = await this.transition(
+      id,
+      (cur) => {
+        holder(cur);
+        if (cur!.status !== 'DISPATCHED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot sleep from status ${cur!.status}.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'SLEEPING',
+        availableAt,
+        loopId,
+        loopOutcome: 'SLEEP_PENDING',
+        leaseOwner: undefined,
+        leaseToken: undefined,
+        leaseExpiry: undefined,
+        updatedAt: now,
+      }),
+    );
     return copy(sleeping);
   }
 
@@ -384,41 +491,52 @@ export class WorkQueue {
     const item = await this.items.get(id);
     if (!item) throw new LoopHostError(`Work item "${id}" was not found.`);
     assertCanAccess(actor, item.tenantId);
-    if (item.status !== 'HELD' && item.status !== 'SLEEPING') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" cannot resume from status ${item.status}.`);
-    }
-    if (item.leaseToken !== undefined) {
-      throw new LeaseConflictError(`Work item "${id}" is still leased; resume refused.`);
-    }
-    const resumed: HostedWorkItem = {
-      ...copy(item),
-      status: 'QUEUED',
-      availableAt: now,
-      lastError: undefined,
-      updatedAt: now,
-    };
-    await this.items.put(resumed);
+    const resumed = await this.transition(
+      id,
+      (cur) => {
+        if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
+        assertCanAccess(actor, cur.tenantId);
+        if (cur.status !== 'HELD' && cur.status !== 'SLEEPING') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot resume from status ${cur.status}.`);
+        }
+        if (cur.leaseToken !== undefined) {
+          throw new LeaseConflictError(`Work item "${id}" is still leased; resume refused.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'QUEUED',
+        availableAt: now,
+        lastError: undefined,
+        updatedAt: now,
+      }),
+    );
     return copy(resumed);
   }
 
   /** System quarantine for unrecoverable records (e.g. corrupt checkpoints). No token required. */
   async quarantine(id: string, reason: string, now: number): Promise<HostedWorkItem> {
-    const item = await this.items.get(id);
-    if (!item) throw new LoopHostError(`Work item "${id}" was not found.`);
-    if (item.status === 'COMPLETED' || item.status === 'DENIED') {
-      throw new InvalidWorkTransitionError(`Work item "${id}" is terminal and cannot be quarantined.`);
-    }
-    const dead: HostedWorkItem = {
-      ...copy(item),
-      status: 'DLQ',
-      dlqReason: reason,
-      lastError: reason,
-      leaseOwner: undefined,
-      leaseToken: undefined,
-      leaseExpiry: undefined,
-      updatedAt: now,
-    };
-    await this.items.put(dead);
+    const dead = await this.transition(
+      id,
+      (cur) => {
+        if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
+        if (cur.status === 'COMPLETED' || cur.status === 'DENIED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" is terminal and cannot be quarantined.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'DLQ',
+        dlqReason: reason,
+        lastError: reason,
+        leaseOwner: undefined,
+        leaseToken: undefined,
+        leaseExpiry: undefined,
+        updatedAt: now,
+      }),
+    );
     return copy(dead);
   }
 }

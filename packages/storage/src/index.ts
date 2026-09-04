@@ -9,6 +9,8 @@ export type {
   ICollection,
   INamespace,
   IStorageDriver,
+  IStorageTransaction,
+  CasWriteResult,
   Entry,
   EntryMeta,
   ListOptions,
