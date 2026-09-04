@@ -1,0 +1,47 @@
+{
+  "name": "@jataqi/unified-loop",
+  "version": "0.1.0",
+  "description": "JATA Qi C-1 native unified cognitive/execution loop — deterministic in-repo governed orchestrator over the existing capability fabric (not a new intelligence engine)",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "clean": "rm -rf dist",
+    "test": "node --test dist/test/*.test.js",
+    "pretest": "npm run build"
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@jataqi/autonomous-action-runtime": "0.1.0",
+    "@jataqi/causal-engine": "0.1.0",
+    "@jataqi/cognitive-kernel": "0.1.0",
+    "@jataqi/commercial-control-plane": "0.1.0",
+    "@jataqi/commercial-memory": "0.1.0",
+    "@jataqi/core-kernel": "0.1.0",
+    "@jataqi/hypothesis-engine": "0.1.0",
+    "@jataqi/knowledge-graph": "0.1.0",
+    "@jataqi/knowledge-service": "0.1.0",
+    "@jataqi/meta-reasoning": "0.1.0",
+    "@jataqi/multi-agent-cognition": "0.1.0",
+    "@jataqi/probabilistic-engine": "0.1.0",
+    "@jataqi/reconciliation": "0.1.0",
+    "@jataqi/storage": "0.1.0",
+    "@jataqi/temporal-engine": "0.1.0",
+    "@jataqi/world-model": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.11.0"
+  }
+}

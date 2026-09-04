@@ -43,6 +43,7 @@ this repository does not claim a live production deployment by default.
 | `@jataqi/knowledge-service` | Document/chunk model, paragraph+sentence+fixed chunker, semantic retrieval with context expansion and development filesystem index restoration |
 | `@jataqi/knowledge-graph` | Entities, relations, SPO triple store, BFS traversal, heuristic extractor, Graph-RAG fusion |
 | `@jataqi/agent-runtime` | Tool system, ReAct agent loop, Echo/Scripted/OpenAI LLMs, built-in knowledge+graph tools, session memory |
+| `@jataqi/unified-loop` | W22 C-1 native in-repo unified cognitive/execution loop: deterministic 34-stage governed orchestrator over the existing capability fabric; invokes engines only through governed capability contracts and fails closed at policy/authority/verification gates |
 | `@jataqi/commercial-control-plane` | Default-deny commercial decision, policy, approval, budget, consent, state-machine, event, experiment, and tamper-evident action-ledger boundary |
 | `@jataqi/autonomous-action-runtime` | Adapter-only controlled action execution with bounded retries, timeouts, verification, rollback recording, and dry-run safety |
 | `@jataqi/external-connectors` | Explicit connector registration, capability discovery, health activation, credential references, and action-runtime adapter lifecycle |
