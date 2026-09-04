@@ -111,6 +111,8 @@ export class CommercialControlPlaneService {
   private authorizations!: ICollection<CommercialAuthorization>;
   private actions!: ICollection<CommercialAction>;
   private ledger!: ICollection<CommercialActionLedgerEntry>;
+  /** T-01-I: per-tenant atomic sequence counter for the ledger. */
+  private ledgerSequence!: ICollection<{ id: string; tenantId: string; sequence: number }>;
   private policies!: ICollection<AutonomyPolicy>;
   private budgets!: ICollection<CommercialBudget>;
   private approvals!: ICollection<ApprovalRequest>;
@@ -149,6 +151,8 @@ export class CommercialControlPlaneService {
     this.experiments = await storage.collection<CommercialExperiment>(COLLECTIONS.experiments);
     this.experimentMeasurements = await storage.collection<CommercialExperimentMeasurement>(COLLECTIONS.experimentMeasurements);
     this.events = await storage.collection<CommercialEvent>(COLLECTIONS.events);
+    // T-01-I: per-tenant atomic sequence counter for the ledger.
+    this.ledgerSequence = await storage.collection<{ id: string; tenantId: string; sequence: number }>('commercial-control-plane.ledger-seq');
   }
 
   // ---- Decision, policy, authorization ------------------------------------------------------
@@ -1348,18 +1352,54 @@ export class CommercialControlPlaneService {
     return copy(blocked);
   }
 
+  /**
+   * Concurrency-safe ledger append (T-01-I).
+   *
+   * Replaces the previous query-then-write pattern
+   *   sequence: (previous?.sequence ?? 0) + 1
+   * which allowed two concurrent writers to both observe the same
+   * `previous` and both produce the same sequence, creating a
+   * hash-chain fork and a sequence collision.
+   *
+   * The replacement CAS-advances a per-tenant atomic counter and
+   * then reads back the previous entry by (tenantId, sequence =
+   * current-1). If the previous entry is not yet committed
+   * (concurrent writer still in flight) we poll briefly so the
+   * chain does not develop a hash gap.
+   */
   private async appendLedger(input: LedgerInput): Promise<CommercialActionLedgerEntry> {
-    const previous = (await this.ledger.query({ where: (entry) => entry.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
-    const draft: Omit<CommercialActionLedgerEntry, 'hash'> = {
-      ...input,
-      id: randomUUID(),
-      sequence: (previous?.sequence ?? 0) + 1,
-      previousHash: previous?.hash ?? 'GENESIS',
-      timestamp: input.timestamp ?? this.now(),
-    };
-    const entry: CommercialActionLedgerEntry = { ...draft, hash: hashLedgerEntry({ ...draft, hash: '' }) };
-    await this.ledger.put(entry);
-    return entry;
+    const tenantId = input.tenantId;
+    const counterId = `seq:${tenantId}`;
+    // Initialize the counter if it does not exist (idempotent).
+    await this.ledgerSequence.cas(counterId, (cur) => cur === undefined, () => ({ id: counterId, tenantId, sequence: 0 }));
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const current = await this.ledgerSequence.get(counterId);
+      const cur = current ?? { id: counterId, tenantId, sequence: 0 };
+      const nextSequence = cur.sequence + 1;
+      const next = { id: counterId, tenantId, sequence: nextSequence };
+      const res = await this.ledgerSequence.cas(counterId, (c) => (c?.sequence ?? 0) === cur.sequence, () => next);
+      if (res.ok) {
+        let previousHash = 'GENESIS';
+        if (cur.sequence > 0) {
+          for (let i = 0; i < 8; i += 1) {
+            const previous = (await this.ledger.query({ where: (entry) => entry.tenantId === tenantId && entry.sequence === cur.sequence, limit: 1 }))[0];
+            if (previous) { previousHash = previous.hash; break; }
+            await new Promise<void>((r) => setTimeout(r, 5 * (i + 1)));
+          }
+        }
+        const draft: Omit<CommercialActionLedgerEntry, 'hash'> = {
+          ...input,
+          id: randomUUID(),
+          sequence: nextSequence,
+          previousHash,
+          timestamp: input.timestamp ?? this.now(),
+        };
+        const entry: CommercialActionLedgerEntry = { ...draft, hash: hashLedgerEntry({ ...draft, hash: '' }) };
+        await this.ledger.put(entry);
+        return entry;
+      }
+    }
+    throw new CommercialControlPlaneError('Ledger counter CAS exhausted retries.');
   }
 
   private async emitExperimentChanged(actor: CommercialActor, experiment: CommercialExperiment, trigger: string, payload: Record<string, unknown>): Promise<void> {

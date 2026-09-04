@@ -32,3 +32,19 @@ export class PostgresConfigError extends PostgresStorageError {
     this.name = 'PostgresConfigError';
   }
 }
+
+/** T-01: tenant isolation violation at the storage boundary. */
+export class PostgresTenantIsolationError extends PostgresStorageError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PostgresTenantIsolationError';
+  }
+}
+
+/** T-01: a generic driver error. */
+export class PostgresDriverError extends PostgresStorageError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PostgresDriverError';
+  }
+}

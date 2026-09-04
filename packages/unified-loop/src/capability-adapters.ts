@@ -878,7 +878,11 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
 
   caps.push(cap('UPDATE_STATE', 'update-state-memory', async (svc, ctx) => {
     if (!ctx.state.cognitiveStateId) throw new Error('Cognitive state missing for update.');
-    // Record a learning belief back into the cognitive kernel (closed-loop update).
+    // T-01: cognitive state persistence is the authoritative state update.
+    // A swallowed error here would silently claim success while the state
+    // is not actually written. The loop must fail closed: if the required
+    // cognitive belief cannot be persisted, the stage reports failure and
+    // the loop will not advance to a successful outcome.
     await svc.cognitive.addBelief(ctx.actor, ctx.state.cognitiveStateId, {
       proposition: `Loop ${ctx.loopId} completed reasoning for objective: ${ctx.task.objective.slice(0, 80)}`,
       probability: ctx.state.verificationPassed ? 0.8 : 0.55,
@@ -886,7 +890,7 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
       epistemicStatus: ctx.state.verificationPassed ? 'OBSERVED' : 'INFERRED',
       evidenceObservationIds: [],
       assumptions: ['Loop outcome belief; not autonomous authorization.'],
-    }).catch(() => undefined);
+    });
     return {
       summary: 'Updated cognitive state with loop outcome; memory/knowledge continuity preserved.',
       outputs: { stateUpdated: true, verificationPassed: ctx.state.verificationPassed ?? false },
@@ -894,10 +898,12 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
   }));
 
   caps.push(cap('AUDIT', 'emit-audit', async (svc, ctx) => {
-    // Persist a decision-outcome/learning record into commercial memory when an
-    // action was attempted; otherwise emit a loop audit trail record.
+    // T-01: the audit-record persistence is the critical durable side
+    // effect. A swallowed error here would silently report a successful
+    // audit while no record was written. The loop must fail closed.
+    let auditRecordId: string | undefined;
     if (ctx.state.decisionId) {
-      await svc.memory.record(ctx.actor, {
+      const record = await svc.memory.record(ctx.actor, {
         kind: 'DECISION',
         productId: ctx.task.proposedAction?.productId ?? 'loop-product',
         title: `Loop ${ctx.loopId} decision audit`,
@@ -908,14 +914,17 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
         provenance: provenance(ctx),
         decisionId: ctx.state.decisionId,
         actionId: ctx.state.actionId,
-      }).catch(() => undefined);
+      });
+      auditRecordId = record.id;
     }
     // Commercial-observability provides privacy-minimized trace/projection
-    // output. Read failures gracefully SKIP (they must not mask the loop audit).
+    // output. Read failures gracefully SKIP (they are read-only and must
+    // not mask the loop audit; the audit record above is the durable
+    // contract).
     const observability = await readObservabilityEvidence(svc, ctx);
     return {
       summary: 'Audit trail emitted: structured trace + commercial-memory audit record + commercial-observability trace/projection counts (privacy-minimized).',
-      outputs: { audited: true, observabilityEvidence: observability },
+      outputs: { audited: true, auditRecordId, observabilityEvidence: observability },
     };
   }));
 

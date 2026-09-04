@@ -10,11 +10,20 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import type { AuthenticatedPrincipal } from '@jataqi/authentication';
 import { CapabilityFabricModule } from '@jataqi/capability-fabric';
 
 import { CapabilityRegistry } from './capability-registry.js';
 import { buildDefaultCapabilities } from './capability-adapters.js';
-import { LOOP_STAGES, LoopStateMachine, GOVERNANCE_GATE_STAGES } from './state-machine.js';
+import {
+  LOOP_STAGES,
+  LoopStateMachine,
+  GOVERNANCE_GATE_STAGES,
+  MANDATORY_FOR_ACTION,
+  ALWAYS_MANDATORY,
+  auditMandatoryStages,
+  type MandatoryStageAudit,
+} from './state-machine.js';
 import {
   UnifiedLoopError,
   UnifiedLoopEvents,
@@ -40,17 +49,51 @@ export interface RunLoopOptions {
   capabilities?: GovernedCapability[];
   /** Correlation id; defaults to a fresh id per run. */
   correlationId?: string;
+  /**
+   * T-01 server-side principal boundary. When present, the loop verifies
+   * the actor's identity/tenant/roles were derived from this principal and
+   * refuses to run with a mismatched actor. When absent, the loop runs in
+   * legacy mode (caller-supplied actor) but ONLY for backward compatibility
+   * with the W22/W23/O-01/P-01/R-01 milestone tests; production
+   * composition roots MUST supply a principal.
+   */
+  principal?: AuthenticatedPrincipal;
 }
 
+/**
+ * Execution-path stages (T-01). AUTHORIZE moved out of this set: with the
+ * hardened ordering, AUTHORIZE is a governance gate, not an execution
+ * stage. PLAN, VERIFY_PLAN, EXECUTE, OBSERVE_RESULT, VERIFY_RESULT,
+ * RECONCILE are still execution-path.
+ */
 const EXECUTION_PATH_STAGES: ReadonlySet<LoopStage> = new Set<LoopStage>([
   'CAPABILITY_SELECTION',
   'PLAN',
   'VERIFY_PLAN',
-  'AUTHORIZE',
   'EXECUTE',
   'OBSERVE_RESULT',
   'VERIFY_RESULT',
   'RECONCILE',
+]);
+
+/** Action-path stages (everything from POLICY onwards when an action is
+ *  proposed). The list mirrors `LOOP_STAGES` from `POLICY` to `OUTCOME`. */
+const ACTION_PATH_STAGES: ReadonlySet<LoopStage> = new Set<LoopStage>([
+  'POLICY',
+  'SAFETY',
+  'AUTHORITY',
+  'HUMAN_OR_REGULATORY_GATE',
+  'AUTHORIZE',
+  'CAPABILITY_SELECTION',
+  'PLAN',
+  'VERIFY_PLAN',
+  'EXECUTE',
+  'OBSERVE_RESULT',
+  'VERIFY_RESULT',
+  'RECONCILE',
+  'UPDATE_STATE',
+  'AUDIT',
+  'OUTCOME',
 ]);
 
 export class UnifiedLoopService {
@@ -103,6 +146,26 @@ export class UnifiedLoopService {
       throw new UnifiedLoopError('A tenant-bound actor with roles is required to run the loop.');
     }
     if (!task.objective.trim()) throw new UnifiedLoopError('A loop task objective is required.');
+
+    // T-01 server-side principal boundary. When a principal is supplied, the
+    // actor MUST be derivable from it; otherwise the caller has crossed the
+    // trust boundary and the loop refuses to run. This is the single
+    // structural check; downstream code never sees a forged identity because
+    // it can never reach the loop.
+    if (options.principal) {
+      if (options.principal.id !== actor.id || options.principal.tenantId !== actor.tenantId) {
+        throw new UnifiedLoopError(
+          'Server-side principal boundary: caller-supplied actor does not match the authenticated principal (fail-closed).',
+        );
+      }
+      for (const role of actor.roles) {
+        if (!options.principal.roles.includes(role)) {
+          throw new UnifiedLoopError(
+            `Server-side principal boundary: actor role "${role}" is not in the authenticated principal's verified role set (fail-closed).`,
+          );
+        }
+      }
+    }
 
     const now = options.now ?? Date.now;
     const loopId = randomUUID();
@@ -158,9 +221,13 @@ export class UnifiedLoopService {
         } else if (!cap) {
           // No governed capability for this stage: represent the boundary
           // explicitly rather than fabricating functionality.
-          status = actionStage && task.proposedAction ? 'FAILED' : 'SKIPPED';
-          reason = actionStage && task.proposedAction
-            ? `Required governed capability for ${stage} is not registered (fail-closed).`
+          // T-01 mandatory-stage enforcement: a missing capability for a
+          // mandatory stage with a proposed action is a structural failure
+          // (the loop must fail closed, not SKIP).
+          const mandatoryAndActionable = task.proposedAction && MANDATORY_FOR_ACTION.has(stage);
+          status = mandatoryAndActionable || (actionStage && task.proposedAction) ? 'FAILED' : 'SKIPPED';
+          reason = mandatoryAndActionable || (actionStage && task.proposedAction)
+            ? `Required governed capability for ${stage} is not registered (fail-closed; mandatory stage for an action-capable loop).`
             : `No governed capability registered for ${stage}; boundary represented, not fabricated.`;
           summary = reason;
           if (status === 'FAILED') throw new UnifiedLoopError(reason);
@@ -229,14 +296,22 @@ export class UnifiedLoopService {
         index += 1;
       }
 
+      // T-01 mandatory-stage enforcement. For an action-capable loop, every
+      // mandatory stage must have reached COMPLETED or BOUNDARY_HELD. A
+      // SKIPPED or absent mandatory stage is a fail-closed invariant
+      // violation; the loop cannot report a successful outcome.
+      const mandatory: ReadonlySet<LoopStage> = task.proposedAction
+        ? MANDATORY_FOR_ACTION
+        : ALWAYS_MANDATORY;
+      const registeredStages = registry.registeredStages();
+      const audit: MandatoryStageAudit = auditMandatoryStages(trace, mandatory, registeredStages);
       const endedAt = now();
-      const outcome = deriveOutcome(state, task, governanceHeld);
       const continuation = task.continuation === 'SLEEP' ? 'SLEEP' : 'TERMINATE';
-      const result: LoopRunResult = {
+      const baseResult: LoopRunResult = {
         loopId,
         correlationId,
         tenantId: actor.tenantId,
-        outcome,
+        outcome: 'FAILED_CLOSED',
         trace,
         stageOutputs: { ...state.stageOutputs },
         records,
@@ -244,6 +319,25 @@ export class UnifiedLoopService {
         startedAt,
         endedAt,
         continuation,
+        failureReason: undefined,
+      };
+      if (!audit.ok) {
+        const detail = [
+          audit.skippedMandatory.length ? `skipped=${audit.skippedMandatory.join(',')}` : '',
+          audit.missingMandatory.length ? `missing=${audit.missingMandatory.join(',')}` : '',
+          audit.notCompleted.length ? `notCompleted=${audit.notCompleted.join(',')}` : '',
+        ].filter(Boolean).join('; ');
+        baseResult.failureReason = `Mandatory-stage invariant violated: ${detail}`;
+        void this.kernel.bus.emit(UnifiedLoopEvents.LoopFailed, {
+          loopId, correlationId, tenantId: actor.tenantId, at: endedAt, error: baseResult.failureReason,
+        } as LoopFailedEvent);
+        return baseResult;
+      }
+
+      const outcome = deriveOutcome(state, task, governanceHeld);
+      const result: LoopRunResult = {
+        ...baseResult,
+        outcome,
       };
       void this.kernel.bus.emit(UnifiedLoopEvents.LoopCompleted, {
         loopId, correlationId, tenantId: actor.tenantId, outcome, at: endedAt, stages: trace.length,
