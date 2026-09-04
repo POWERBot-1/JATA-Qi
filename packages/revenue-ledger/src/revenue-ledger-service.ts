@@ -4,7 +4,7 @@ import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { BillingModule, BillingEvents } from '@jataqi/billing';
 import type { BillingService, Invoice } from '@jataqi/billing';
-import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { CommercialControlPlaneModule, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialEvidence, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentIntent, PaymentsService } from '@jataqi/payments';
@@ -43,8 +43,11 @@ export class RevenueLedgerService {
     this.billing = kernel.getModule<BillingModule>('billing').getService();
     this.payments = kernel.getModule<PaymentsModule>('payments').getService();
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
-    this.unsubscribePaid = kernel.bus.on(BillingEvents.InvoicePaid, async (event) => this.handlePaidInvoice(event as CommercialEvent));
-    this.unsubscribeRefunded = kernel.bus.on(BillingEvents.InvoiceRefunded, async (event) => this.handleRefundedInvoice(event as CommercialEvent));
+    // F-01f enveloped cutover: consume first-class envelopes (the full
+    // CommercialEvent view is reconstructed for enveloped producers and
+    // passed through for bridge-synthesized legacy shapes).
+    this.unsubscribePaid = kernel.bus.onEnveloped(BillingEvents.InvoicePaid, async (_topic, envelope) => this.handlePaidInvoice(commercialEventFromEnvelope(envelope)));
+    this.unsubscribeRefunded = kernel.bus.onEnveloped(BillingEvents.InvoiceRefunded, async (_topic, envelope) => this.handleRefundedInvoice(commercialEventFromEnvelope(envelope)));
   }
 
   stop(): void {

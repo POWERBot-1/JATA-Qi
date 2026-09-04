@@ -8,4 +8,6 @@ export type {
   EventDeliveryState,
   PumpCommercialEventsOptions,
   PumpCommercialEventsResult,
+  ResolvedEventContract,
+  SchemaCompatibilityPolicy,
 } from './types.js';

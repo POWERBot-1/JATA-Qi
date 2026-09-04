@@ -14,6 +14,7 @@
 // of scope and remains undelivered.
 
 import type { KernelApi } from '@jataqi/core-kernel';
+import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { LoopHostService } from './host-service.js';
 import {
@@ -183,12 +184,12 @@ export class HostRuntime {
     // Hold the event loop open. NOT unref'd — this is the keep-alive.
     this.keepAlive = setInterval(() => undefined, 1_000);
     this.status = 'RUNNING';
-    void kernel.bus.emit(LoopHostEvents.RuntimeStarted, {
+    void emitPlainEnveloped(kernel.bus, LoopHostEvents.RuntimeStarted, {
       hostId: this.host.getHostId(),
       at: this.clock(),
       tenantId: '*',
       summary: `Host runtime supervising ${this.host.getHostId()} on storage driver "${driverId}".`,
-    });
+    }, { source: 'loop-host', tenantId: '*' });
 
     this.runPromise = this.loop(kernel);
     return this.runPromise;
@@ -270,12 +271,12 @@ export class HostRuntime {
     }
     this.status = 'STOPPED';
     kernel.logger.info(`host runtime stopped after ${this.cycles.length} cycle(s); no outcomes fabricated.`);
-    void kernel.bus.emit(LoopHostEvents.RuntimeStopped, {
+    void emitPlainEnveloped(kernel.bus, LoopHostEvents.RuntimeStopped, {
       hostId: this.host.getHostId(),
       at: this.clock(),
       tenantId: '*',
       summary: `Host runtime stopped after ${this.cycles.length} cycle(s).`,
-    });
+    }, { source: 'loop-host', tenantId: '*' });
   }
 
   /** Request a graceful stop; resolves once the supervision loop has drained. */

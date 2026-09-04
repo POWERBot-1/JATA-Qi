@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
-import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { CommercialControlPlaneModule, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
 import type {
   CommercialActor,
   CommercialControlPlaneService,
@@ -55,7 +55,9 @@ export class CommercialMemoryService {
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
 
     for (const eventType of observedCommercialEvents()) {
-      this.unsubscribers.push(kernel.bus.on(eventType, async (event) => this.captureCommercialEvent(event as CommercialEvent)));
+      // F-01f enveloped cutover: capture first-class envelopes (bridge
+      // synthesizes envelopes for not-yet-migrated producers).
+      this.unsubscribers.push(kernel.bus.onEnveloped(eventType, async (_topic, envelope) => this.captureCommercialEvent(commercialEventFromEnvelope(envelope))));
     }
   }
 

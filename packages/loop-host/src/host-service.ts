@@ -7,6 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
 import {
   UnifiedLoopModule,
@@ -602,7 +603,13 @@ export class LoopHostService {
 
   private emit(event: string, payload: Omit<LoopHostAuditEvent, 'hostId' | 'at'> & { at?: number }): void {
     const full: LoopHostAuditEvent = { ...payload, hostId: this.hostId, at: payload.at ?? this.clock() };
-    void this.api.bus.emit(event, full);
+    // F-01b enveloped producer: host audit events are first-class envelopes;
+    // the exact legacy LoopHostAuditEvent payload is preserved (single emission).
+    void emitPlainEnveloped(this.api.bus, event, full, {
+      source: 'loop-host',
+      tenantId: full.tenantId,
+      correlationId: full.correlationId,
+    });
   }
 
   /** Fingerprint helper exposed for audit/tests (proves resume dispatches the identical task). */

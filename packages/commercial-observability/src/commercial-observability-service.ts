@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
@@ -11,7 +12,7 @@ import type {
   CommercialProvenance,
   PrivacyClassification,
 } from '@jataqi/commercial-control-plane';
-import { CommercialControlPlaneEvents } from '@jataqi/commercial-control-plane';
+import { CommercialControlPlaneEvents, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
 import {
   CommercialObservabilityEvents,
   type AlertDirection,
@@ -100,7 +101,11 @@ export class CommercialObservabilityService {
     // Observability must not make a commercial event fail solely because a
     // telemetry projection cannot be stored. The original durable CCP event
     // remains the canonical record and errors are logged for host repair.
-    this.unsubscribers.push(kernel.bus.on(CommercialControlPlaneEvents.EventRecorded, async (payload) => {
+    // F-01f enveloped cutover: capture first-class envelopes (the
+    // control-plane producer is enveloped; the guard still drops anything
+    // that does not decode to a CommercialEvent).
+    this.unsubscribers.push(kernel.bus.onEnveloped(CommercialControlPlaneEvents.EventRecorded, async (_topic, envelope) => {
+      const payload = commercialEventFromEnvelope(envelope);
       if (!isCommercialEvent(payload)) return;
       try {
         await this.captureEvent(payload);
@@ -201,9 +206,9 @@ export class CommercialObservabilityService {
       };
       await this.alerts.put(alert);
       raised.push(alert);
-      await this.api.bus.emit(CommercialObservabilityEvents.AlertRaised, safeAlertEvent(alert));
+      await this.emitTelemetryEvent(CommercialObservabilityEvents.AlertRaised, alert.tenantId, actor.id, alert.id, safeAlertEvent(alert));
     }
-    await this.api.bus.emit(CommercialObservabilityEvents.MetricRecorded, {
+    await this.emitTelemetryEvent(CommercialObservabilityEvents.MetricRecorded, sample.tenantId, actor.id, sample.id, {
       sampleId: sample.id,
       tenantId: sample.tenantId,
       metric: sample.metric,
@@ -220,7 +225,7 @@ export class CommercialObservabilityService {
     if (alert.status !== 'OPEN') throw new CommercialObservabilityError(`Alert is ${alert.status} and cannot be acknowledged.`);
     const updated: CommercialAlert = { ...alert, status: 'ACKNOWLEDGED', acknowledgedAt: this.clock(), acknowledgedByActorId: actor.id };
     await this.alerts.put(updated);
-    await this.api.bus.emit(CommercialObservabilityEvents.AlertAcknowledged, safeAlertEvent(updated));
+    await this.emitTelemetryEvent(CommercialObservabilityEvents.AlertAcknowledged, updated.tenantId, actor.id, updated.id, safeAlertEvent(updated));
     return copy(updated);
   }
 
@@ -237,7 +242,7 @@ export class CommercialObservabilityService {
       resolutionSummary: cleanText(resolutionSummary, 'Alert resolution summary', 640),
     };
     await this.alerts.put(updated);
-    await this.api.bus.emit(CommercialObservabilityEvents.AlertResolved, safeAlertEvent(updated));
+    await this.emitTelemetryEvent(CommercialObservabilityEvents.AlertResolved, updated.tenantId, actor.id, updated.id, safeAlertEvent(updated));
     return copy(updated);
   }
 
@@ -273,7 +278,7 @@ export class CommercialObservabilityService {
       updatedAt: now,
     };
     await this.incidents.put(incident);
-    await this.api.bus.emit(CommercialObservabilityEvents.IncidentCreated, safeIncidentEvent(incident));
+    await this.emitTelemetryEvent(CommercialObservabilityEvents.IncidentCreated, incident.tenantId, actor.id, incident.id, safeIncidentEvent(incident));
     return copy(incident);
   }
 
@@ -307,7 +312,7 @@ export class CommercialObservabilityService {
     };
     await this.incidents.put(updated);
     await this.incidentUpdates.put(update);
-    await this.api.bus.emit(CommercialObservabilityEvents.IncidentUpdated, {
+    await this.emitTelemetryEvent(CommercialObservabilityEvents.IncidentUpdated, updated.tenantId, actor.id, update.id, {
       incidentId: updated.id,
       tenantId: updated.tenantId,
       previousStatus: update.previousStatus,
@@ -369,6 +374,26 @@ export class CommercialObservabilityService {
     return sorted(await this.incidentUpdates.query({ where: (update) => update.incidentId === incidentId })).map(copy);
   }
 
+  /**
+   * F-01b enveloped producer: telemetry events are first-class envelopes with
+   * tenant/actor/correlation; the exact privacy-minimized legacy payload is
+   * preserved for existing subscribers (single emission, no topic renames).
+   */
+  private emitTelemetryEvent(
+    event: string,
+    tenantId: string,
+    actorId: string,
+    correlationId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    return emitPlainEnveloped(this.api.bus, event, payload, {
+      source: 'commercial-observability',
+      tenantId,
+      actor: actorId,
+      correlationId,
+    });
+  }
+
   private async captureEvent(event: CommercialEvent): Promise<void> {
     const existing = await this.projections.get(event.id);
     if (existing) return;
@@ -421,7 +446,7 @@ export class CommercialObservabilityService {
         updatedAt: now,
       };
     await this.traces.put(updatedTrace);
-    await this.api.bus.emit(CommercialObservabilityEvents.EventCaptured, {
+    await this.emitTelemetryEvent(CommercialObservabilityEvents.EventCaptured, projection.tenantId, event.actor ?? 'commercial-observability-system', event.correlationId, {
       projectionId: projection.id,
       tenantId: projection.tenantId,
       eventId: projection.eventId,
