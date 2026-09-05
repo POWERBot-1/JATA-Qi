@@ -1,5 +1,15 @@
 export { LoopHostModule } from './module.js';
 export { LoopHostService, type LoopRunner, type LoopHostConfig } from './host-service.js';
+export {
+  WorkIngressService,
+  WorkIngressModule,
+} from './work-ingress.js';
+export type {
+  AuthenticatedEnqueueSink,
+  WorkSubmission,
+  WorkIngressReceipt,
+  WorkIngressConfig,
+} from './work-ingress.js';
 export { WorkQueue, WORK_COLLECTION, computeBackoffMs } from './work-queue.js';
 export { CheckpointJournal, CHECKPOINT_COLLECTION, canonicalJson, sha256Hex, fingerprintTask } from './checkpoints.js';
 export { isDispatchEligible, isReclaimable, nextWakeInMs } from './scheduler.js';

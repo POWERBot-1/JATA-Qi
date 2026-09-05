@@ -46,7 +46,8 @@ import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
 import { CapabilityFabricModule, type CapabilityLifecycleState } from '@jataqi/capability-fabric';
 import { buildDefaultCapabilities, UnifiedLoopModule } from '@jataqi/unified-loop';
-import { LoopHostModule, LoopHostService } from '../src/index.js';
+import { LoopHostModule, LoopHostService, WorkIngressModule, WorkIngressService } from '../src/index.js';
+import { AuthenticationModule } from '@jataqi/authentication';
 
 export interface Harness {
   kernel: ReturnType<typeof createTestKernel>;
@@ -56,6 +57,8 @@ export interface Harness {
   now: () => number;
   advance: (ms: number) => void;
   host: () => LoopHostService;
+  /** T-03: present only when `withIngress` was requested. */
+  ingress: () => WorkIngressService;
   registerAdapter(adapter: ActionExecutionAdapter): void;
   createPolicy(admin: CommercialActor, opts: { actionType: string; allowExecution?: boolean; maxAutonomy?: 1 | 2 | 3; maxRisk?: number }): Promise<void>;
 }
@@ -68,6 +71,13 @@ export interface HarnessOptions {
   sleepDelayMs?: number;
   /** Inject a specific storage module (e.g. PostgreSQL-backed) instead of default memory. */
   storageModule?: StorageModule;
+  /**
+   * T-03: also register the authentication boundary and the authenticated work
+   * ingress. Off by default so every pre-T-03 suite is unaffected.
+   */
+  withIngress?: boolean;
+  /** T-03: principal record the ingress boundary will verify. */
+  ingressRecord?: TestPrincipalRecord;
 }
 
 export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -113,6 +123,20 @@ export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> 
   kernel.register(new CapabilityFabricModule());
   kernel.register(new UnifiedLoopModule());
   kernel.register(new LoopHostModule({ hostId: opts.hostId, leaseTtlMs: opts.leaseTtlMs, sleepDelayMs: opts.sleepDelayMs, now }));
+  if (opts.withIngress) {
+    // T-03: the production-shaped composition — a real boundary plus the
+    // ingress that submits through it. Test authority is admitted ONLY because
+    // this harness asks for it explicitly; the CLI composition tests prove the
+    // production posture refuses it.
+    kernel.register(
+      new AuthenticationModule({
+        policy: { mode: 'test-only', allowTestMethod: true },
+        authenticators: [new DeterministicTestAuthenticator([opts.ingressRecord ?? DEFAULT_INGRESS_RECORD])],
+        now,
+      }),
+    );
+    kernel.register(new WorkIngressModule({ now }));
+  }
   await kernel.boot();
 
   const actor: CommercialActor = { id: 'loop-agent', tenantId: 'acme', roles: ['agent', 'operator'] };
@@ -133,6 +157,7 @@ export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> 
     now,
     advance,
     host: () => kernel.getModule<LoopHostModule>('loop-host').getService(),
+    ingress: () => kernel.getModule<WorkIngressModule>('work-ingress').getService(),
     registerAdapter(adapter: ActionExecutionAdapter): void { runtime.registerAdapter(adapter); },
     async createPolicy(adminActor, popts): Promise<void> {
       await control.createPolicy(adminActor, {
@@ -299,6 +324,18 @@ export function gateTask() {
       executeForReal: false,
     },
   };
+}
+
+/** T-03: default principal record the ingress harness boundary verifies. */
+export const DEFAULT_INGRESS_RECORD: TestPrincipalRecord = {
+  id: 'ingress-caller',
+  tenantId: 'acme',
+  roles: ['agent', 'operator'],
+};
+
+/** T-03: the credential that `DEFAULT_INGRESS_RECORD` (or a given record) presents. */
+export function ingressCredential(record: TestPrincipalRecord = DEFAULT_INGRESS_RECORD) {
+  return testCredential(record);
 }
 
 /**
