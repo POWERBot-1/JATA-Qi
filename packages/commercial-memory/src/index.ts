@@ -1,5 +1,5 @@
 export { CommercialMemoryModule } from './module.js';
-export { CommercialMemoryService, CommercialMemoryError } from './commercial-memory-service.js';
+export { CommercialMemoryService, CommercialMemoryError, COMMERCIAL_MEMORY_DURABLE_HANDLER_ID } from './commercial-memory-service.js';
 export { CommercialMemoryEvents } from './types.js';
 export type {
   AttributionLink,

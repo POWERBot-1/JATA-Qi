@@ -59,6 +59,24 @@ export interface HostRuntimeConfig {
   now?: () => number;
   /** Injected sleep (tests). Must resolve after roughly `ms`. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * T-05: optional durable delivery pass run once per supervised cycle,
+   * AFTER the host tick. The supervised host process is thereby also the
+   * cross-process delivery worker for the unified outbox. The callback owns
+   * its tenant scope and actor; a failure never kills the runtime (logged,
+   * next cycle continues) and never fabricates a delivery outcome.
+   */
+  deliveryPump?: (now: number) => Promise<DeliveryPumpSummary>;
+}
+
+/** Minimal delivery-pass summary recorded per cycle (observability). */
+export interface DeliveryPumpSummary {
+  examined: number;
+  delivered: number;
+  retried: number;
+  deadLettered: number;
+  quarantined?: number;
+  fenceRejected?: number;
 }
 
 function normalizeMs(value: number | undefined, fallback: number, field: string): number {
@@ -209,6 +227,16 @@ export class HostRuntime {
           error = err instanceof Error ? err.message : String(err);
           kernel.logger.warn(`host runtime cycle failed (fail-closed; work left for expiry reclaim): ${error}`);
         }
+        let delivery: DeliveryPumpSummary | undefined;
+        if (this.cfg.deliveryPump && !this.stopRequested) {
+          try {
+            delivery = await this.cfg.deliveryPump(this.clock());
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            error = error ? `${error}; delivery: ${message}` : `delivery: ${message}`;
+            kernel.logger.warn(`host runtime delivery pass failed (fail-closed; records stay durable for the next pass): ${message}`);
+          }
+        }
         this.cycles.push({
           index: this.cycles.length,
           at,
@@ -217,6 +245,7 @@ export class HostRuntime {
           completed: tick?.completed ?? 0,
           sleeping: tick?.sleeping ?? 0,
           error,
+          ...(delivery ? { delivery: { examined: delivery.examined, delivered: delivery.delivered, retried: delivery.retried, deadLettered: delivery.deadLettered } } : {}),
         });
 
         if (this.cfg.maxCycles !== undefined && this.cycles.length >= this.cfg.maxCycles) break;

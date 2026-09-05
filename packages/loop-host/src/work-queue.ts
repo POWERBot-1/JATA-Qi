@@ -102,6 +102,19 @@ export class WorkQueue {
   }
 
   /**
+   * T-05: a view of this queue bound to the collections of a composed write
+   * scope (`StorageModule.atomically`). Every guard, error class and
+   * transition is identical; only the collection handle differs, so a
+   * transition issued through the view participates in the caller's
+   * transaction (CAS on the caller-owned client — T-04 contract).
+   */
+  static async bindTo(source: { collection<T extends { id: string }>(name: string): Promise<ICollection<T>> }): Promise<WorkQueue> {
+    const queue = new WorkQueue();
+    queue.items = await source.collection<HostedWorkItem>(WORK_COLLECTION);
+    return queue;
+  }
+
+  /**
    * Run one guarded state transition as a single atomic compare-and-swap.
    * Typed errors raised by `guard` propagate unchanged; a plain `false` from
    * `guard` (a lost concurrent race with no more specific condition) becomes a

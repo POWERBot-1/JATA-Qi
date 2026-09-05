@@ -872,6 +872,31 @@ export interface ReplayCommercialEventsOptions {
   limit?: number;
 }
 
+/** A (eventVersion, schemaVersion) pair a durable handler declares it can consume. */
+export interface AcceptedEventVersion {
+  eventVersion: number;
+  schemaVersion: number;
+}
+
+/**
+ * T-05 durable subscriber declaration. Consumers of durable-domain events
+ * (billing, revenue ledger, commercial memory, …) register one of these on
+ * the control plane at init; the canonical delivery worker
+ * (`@jataqi/commercial-event-stream`) adopts every registration and invokes
+ * `handle` behind a durable per-(event, handler) inbox record. Handlers MUST
+ * be idempotent (at-least-once delivery) and `id` MUST stay stable across
+ * restarts and deploys — it keys the inbox.
+ */
+export interface DurableEventHandler {
+  id: string;
+  eventTypes: string[];
+  /** 1..10, default 3. Attempts are counted at claim. */
+  maxAttempts?: number;
+  /** Versions accepted when no schema contract is registered for the type. Default `[{1,1}]`. */
+  accepts?: AcceptedEventVersion[];
+  handle(event: CommercialEvent): Promise<void>;
+}
+
 export const CommercialControlPlaneEvents = Object.freeze({
   DecisionProposed: 'commercial.decision.proposed',
   DecisionAuthorized: 'commercial.decision.authorized',

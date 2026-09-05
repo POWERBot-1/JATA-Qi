@@ -23,7 +23,9 @@ beforeEach(async () => {
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
-  kernel.register(new CommercialEventStreamModule({ now: () => now }));
+  // Worker-semantics tests drive delivery through explicit pump() calls only
+  // (no post-commit wake-up) so every claim/ack/retry transition is observable.
+  kernel.register(new CommercialEventStreamModule({ now: () => now, wakeOnPublish: false }));
   await kernel.boot();
   control = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
   stream = kernel.getModule<CommercialEventStreamModule>('commercial-event-stream').getService();

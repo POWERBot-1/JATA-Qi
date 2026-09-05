@@ -8,6 +8,8 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { emitPlainEnveloped } from '@jataqi/core-kernel';
+import { StorageModule } from '@jataqi/storage';
+import type { StorageWriteScope } from '@jataqi/storage';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
 import type { AuthenticatedPrincipal } from '@jataqi/authentication';
 import {
@@ -147,10 +149,28 @@ export class LoopHostService {
     this.clock = config.now ?? (() => Date.now());
   }
 
+  private storage!: StorageModule;
+
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
+    this.storage = kernel.getModule<StorageModule>('storage');
     await this.queue.init(kernel);
     await this.journal.init(kernel);
+  }
+
+  /**
+   * T-05 composed host write: checkpoint + work-item transition in ONE
+   * storage transaction on a transactional driver (a crash between the two
+   * can no longer leave a checkpoint without its state transition, or vice
+   * versa). Same guards, same errors — the queue/journal views are bound to
+   * the scope's collections. On development drivers the body runs
+   * sequentially (`scope.atomic === false`), exactly as before T-05.
+   */
+  private composed<T>(fn: (queue: WorkQueue, journal: CheckpointJournal, scope: StorageWriteScope) => Promise<T>): Promise<T> {
+    return this.storage.atomically(async (scope) => {
+      const [queue, journal] = await Promise.all([WorkQueue.bindTo(scope), CheckpointJournal.bindTo(scope)]);
+      return fn(queue, journal, scope);
+    });
   }
 
   /** Override the runner (tests). Production path always uses the unified loop. */
@@ -454,9 +474,14 @@ export class LoopHostService {
         return;
       }
       const provenance = provenanceOf(authorized.snapshot);
-      // 1. Substantive pre-dispatch checkpoint (identities, phase, attempt, task fingerprint).
-      const preCheckpoint = await this.journal.write(leased, { phase: 'DISPATCHED' }, at);
-      const dispatched = await this.queue.markDispatched(leased.id, token, preCheckpoint.id, at);
+      // 1. Substantive pre-dispatch checkpoint (identities, phase, attempt,
+      //    task fingerprint) and the LEASED -> DISPATCHED transition as one
+      //    composed write (T-05): both durable or neither.
+      const { preCheckpoint, dispatched } = await this.composed(async (queue, journal) => {
+        const preCheckpoint = await journal.write(leased, { phase: 'DISPATCHED' }, at);
+        const dispatched = await queue.markDispatched(leased.id, token, preCheckpoint.id, at);
+        return { preCheckpoint, dispatched };
+      });
       summary.dispatched += 1;
       void this.emit(LoopHostEvents.CheckpointWritten, {
         workId: dispatched.id,
@@ -559,13 +584,38 @@ export class LoopHostService {
 
       // 3. Record the loop-reported outcome. COMPLETED here means "the loop
       // reported completion" — verification was the loop's, never the host's.
+      // T-05: the SETTLED checkpoint and the settlement transition
+      // (terminal / sleeping / bounded-retry) are ONE composed write.
       const completedStages = result.trace.filter((entry) => entry.status === 'COMPLETED').map((entry) => entry.stage);
-      const postCheckpoint = await this.journal.write(dispatched, {
-        phase: 'SETTLED',
-        loopId: result.loopId,
-        loopOutcome: result.outcome,
-        completedStages,
-      }, at);
+      const settledWrite = await this.composed(async (queue, journal) => {
+        const postCheckpoint = await journal.write(dispatched, {
+          phase: 'SETTLED',
+          loopId: result.loopId,
+          loopOutcome: result.outcome,
+          completedStages,
+        }, at);
+        switch (result.outcome) {
+          case 'COMPLETED_VERIFIED':
+          case 'COMPLETED_DRY_RUN': {
+            const settlement: WorkSettlement = { status: 'COMPLETED', loopId: result.loopId, loopOutcome: result.outcome };
+            return { postCheckpoint, item: await queue.settleTerminal(dispatched.id, token, settlement, postCheckpoint.id, at) };
+          }
+          case 'SLEEP_PENDING':
+            return { postCheckpoint, item: await queue.parkSleeping(dispatched.id, token, at + this.sleepDelayMs, result.loopId, at) };
+          case 'HELD_AT_GATE': {
+            const settlement: WorkSettlement = { status: 'HELD', loopId: result.loopId, loopOutcome: result.outcome };
+            return { postCheckpoint, item: await queue.settleTerminal(dispatched.id, token, settlement, postCheckpoint.id, at) };
+          }
+          case 'DENIED': {
+            const settlement: WorkSettlement = { status: 'DENIED', loopId: result.loopId, loopOutcome: result.outcome };
+            return { postCheckpoint, item: await queue.settleTerminal(dispatched.id, token, settlement, postCheckpoint.id, at) };
+          }
+          case 'FAILED_CLOSED':
+          default:
+            return { postCheckpoint, item: await queue.recordFailure(dispatched.id, token, 'TRANSIENT', result.failureReason ?? 'Loop reported FAILED_CLOSED.', at) };
+        }
+      });
+      const postCheckpoint = settledWrite.postCheckpoint;
       void this.emit(LoopHostEvents.CheckpointWritten, {
         workId: dispatched.id,
         tenantId: dispatched.tenantId,
@@ -579,8 +629,6 @@ export class LoopHostService {
       switch (result.outcome) {
         case 'COMPLETED_VERIFIED':
         case 'COMPLETED_DRY_RUN': {
-          const settlement: WorkSettlement = { status: 'COMPLETED', loopId: result.loopId, loopOutcome: result.outcome };
-          await this.queue.settleTerminal(dispatched.id, token, settlement, postCheckpoint.id, at);
           summary.completed += 1;
           void this.emit(LoopHostEvents.Completed, {
             workId: dispatched.id,
@@ -594,7 +642,6 @@ export class LoopHostService {
           break;
         }
         case 'SLEEP_PENDING': {
-          await this.queue.parkSleeping(dispatched.id, token, at + this.sleepDelayMs, result.loopId, at);
           summary.sleeping += 1;
           void this.emit(LoopHostEvents.Sleeping, {
             workId: dispatched.id,
@@ -608,8 +655,6 @@ export class LoopHostService {
           break;
         }
         case 'HELD_AT_GATE': {
-          const settlement: WorkSettlement = { status: 'HELD', loopId: result.loopId, loopOutcome: result.outcome };
-          await this.queue.settleTerminal(dispatched.id, token, settlement, postCheckpoint.id, at);
           summary.held += 1;
           void this.emit(LoopHostEvents.Held, {
             workId: dispatched.id,
@@ -624,8 +669,6 @@ export class LoopHostService {
           break;
         }
         case 'DENIED': {
-          const settlement: WorkSettlement = { status: 'DENIED', loopId: result.loopId, loopOutcome: result.outcome };
-          await this.queue.settleTerminal(dispatched.id, token, settlement, postCheckpoint.id, at);
           summary.denied += 1;
           void this.emit(LoopHostEvents.Denied, {
             workId: dispatched.id,
@@ -641,7 +684,7 @@ export class LoopHostService {
         }
         case 'FAILED_CLOSED':
         default: {
-          const failed = await this.queue.recordFailure(dispatched.id, token, 'TRANSIENT', result.failureReason ?? 'Loop reported FAILED_CLOSED.', at);
+          const failed = settledWrite.item;
           if (failed.status === 'DLQ') {
             summary.deadLettered += 1;
             void this.emit(LoopHostEvents.DeadLettered, {

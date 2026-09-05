@@ -128,6 +128,33 @@ export interface IStorageTransaction {
 }
 
 /**
+ * T-05 composed write scope handed to `StorageModule.atomically(fn)`.
+ *
+ * Every `collection()` handle obtained through the scope participates in ONE
+ * backend transaction when the driver supports transactions (`atomic: true`,
+ * e.g. PostgreSQL): the whole body commits or rolls back together, and a
+ * `cas()` on a scoped handle reuses the caller-owned connection (no nested
+ * BEGIN, no premature COMMIT/ROLLBACK, no ownership transfer — the T-04
+ * contract).
+ *
+ * On drivers without transactions (memory/filesystem — development only) the
+ * body runs sequentially against the plain collections and `atomic` is
+ * false: a crash mid-body CAN leave a partial write. Callers that require
+ * atomicity must check `atomic` (or run on a durable driver); the composed
+ * write is never silently claimed atomic.
+ *
+ * `onCommit` callbacks run only after a successful commit (never on rollback
+ * and never inside the transaction), in registration order; `onSettle`
+ * callbacks run after commit OR rollback (release locks, mutexes).
+ */
+export interface StorageWriteScope {
+  readonly atomic: boolean;
+  collection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
+  onCommit(callback: () => void | Promise<void>): void;
+  onSettle(callback: () => void | Promise<void>): void;
+}
+
+/**
  * Blob storage for raw binary/text content (e.g. original document bytes).
  */
 export interface IBlobStore {

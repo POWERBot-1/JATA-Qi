@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createJataQi } from '../src/bootstrap.js';
-import { hostBanner, parseHostArgs } from '../src/host-command.js';
+import { buildDeliveryPump, hostBanner, parseHostArgs } from '../src/host-command.js';
 import {
   isDurableDriverName,
   redactConnectionString,
@@ -60,6 +60,7 @@ describe('R-01 credential handling', () => {
     assert.ok(!banner.includes('hunter2'));
     assert.match(banner, /no backup\/restore\/PITR\/replication/);
     assert.match(banner, /34-stage governed loop/);
+    assert.match(banner, /durable unified-outbox worker/, 'T-05: the host advertises that it is the delivery worker');
   });
 });
 
@@ -122,6 +123,27 @@ describe('R-01 default-behaviour immutability (P-01 baseline preserved)', () => 
         () => instance.kernel.getModule('loop-host'),
         'the host must not be registered unless explicitly enabled',
       );
+    } finally {
+      await instance.shutdown();
+    }
+  });
+
+  it('T-05: the production composition exposes the durable delivery worker to the host runtime (system actor, all tenants, bounded pass)', async () => {
+    const instance = await createJataQi({ loopHost: { enabled: true } });
+    try {
+      const pump = buildDeliveryPump(instance.kernel, 'host-under-test');
+      assert.ok(pump, 'the CLI composition must wire the delivery pump');
+      const summary = await pump!(Date.now());
+      // Nothing published yet: an empty, bounded pass — never an error, never a fabricated delivery.
+      assert.deepEqual(
+        { examined: summary.examined, delivered: summary.delivered, retried: summary.retried, deadLettered: summary.deadLettered },
+        { examined: 0, delivered: 0, retried: 0, deadLettered: 0 },
+      );
+      const stream = instance.kernel.getModule('commercial-event-stream') as unknown as { getService(): { listHandlerIds(): string[] } };
+      const handlers = stream.getService().listHandlerIds();
+      for (const id of ['billing.verified-payments', 'revenue-ledger.invoice-settlement', 'commercial-memory.raw-event-capture']) {
+        assert.ok(handlers.includes(id), `durable subscriber ${id} must be adopted by the production worker`);
+      }
     } finally {
       await instance.shutdown();
     }

@@ -4,6 +4,7 @@ import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
 import { CommercialControlPlaneModule, type CommercialActor, type CommercialEvidence } from '@jataqi/commercial-control-plane';
+import { CommercialEventStreamModule } from '@jataqi/commercial-event-stream';
 import { PaymentsModule } from '@jataqi/payments';
 import { BillingModule } from '@jataqi/billing';
 import { RevenueLedgerModule } from '@jataqi/revenue-ledger';
@@ -50,6 +51,7 @@ beforeEach(async () => {
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
+  kernel.register(new CommercialEventStreamModule({ now: () => now }));
   kernel.register(new BillingModule());
   kernel.register(new RevenueLedgerModule());
   kernel.register(new CommercialAnalyticsModule());

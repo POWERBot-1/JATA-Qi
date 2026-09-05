@@ -9,6 +9,7 @@ import {
   type CommercialControlPlaneService,
   type CommercialEvidence,
 } from '@jataqi/commercial-control-plane';
+import { CommercialEventStreamModule } from '@jataqi/commercial-event-stream';
 import {
   PaymentCreateActionType,
   PaymentsModule,
@@ -16,7 +17,7 @@ import {
   type PaymentProvider,
   type PaymentsService,
 } from '@jataqi/payments';
-import { BillingModule, BillingError, type BillingService } from '../src/index.js';
+import { BILLING_DURABLE_HANDLER_ID, BillingModule, BillingError, type BillingService } from '../src/index.js';
 
 let now: number;
 let admin: CommercialActor;
@@ -25,6 +26,7 @@ let other: CommercialActor;
 let control: CommercialControlPlaneService;
 let payments: PaymentsService;
 let billing: BillingService;
+let kernel: ReturnType<typeof createTestKernel>;
 
 function evidence(id = 'billing-evidence'): CommercialEvidence {
   return {
@@ -50,11 +52,12 @@ beforeEach(async () => {
   admin = { id: 'admin', tenantId: 'acme', roles: ['admin'] };
   operator = { id: 'operator', tenantId: 'acme', roles: ['operator'] };
   other = { id: 'other', tenantId: 'other', roles: ['operator'] };
-  const kernel = createTestKernel();
+  kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
+  kernel.register(new CommercialEventStreamModule({ now: () => now }));
   kernel.register(new BillingModule());
   await kernel.boot();
   control = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
@@ -118,6 +121,50 @@ describe('Billing', () => {
     assert.equal((await billing.getInvoice(operator, invoice.id))?.status, 'PAID');
     await payments.verifyRefund(operator, invoice.paymentId!);
     assert.equal((await billing.getInvoice(operator, invoice.id))?.status, 'REFUNDED');
+  });
+
+  it('T-05: verified-payment delivery is durable (outbox record + inbox row) and a redelivery is idempotent', async () => {
+    const { subscription, invoice } = await setupInvoice();
+    const collectDecision = await decision(PaymentCreateActionType);
+    await payments.executePayment(operator, invoice.paymentId!, { decisionId: collectDecision.id, idempotencyKey: 'collect-durable', dryRun: false });
+    await payments.verifyPayment(operator, invoice.paymentId!);
+    const stream = kernel.getModule<CommercialEventStreamModule>('commercial-event-stream').getService();
+    const outbox = await control.replayUnifiedOutbox(operator, {});
+    const verified = outbox.find((record) => record.eventType === 'payment.verified');
+    assert.ok(verified, 'payment.verified must be recorded in the canonical outbox');
+    assert.equal(verified.state, 'DELIVERED');
+    const inbox = await stream.getDelivery(operator, verified.eventId, BILLING_DURABLE_HANDLER_ID);
+    assert.equal(inbox?.state, 'DELIVERED');
+    assert.equal(inbox?.attemptCount, 1);
+    const paidBefore = await billing.getInvoice(operator, invoice.id);
+    assert.equal(paidBefore?.status, 'PAID');
+    // Explicit passes after delivery: nothing to do, nothing changes (idempotent by durable inbox).
+    const again = await stream.pump(operator);
+    assert.equal(again.examined, 0);
+    assert.deepEqual(await billing.getInvoice(operator, invoice.id), paidBefore);
+    assert.equal((await billing.getSubscription(operator, subscription.id))?.status, 'ACTIVE');
+    assert.equal((await control.replayUnifiedOutbox(operator, {})).filter((record) => record.eventType === 'billing.invoice.paid').length, 1);
+  });
+
+  it('T-05/J: a payment.verified event carrying another tenant\'s payment never mutates this tenant\'s invoice (fail-closed tenant match)', async () => {
+    const { invoice } = await setupInvoice();
+    const collectDecision = await decision(PaymentCreateActionType);
+    await payments.executePayment(operator, invoice.paymentId!, { decisionId: collectDecision.id, idempotencyKey: 'collect-foreign', dryRun: false });
+    // A forged event from tenant "other" naming acme's payment/invoice: the handler derives the actor from the
+    // EVENT tenant, reads the payment under that tenant (not found / not owned) and does nothing.
+    await control.publishEvent(other, {
+      eventType: 'payment.verified', source: 'forged', entityId: invoice.paymentId!, correlationId: 'forged',
+      payload: { paymentId: invoice.paymentId, invoiceId: invoice.id, status: 'VERIFIED' },
+      provenance: { source: 'forged', collectedAt: now, correlationId: 'forged' }, idempotencyKey: 'forged-verified',
+    });
+    const stream = kernel.getModule<CommercialEventStreamModule>('commercial-event-stream').getService();
+    await stream.pump(other);
+    assert.equal((await billing.getInvoice(operator, invoice.id))?.status, 'PAYMENT_PENDING', 'foreign-tenant event must not pay the invoice');
+    const forged = (await control.replayUnifiedOutbox(other, {})).find((record) => record.eventType === 'payment.verified');
+    assert.equal(forged?.state, 'DELIVERED', 'the delivery itself completes (handler chose no effect) — no retry storm');
+    // The legitimate verification still works afterwards.
+    await payments.verifyPayment(operator, invoice.paymentId!);
+    assert.equal((await billing.getInvoice(operator, invoice.id))?.status, 'PAID');
   });
 
   it('rejects invalid invoice arithmetic and isolates tenant billing data', async () => {
