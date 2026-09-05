@@ -5,7 +5,8 @@ import { CommercialMemoryService } from './commercial-memory-service.js';
 export class CommercialMemoryModule implements IModule {
   readonly id = 'commercial-memory';
   readonly tags = ['commercial', 'memory', 'learning', 'attribution', 'governance'] as const;
-  readonly dependsOn = ['storage', 'commercial-control-plane'] as const;
+  /** T-05: a durable subscriber requires the canonical delivery worker in the composition (fail-closed at boot). */
+  readonly dependsOn = ['storage', 'commercial-control-plane', 'commercial-event-stream'] as const;
   private readonly service = new CommercialMemoryService();
 
   async init(kernel: KernelApi): Promise<void> {

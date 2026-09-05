@@ -198,6 +198,48 @@ describe('R-01 host runtime — graceful shutdown and fail-closed behaviour', ()
     }
   });
 
+  it('T-05: runs the delivery pump after every cycle and records its bounded summary', async () => {
+    const h = await buildHarness();
+    const seen: number[] = [];
+    const runtime = new HostRuntime(h.host(), {
+      requireDurableStorage: false,
+      installSignalHandlers: false,
+      maxCycles: 3,
+      sleep: fastSleep,
+      deliveryPump: async (now) => {
+        seen.push(now);
+        return { examined: 2, delivered: 1, retried: 1, deadLettered: 0 };
+      },
+    });
+    await runtime.run(h.kernel as never);
+    assert.equal(seen.length, 3, 'one delivery pass per supervised cycle');
+    for (const cycle of runtime.getCycles()) {
+      assert.deepEqual(cycle.delivery, { examined: 2, delivered: 1, retried: 1, deadLettered: 0 });
+      assert.equal(cycle.error, undefined);
+    }
+  });
+
+  it('T-05: a failing delivery pass never kills the runtime and is recorded on the cycle (records stay durable for the next pass)', async () => {
+    const h = await buildHarness();
+    let calls = 0;
+    const runtime = new HostRuntime(h.host(), {
+      requireDurableStorage: false,
+      installSignalHandlers: false,
+      maxCycles: 2,
+      sleep: fastSleep,
+      deliveryPump: async () => {
+        calls += 1;
+        throw new Error('simulated delivery substrate failure');
+      },
+    });
+    await runtime.run(h.kernel as never);
+    assert.equal(calls, 2);
+    for (const cycle of runtime.getCycles()) {
+      assert.match(cycle.error ?? '', /delivery: simulated delivery substrate failure/);
+      assert.equal(cycle.delivery, undefined, 'a failed pass reports no delivery counts');
+    }
+  });
+
   it('a failing tick does not kill the runtime and never fabricates success', async () => {
     const h = await buildHarness();
     const host = h.host();

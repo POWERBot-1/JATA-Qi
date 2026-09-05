@@ -97,6 +97,13 @@ export class CheckpointJournal {
     this.checkpoints = await kernel.getModule<StorageModule>('storage').collection<LoopCheckpoint>(CHECKPOINT_COLLECTION);
   }
 
+  /** T-05: a journal view bound to a composed write scope's collection (see `WorkQueue.bindTo`). */
+  static async bindTo(source: { collection<T extends { id: string }>(name: string): Promise<ICollection<T>> }): Promise<CheckpointJournal> {
+    const journal = new CheckpointJournal();
+    journal.checkpoints = await source.collection<LoopCheckpoint>(CHECKPOINT_COLLECTION);
+    return journal;
+  }
+
   /**
    * Write the next checkpoint for a work item. Sequence must advance exactly
    * by one from the item's recorded sequence; regressions throw and the

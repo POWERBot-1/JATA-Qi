@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
-import type { ICollection } from '@jataqi/storage';
-import { CommercialControlPlaneModule, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
+import type { ICollection, StorageWriteScope } from '@jataqi/storage';
+import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentsService } from '@jataqi/payments';
@@ -21,6 +21,8 @@ import {
 const PLANS_COLLECTION = 'billing.plans';
 const SUBSCRIPTIONS_COLLECTION = 'billing.subscriptions';
 const INVOICES_COLLECTION = 'billing.invoices';
+/** T-05 durable inbox handler id — stable across restarts/deploys (keys the inbox). */
+export const BILLING_DURABLE_HANDLER_ID = 'billing.verified-payments';
 
 export class BillingError extends Error {
   constructor(message: string) {
@@ -37,32 +39,41 @@ export class BillingError extends Error {
  */
 export class BillingService {
   private api!: KernelApi;
+  private storage!: StorageModule;
   private plans!: ICollection<BillingPlan>;
   private subscriptions!: ICollection<Subscription>;
   private invoices!: ICollection<Invoice>;
   private payments!: PaymentsService;
   private controlPlane!: CommercialControlPlaneService;
-  private unsubscribePayment?: () => void;
-  private unsubscribeRefund?: () => void;
+  private unregisterDurableHandler?: () => void;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
     const storage = kernel.getModule<StorageModule>('storage');
+    this.storage = storage;
     this.plans = await storage.collection<BillingPlan>(PLANS_COLLECTION);
     this.subscriptions = await storage.collection<Subscription>(SUBSCRIPTIONS_COLLECTION);
     this.invoices = await storage.collection<Invoice>(INVOICES_COLLECTION);
     this.payments = kernel.getModule<PaymentsModule>('payments').getService();
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
-    // F-01f enveloped cutover: consume first-class envelopes (the full
-    // CommercialEvent view is reconstructed for enveloped producers and
-    // passed through for bridge-synthesized legacy shapes).
-    this.unsubscribePayment = kernel.bus.onEnveloped('payment.verified', async (_topic, envelope) => this.handleVerifiedPayment(commercialEventFromEnvelope(envelope)));
-    this.unsubscribeRefund = kernel.bus.onEnveloped('payment.refund.verified', async (_topic, envelope) => this.handleVerifiedRefund(commercialEventFromEnvelope(envelope)));
+    // T-05 durable cutover: verified payment/refund events reach billing
+    // ONLY through the canonical unified-outbox delivery worker, behind a
+    // durable per-event inbox record (at-least-once + idempotent effect).
+    // No volatile bus subscription remains for durable-domain events.
+    this.unregisterDurableHandler = this.controlPlane.registerDurableHandler({
+      id: BILLING_DURABLE_HANDLER_ID,
+      eventTypes: ['payment.verified', 'payment.refund.verified'],
+      maxAttempts: 5,
+      handle: async (event) => {
+        if (event.eventType === 'payment.verified') await this.handleVerifiedPayment(event);
+        else if (event.eventType === 'payment.refund.verified') await this.handleVerifiedRefund(event);
+      },
+    });
   }
 
   stop(): void {
-    this.unsubscribePayment?.();
-    this.unsubscribeRefund?.();
+    this.unregisterDurableHandler?.();
+    this.unregisterDurableHandler = undefined;
   }
 
   async createPlan(actor: CommercialActor, input: CreateBillingPlanInput): Promise<BillingPlan> {
@@ -165,27 +176,40 @@ export class BillingService {
     return (await this.invoices.all()).filter((invoice) => canRead(actor, invoice.tenantId)).map(copy);
   }
 
+  /**
+   * Durable handler effect (idempotent): invoice PAID + `billing.invoice.paid`
+   * (+ subscription ACTIVE + `billing.subscription.activated`) commit as ONE
+   * composed write (T-05). The tenant is the EVENT's tenant (copied from the
+   * durable outbox record), never a consumer-supplied value; the invoice and
+   * the verified payment must both belong to it.
+   */
   private async handleVerifiedPayment(event: CommercialEvent): Promise<void> {
     const paymentId = event.payload.paymentId;
     const invoiceId = event.payload.invoiceId;
     if (typeof paymentId !== 'string' || typeof invoiceId !== 'string') return;
     const actor = systemActor(event.tenantId);
-    const [payment, invoice] = await Promise.all([this.payments.getPayment(actor, paymentId), this.invoices.get(invoiceId)]);
-    if (!payment || payment.status !== 'VERIFIED' || !invoice || invoice.tenantId !== event.tenantId || invoice.paymentId !== payment.id || !moneyEquals(invoice.total, payment.amount)) return;
-    if (invoice.status === 'PAID') return;
-    const now = Date.now();
-    const paid: Invoice = { ...invoice, status: 'PAID', providerReference: payment.providerReference, paidAt: now, updatedAt: now };
-    await this.invoices.put(paid);
-    await this.emit(actor, BillingEvents.InvoicePaid, paid.id, { invoiceId: paid.id, paymentId: payment.id, amount: paid.total });
-    if (paid.subscriptionId) {
-      const subscription = await this.subscriptions.get(paid.subscriptionId);
-      if (subscription && subscription.tenantId === paid.tenantId && subscription.status !== 'CANCELLED') {
-        const period = cyclePeriod((await this.plans.get(subscription.planId))?.cycle);
-        const active: Subscription = { ...subscription, status: 'ACTIVE', currentPeriodStart: now, currentPeriodEnd: now + period, updatedAt: now };
-        await this.subscriptions.put(active);
-        await this.emit(actor, BillingEvents.SubscriptionActivated, active.id, { subscriptionId: active.id, invoiceId: paid.id });
+    const payment = await this.payments.getPayment(actor, paymentId);
+    if (!payment || payment.status !== 'VERIFIED' || payment.tenantId !== event.tenantId) return;
+    await this.storage.atomically(async (scope) => {
+      const invoices = await scope.collection<Invoice>(INVOICES_COLLECTION);
+      const invoice = await invoices.get(invoiceId);
+      if (!invoice || invoice.tenantId !== event.tenantId || invoice.paymentId !== payment.id || !moneyEquals(invoice.total, payment.amount)) return;
+      if (invoice.status === 'PAID') return; // idempotent redelivery
+      const now = Date.now();
+      const paid: Invoice = { ...invoice, status: 'PAID', providerReference: payment.providerReference, paidAt: now, updatedAt: now };
+      await invoices.put(paid);
+      await this.emit(actor, BillingEvents.InvoicePaid, paid.id, { invoiceId: paid.id, paymentId: payment.id, amount: paid.total }, { key: `${paid.id}:${payment.id}`, causationId: event.id, scope });
+      if (paid.subscriptionId) {
+        const subscriptions = await scope.collection<Subscription>(SUBSCRIPTIONS_COLLECTION);
+        const subscription = await subscriptions.get(paid.subscriptionId);
+        if (subscription && subscription.tenantId === paid.tenantId && subscription.status !== 'CANCELLED') {
+          const period = cyclePeriod((await this.plans.get(subscription.planId))?.cycle);
+          const active: Subscription = { ...subscription, status: 'ACTIVE', currentPeriodStart: now, currentPeriodEnd: now + period, updatedAt: now };
+          await subscriptions.put(active);
+          await this.emit(actor, BillingEvents.SubscriptionActivated, active.id, { subscriptionId: active.id, invoiceId: paid.id }, { key: `${active.id}:${paid.id}`, causationId: event.id, scope });
+        }
       }
-    }
+    });
   }
 
   private async handleVerifiedRefund(event: CommercialEvent): Promise<void> {
@@ -193,11 +217,17 @@ export class BillingService {
     const invoiceId = event.payload.invoiceId;
     if (typeof paymentId !== 'string' || typeof invoiceId !== 'string') return;
     const actor = systemActor(event.tenantId);
-    const [payment, invoice] = await Promise.all([this.payments.getPayment(actor, paymentId), this.invoices.get(invoiceId)]);
-    if (!payment || payment.status !== 'REFUNDED' || !invoice || invoice.tenantId !== event.tenantId || invoice.paymentId !== payment.id) return;
-    const refunded: Invoice = { ...invoice, status: 'REFUNDED', providerReference: payment.providerReference, refundedAt: Date.now(), updatedAt: Date.now() };
-    await this.invoices.put(refunded);
-    await this.emit(actor, BillingEvents.InvoiceRefunded, refunded.id, { invoiceId: refunded.id, paymentId: payment.id, amount: payment.refundAmount ?? payment.amount });
+    const payment = await this.payments.getPayment(actor, paymentId);
+    if (!payment || payment.status !== 'REFUNDED' || payment.tenantId !== event.tenantId) return;
+    await this.storage.atomically(async (scope) => {
+      const invoices = await scope.collection<Invoice>(INVOICES_COLLECTION);
+      const invoice = await invoices.get(invoiceId);
+      if (!invoice || invoice.tenantId !== event.tenantId || invoice.paymentId !== payment.id) return;
+      if (invoice.status === 'REFUNDED') return; // idempotent redelivery
+      const refunded: Invoice = { ...invoice, status: 'REFUNDED', providerReference: payment.providerReference, refundedAt: Date.now(), updatedAt: Date.now() };
+      await invoices.put(refunded);
+      await this.emit(actor, BillingEvents.InvoiceRefunded, refunded.id, { invoiceId: refunded.id, paymentId: payment.id, amount: payment.refundAmount ?? payment.amount }, { key: `${refunded.id}:${payment.id}`, causationId: event.id, scope });
+    });
   }
 
   private async requireInvoice(actor: CommercialActor, invoiceId: string): Promise<Invoice> {
@@ -212,10 +242,21 @@ export class BillingService {
     return subscription;
   }
 
-  private async emit(actor: CommercialActor, eventType: string, entityId: string, payload: Record<string, unknown>): Promise<void> {
+  /**
+   * Publish a billing event. Operator-driven events keep their time-based
+   * idempotency key (each call is a distinct business act); durable-handler
+   * effects pass a replay-stable `key` so a redelivered event can never
+   * produce a second `billing.invoice.paid`, and a `scope` so the event
+   * commits with the state it describes.
+   */
+  private async emit(actor: CommercialActor, eventType: string, entityId: string, payload: Record<string, unknown>, options: { key?: string; causationId?: string; scope?: StorageWriteScope } = {}): Promise<void> {
     const now = Date.now();
-    const provenance: CommercialProvenance = { source: 'billing', collectedAt: now, correlationId: entityId };
-    await this.controlPlane.publishEvent(actor, { eventType, source: 'billing', entityId, correlationId: entityId, payload, provenance, privacyClassification: 'RESTRICTED', idempotencyKey: `${eventType}:${entityId}:${now}` });
+    const provenance: CommercialProvenance = { source: 'billing', collectedAt: now, correlationId: entityId, causationId: options.causationId };
+    await this.controlPlane.publishEvent(
+      actor,
+      { eventType, source: 'billing', entityId, correlationId: entityId, causationId: options.causationId, payload, provenance, privacyClassification: 'RESTRICTED', idempotencyKey: `${eventType}:${options.key ?? `${entityId}:${now}`}` },
+      options.scope ? { scope: options.scope } : {},
+    );
   }
 }
 

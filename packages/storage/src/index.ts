@@ -10,6 +10,7 @@ export type {
   INamespace,
   IStorageDriver,
   IStorageTransaction,
+  StorageWriteScope,
   CasWriteResult,
   Entry,
   EntryMeta,

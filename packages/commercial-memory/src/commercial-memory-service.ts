@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
-import type { ICollection } from '@jataqi/storage';
-import { CommercialControlPlaneModule, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
+import type { ICollection, StorageWriteScope } from '@jataqi/storage';
+import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import type {
   CommercialActor,
   CommercialControlPlaneService,
@@ -25,6 +25,8 @@ import {
 const RECORDS_COLLECTION = 'commercial-memory.records';
 const NODES_COLLECTION = 'commercial-memory.attribution-nodes';
 const LINKS_COLLECTION = 'commercial-memory.attribution-links';
+/** T-05 durable inbox handler id — stable across restarts/deploys (keys the inbox). */
+export const COMMERCIAL_MEMORY_DURABLE_HANDLER_ID = 'commercial-memory.raw-event-capture';
 const CAUSAL_EVIDENCE_STATUSES = new Set<EvidenceStatus>(['MEASURED', 'DEMONSTRATED', 'REPEATED', 'VERIFIED']);
 
 export class CommercialMemoryError extends Error {
@@ -46,19 +48,25 @@ export class CommercialMemoryService {
   private links!: ICollection<AttributionLink>;
   private controlPlane!: CommercialControlPlaneService;
   private readonly unsubscribers: Array<() => void> = [];
+  private storage!: StorageModule;
 
   async init(kernel: KernelApi): Promise<void> {
     const storage = kernel.getModule<StorageModule>('storage');
+    this.storage = storage;
     this.records = await storage.collection<CommercialMemoryRecord>(RECORDS_COLLECTION);
     this.nodes = await storage.collection<AttributionNode>(NODES_COLLECTION);
     this.links = await storage.collection<AttributionLink>(LINKS_COLLECTION);
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
 
-    for (const eventType of observedCommercialEvents()) {
-      // F-01f enveloped cutover: capture first-class envelopes (bridge
-      // synthesizes envelopes for not-yet-migrated producers).
-      this.unsubscribers.push(kernel.bus.onEnveloped(eventType, async (_topic, envelope) => this.captureCommercialEvent(commercialEventFromEnvelope(envelope))));
-    }
+    // T-05 durable cutover: raw-event capture is a durable subscriber of the
+    // canonical unified-outbox worker (inbox-deduplicated, at-least-once);
+    // the effect is additionally idempotent on `event:<id>`.
+    this.unsubscribers.push(this.controlPlane.registerDurableHandler({
+      id: COMMERCIAL_MEMORY_DURABLE_HANDLER_ID,
+      eventTypes: observedCommercialEvents(),
+      maxAttempts: 3,
+      handle: (event) => this.captureCommercialEvent(event),
+    }));
   }
 
   stop(): void {
@@ -186,20 +194,24 @@ export class CommercialMemoryService {
     return { valid: true, records: records.length };
   }
 
+  /** Durable handler effect: memory record + `commercial.memory.recorded` commit as ONE composed write (T-05). */
   private async captureCommercialEvent(event: CommercialEvent): Promise<void> {
     if (!event?.id || !event.tenantId || !event.eventType) return;
     const id = `event:${event.id}`;
-    if (await this.records.get(id)) return;
-    const evidence: CommercialEvidence = {
-      id: `event-evidence:${event.id}`, status: 'OBSERVED', source: event.source, observedAt: event.timestamp, confidence: 100,
-      summary: `Observed versioned commercial event ${event.eventType}.`, provenance: copy(event.provenance), privacyClassification: event.privacyClassification,
-    };
-    const record = await this.append({
-      id, tenantId: event.tenantId, kind: 'RAW_EVENT', title: event.eventType, summary: JSON.stringify(event.payload), tags: ['event', event.eventType],
-      evidence: [evidence], confidence: 100, provenance: copy(event.provenance), privacyClassification: event.privacyClassification, reusable: false,
+    await this.storage.atomically(async (scope) => {
+      const records = await scope.collection<CommercialMemoryRecord>(RECORDS_COLLECTION);
+      if (await records.get(id)) return; // idempotent redelivery
+      const evidence: CommercialEvidence = {
+        id: `event-evidence:${event.id}`, status: 'OBSERVED', source: event.source, observedAt: event.timestamp, confidence: 100,
+        summary: `Observed versioned commercial event ${event.eventType}.`, provenance: copy(event.provenance), privacyClassification: event.privacyClassification,
+      };
+      const record = await this.append({
+        id, tenantId: event.tenantId, kind: 'RAW_EVENT', title: event.eventType, summary: JSON.stringify(event.payload), tags: ['event', event.eventType],
+        evidence: [evidence], confidence: 100, provenance: copy(event.provenance), privacyClassification: event.privacyClassification, reusable: false,
+      }, records);
+      const actor: CommercialActor = { id: 'commercial-memory-system', tenantId: event.tenantId, roles: ['system'] };
+      await this.emit(actor, CommercialMemoryEvents.Recorded, record, { recordId: record.id, kind: record.kind, sourceEventId: event.id }, scope);
     });
-    const actor: CommercialActor = { id: 'commercial-memory-system', tenantId: event.tenantId, roles: ['system'] };
-    await this.emit(actor, CommercialMemoryEvents.Recorded, record, { recordId: record.id, kind: record.kind, sourceEventId: event.id });
   }
 
   private async getOrCreateNode(actor: CommercialActor, input: RecordAttributionLinkInput['from']): Promise<AttributionNode> {
@@ -211,8 +223,8 @@ export class CommercialMemoryService {
     return node;
   }
 
-  private async append(input: Omit<CommercialMemoryRecord, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'> & { id?: string; createdAt?: number }): Promise<CommercialMemoryRecord> {
-    const previous = (await this.records.query({ where: (record) => record.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
+  private async append(input: Omit<CommercialMemoryRecord, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'> & { id?: string; createdAt?: number }, records: ICollection<CommercialMemoryRecord> = this.records): Promise<CommercialMemoryRecord> {
+    const previous = (await records.query({ where: (record) => record.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
     const draft: Omit<CommercialMemoryRecord, 'hash'> = {
       ...input,
       id: input.id ?? randomUUID(),
@@ -221,14 +233,18 @@ export class CommercialMemoryService {
       createdAt: input.createdAt ?? Date.now(),
     };
     const record: CommercialMemoryRecord = { ...draft, hash: hashRecord({ ...draft, hash: '' }) };
-    await this.records.put(record);
+    await records.put(record);
     return record;
   }
 
-  private async emit(actor: CommercialActor, eventType: string, record: CommercialMemoryRecord, payload: Record<string, unknown>): Promise<void> {
+  private async emit(actor: CommercialActor, eventType: string, record: CommercialMemoryRecord, payload: Record<string, unknown>, scope?: StorageWriteScope): Promise<void> {
     const now = Date.now();
     const provenance: CommercialProvenance = { source: 'commercial-memory', collectedAt: now, correlationId: record.id, causationId: record.provenance.causationId };
-    await this.controlPlane.publishEvent(actor, { eventType, source: 'commercial-memory', entityId: record.id, correlationId: record.id, causationId: record.provenance.causationId, payload, provenance, privacyClassification: record.privacyClassification, idempotencyKey: `${eventType}:${record.id}` });
+    await this.controlPlane.publishEvent(
+      actor,
+      { eventType, source: 'commercial-memory', entityId: record.id, correlationId: record.id, causationId: record.provenance.causationId, payload, provenance, privacyClassification: record.privacyClassification, idempotencyKey: `${eventType}:${record.id}` },
+      scope ? { scope } : {},
+    );
   }
 }
 

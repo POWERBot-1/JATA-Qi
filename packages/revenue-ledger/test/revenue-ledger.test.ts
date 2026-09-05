@@ -9,6 +9,7 @@ import {
   type CommercialControlPlaneService,
   type CommercialEvidence,
 } from '@jataqi/commercial-control-plane';
+import { CommercialEventStreamModule } from '@jataqi/commercial-event-stream';
 import { BillingModule, type BillingService } from '@jataqi/billing';
 import { PaymentCreateActionType, PaymentsModule, PaymentRefundActionType, type PaymentProvider, type PaymentsService } from '@jataqi/payments';
 import { RevenueLedgerModule, type RevenueLedgerService } from '../src/index.js';
@@ -51,6 +52,7 @@ beforeEach(async () => {
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
+  kernel.register(new CommercialEventStreamModule({ now: () => now }));
   kernel.register(new BillingModule());
   kernel.register(new RevenueLedgerModule());
   await kernel.boot();

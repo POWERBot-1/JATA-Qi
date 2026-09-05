@@ -178,6 +178,8 @@ export interface HostRuntimeCycle {
   sleeping: number;
   /** Set when the cycle's tick threw; the runtime continues fail-closed. */
   error?: string;
+  /** T-05: durable delivery pass summary when the runtime was configured with a delivery pump. */
+  delivery?: { examined: number; delivered: number; retried: number; deadLettered: number };
 }
 
 /** Privacy-minimized host lifecycle event payload (no task content, no secrets). */

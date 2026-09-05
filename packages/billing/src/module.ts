@@ -5,7 +5,8 @@ import { BillingService } from './billing-service.js';
 export class BillingModule implements IModule {
   readonly id = 'billing';
   readonly tags = ['billing', 'payments', 'revenue', 'governance'] as const;
-  readonly dependsOn = ['storage', 'commercial-control-plane', 'payments'] as const;
+  /** T-05: a durable subscriber requires the canonical delivery worker in the composition (fail-closed at boot). */
+  readonly dependsOn = ['storage', 'commercial-control-plane', 'payments', 'commercial-event-stream'] as const;
   private readonly service = new BillingService();
 
   async init(kernel: KernelApi): Promise<void> {

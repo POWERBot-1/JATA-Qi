@@ -37,7 +37,9 @@ Host runtime (R-01):
 
   host:work [status]  Read-only: list hosted work items (operator inspection).
   host:dlq            Read-only: list dead-lettered / quarantined work items.
-  host:health         Read-only: print host lifecycle, storage driver, next wake.
+  host:health         Read-only: print host lifecycle, storage driver, next wake, delivery health.
+  host:outbox [state] Read-only: list unified-outbox records for the operator tenant (T-05).
+  host:inbox [state]  Read-only: list durable subscriber inbox records for the operator tenant (T-05).
 
 Authenticated work ingress (T-03):
   host:enqueue [options]
@@ -74,7 +76,7 @@ async function main() {
     const code = await runHostCommand(parseHostArgs(args.slice(1)));
     process.exit(code);
   }
-  if (cmd === 'host:work' || cmd === 'host:dlq' || cmd === 'host:health') {
+  if (cmd === 'host:work' || cmd === 'host:dlq' || cmd === 'host:health' || cmd === 'host:outbox' || cmd === 'host:inbox') {
     const code = await runHostInspectCommand(cmd, args.slice(1));
     process.exit(code);
   }
