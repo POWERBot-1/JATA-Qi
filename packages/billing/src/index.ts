@@ -1,5 +1,5 @@
 export { BillingModule } from './module.js';
-export { BillingService, BillingError } from './billing-service.js';
+export { BillingService, BillingError, BILLING_DURABLE_HANDLER_ID } from './billing-service.js';
 export { BillingEvents } from './types.js';
 export type {
   BillingCycle,

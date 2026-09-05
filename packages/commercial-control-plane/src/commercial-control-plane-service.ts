@@ -11,7 +11,7 @@ import {
   type UnifiedOutboxRecord,
 } from './unified-outbox.js';
 import { StorageModule } from '@jataqi/storage';
-import type { ICollection } from '@jataqi/storage';
+import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { evaluatePolicy, scopeMatches, selectPolicy } from './policy-engine.js';
 import { assertCampaignTransition, assertProductTransition } from './state-machine.js';
 import {
@@ -49,6 +49,7 @@ import {
   type CreateCommercialBudgetInput,
   type CreateCommercialDecisionInput,
   type CreateExperimentInput,
+  type DurableEventHandler,
   type FinalizeCommercialExperimentInput,
   type LedgerEntryKind,
   type MonetaryValue,
@@ -93,6 +94,16 @@ const COLLECTIONS = Object.freeze({
 export interface CommercialControlPlaneServiceConfig {
   /** Injectable clock keeps policy, expiry, and budget tests deterministic. */
   now?: () => number;
+}
+
+/** T-05 publication options. */
+export interface PublishEventOptions {
+  /**
+   * Join an already-open composed write scope (`StorageModule.atomically`)
+   * so the caller's state mutation, this event, and its outbox record commit
+   * or roll back together. Bus notification is deferred to the scope commit.
+   */
+  scope?: StorageWriteScope;
 }
 
 export class CommercialControlPlaneError extends Error {
@@ -151,6 +162,11 @@ export class CommercialControlPlaneService {
    * atomicity still rests on the storage driver's row-lock CAS.
    */
   private readonly publishMutex = createTenantMutex();
+  /** Tenant publish locks currently held on behalf of a composed write scope (re-entrant per scope). */
+  private readonly scopeLocks = new WeakMap<StorageWriteScope, Set<string>>();
+  /** T-05 durable subscriber registry (code capabilities, adopted by the delivery worker). */
+  private readonly durableHandlers = new Map<string, DurableEventHandler>();
+  private storage!: StorageModule;
 
   constructor(config: CommercialControlPlaneServiceConfig = {}) {
     this.clock = config.now ?? (() => Date.now());
@@ -159,6 +175,7 @@ export class CommercialControlPlaneService {
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
     const storage = kernel.getModule<StorageModule>('storage');
+    this.storage = storage;
     this.decisions = await storage.collection<CommercialDecision>(COLLECTIONS.decisions);
     this.authorizations = await storage.collection<CommercialAuthorization>(COLLECTIONS.authorizations);
     this.actions = await storage.collection<CommercialAction>(COLLECTIONS.actions);
@@ -1228,43 +1245,101 @@ export class CommercialControlPlaneService {
   }
 
   /**
-   * Versioned durable event recording with idempotency and tenant-scoped replay.
+   * Durable, idempotent event publication.
    *
-   * F-01: sequence is assigned from a per-tenant CAS counter (replacing the
-   * previous global `count() + 1`, which raced under concurrency); every event
-   * is projected into the unified durable outbox (idempotent, self-healing on
-   * the duplicate path); bus delivery is enveloped with the exact legacy
-   * `CommercialEvent` payload preserved for existing subscribers.
+   * T-05: the idempotency check, per-tenant event sequence, legacy `events`
+   * row (replay/compatibility view) and the unified-outbox record are ONE
+   * composed write. With a transactional driver (PostgreSQL) they commit or
+   * roll back together; a crash mid-publish leaves nothing. Volatile bus
+   * notification happens only AFTER commit (`onCommit`), never inside the
+   * transaction, and never as the durable delivery path — the unified
+   * outbox + delivery worker is (at-least-once + idempotent handling).
+   *
+   * `options.scope` joins an already-open caller scope so a domain state
+   * mutation commits atomically with its event and outbox record. The caller
+   * must hold no per-tenant publish lock of its own; this method acquires the
+   * tenant publish mutex and releases it when the scope settles.
    */
-  async publishEvent(actor: CommercialActor, input: PublishCommercialEventInput): Promise<CommercialEvent> {
+  async publishEvent(actor: CommercialActor, input: PublishCommercialEventInput, options: PublishEventOptions = {}): Promise<CommercialEvent> {
     assertActor(actor);
     validateEventInput(input);
-    // Durable state (idempotency check, sequencing, persistence, outbox
-    // projection) commits under the per-tenant mutex BEFORE volatile bus
-    // delivery: a crash between the two is recoverable via replay
-    // (at-least-once + idempotent).
-    const event = await this.publishMutex.runExclusive(actor.tenantId, async () => {
-      if (input.idempotencyKey) {
-        const duplicate = (await this.events.query({ where: (event) => event.tenantId === actor.tenantId && event.idempotencyKey === input.idempotencyKey, limit: 1 }))[0];
-        if (duplicate) {
-          // Self-healing: a pre-F-01 duplicate may lack a unified-outbox record.
-          await this.unifiedOutbox.publish(toEnvelopeFromCommercial(duplicate.eventType, duplicate));
-          return copy(duplicate);
-        }
-      }
-      const now = this.now();
-      const fresh: CommercialEvent = {
-        id: randomUUID(), sequence: await this.nextEventSequence(actor.tenantId), eventType: input.eventType, eventVersion: input.eventVersion ?? 1,
-        tenantId: actor.tenantId, source: input.source, actor: actor.id, entityId: input.entityId, timestamp: now,
-        correlationId: input.correlationId, causationId: input.causationId, payload: copy(input.payload), schemaVersion: input.schemaVersion ?? 1,
-        provenance: copy(input.provenance), privacyClassification: input.privacyClassification ?? 'INTERNAL', idempotencyKey: input.idempotencyKey,
-      };
-      await this.events.put(fresh);
-      await this.unifiedOutbox.publish(toEnvelopeFromCommercial(fresh.eventType, fresh));
-      return copy(fresh);
-    });
+    if (options.scope) {
+      await this.holdTenantLockFor(options.scope, actor.tenantId);
+      const event = await this.publishWithin(actor, input, options.scope);
+      options.scope.onCommit(() => this.emitEnvelopedEvent(event));
+      return copy(event);
+    }
+    const event = await this.publishMutex.runExclusive(actor.tenantId, () =>
+      this.storage.atomically((scope) => this.publishWithin(actor, input, scope)),
+    );
     await this.emitEnvelopedEvent(event);
     return copy(event);
+  }
+
+  /**
+   * Hold the per-tenant publish lock for the lifetime of a composed scope
+   * (re-entrant: a scope publishing several events for one tenant acquires
+   * it once; released when the scope settles — commit or rollback).
+   */
+  private async holdTenantLockFor(scope: StorageWriteScope, tenantId: string): Promise<void> {
+    let held = this.scopeLocks.get(scope);
+    if (!held) {
+      held = new Set<string>();
+      this.scopeLocks.set(scope, held);
+    }
+    if (held.has(tenantId)) return;
+    const release = await this.publishMutex.acquire(tenantId);
+    held.add(tenantId);
+    scope.onSettle(() => {
+      held!.delete(tenantId);
+      release();
+    });
+  }
+
+  /**
+   * T-05: register a durable subscriber (code capability, admin-free because
+   * it is a composition-time declaration, never a runtime authority grant).
+   * Returns the unregister function. Duplicate ids fail closed.
+   */
+  registerDurableHandler(handler: DurableEventHandler): () => void {
+    if (!handler.id.trim() || !handler.eventTypes.length || handler.eventTypes.some((eventType) => !eventType.trim())) {
+      throw new CommercialControlPlaneError('Durable handler id and event types are required.');
+    }
+    if (this.durableHandlers.has(handler.id)) throw new CommercialControlPlaneError(`Durable handler "${handler.id}" is already registered.`);
+    this.durableHandlers.set(handler.id, handler);
+    return () => {
+      if (this.durableHandlers.get(handler.id) === handler) this.durableHandlers.delete(handler.id);
+    };
+  }
+
+  /** Registered durable subscribers (sorted by id) for the delivery worker to adopt. */
+  listDurableHandlers(): DurableEventHandler[] {
+    return [...this.durableHandlers.values()].sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** The composed publish body, bound to the collections of `scope`. */
+  private async publishWithin(actor: CommercialActor, input: PublishCommercialEventInput, scope: StorageWriteScope): Promise<CommercialEvent> {
+    const events = await scope.collection<CommercialEvent>(COLLECTIONS.events);
+    const eventSequence = await scope.collection<{ id: string; tenantId: string; sequence: number }>(COLLECTIONS.eventSequence);
+    const outbox = await UnifiedOutbox.open(scope);
+    if (input.idempotencyKey) {
+      const duplicate = (await events.query({ where: (event) => event.tenantId === actor.tenantId && event.idempotencyKey === input.idempotencyKey, limit: 1 }))[0];
+      if (duplicate) {
+        // Self-healing: a pre-F-01 duplicate may lack a unified-outbox record.
+        await outbox.publish(toEnvelopeFromCommercial(duplicate.eventType, duplicate), { now: this.now() });
+        return copy(duplicate);
+      }
+    }
+    const now = this.now();
+    const fresh: CommercialEvent = {
+      id: randomUUID(), sequence: await this.nextEventSequence(actor.tenantId, events, eventSequence), eventType: input.eventType, eventVersion: input.eventVersion ?? 1,
+      tenantId: actor.tenantId, source: input.source, actor: actor.id, entityId: input.entityId, timestamp: now,
+      correlationId: input.correlationId, causationId: input.causationId, payload: copy(input.payload), schemaVersion: input.schemaVersion ?? 1,
+      provenance: copy(input.provenance), privacyClassification: input.privacyClassification ?? 'INTERNAL', idempotencyKey: input.idempotencyKey,
+    };
+    await events.put(fresh);
+    await outbox.publish(toEnvelopeFromCommercial(fresh.eventType, fresh), { now });
+    return copy(fresh);
   }
 
   /**
@@ -1290,11 +1365,15 @@ export class CommercialControlPlaneService {
    * initialized from the tenant's current maximum sequence so pre-F-01 rows
    * (globally numbered) are never collided with.
    */
-  private async nextEventSequence(tenantId: string): Promise<number> {
+  private async nextEventSequence(
+    tenantId: string,
+    events: ICollection<CommercialEvent> = this.events,
+    eventSequence: ICollection<{ id: string; tenantId: string; sequence: number }> = this.eventSequence,
+  ): Promise<number> {
     const counterId = `seq:${tenantId}`;
-    const absent = await this.eventSequence.get(counterId);
+    const absent = await eventSequence.get(counterId);
     if (!absent) {
-      const rows = await this.events.query({ where: (event) => event.tenantId === tenantId });
+      const rows = await events.query({ where: (event) => event.tenantId === tenantId });
       let maximum = 0;
       for (const row of rows) {
         if (row.sequence > maximum) maximum = row.sequence;
@@ -1304,7 +1383,7 @@ export class CommercialControlPlaneService {
       // concurrently advanced counter. First-use callers serialize in-process
       // via `publishMutex`; see the residual cross-process note on
       // `UnifiedOutbox.nextSequence`.
-      await this.eventSequence.cas(
+      await eventSequence.cas(
         counterId,
         () => true,
         (current) => (current as { id: string; tenantId: string; sequence: number } | undefined) ?? { id: counterId, tenantId, sequence: maximum },
@@ -1316,10 +1395,10 @@ export class CommercialControlPlaneService {
     // fail-closed property; sustained exhaustion still throws rather than
     // spinning forever.
     for (let attempt = 0; attempt < 64; attempt += 1) {
-      const current = await this.eventSequence.get(counterId);
+      const current = await eventSequence.get(counterId);
       const observed = current ?? { id: counterId, tenantId, sequence: 0 };
       const next = { id: counterId, tenantId, sequence: observed.sequence + 1 };
-      const res = await this.eventSequence.cas(
+      const res = await eventSequence.cas(
         counterId,
         (candidate) => (candidate?.sequence ?? 0) === observed.sequence,
         () => next,

@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
-import type { ICollection } from '@jataqi/storage';
+import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { BillingModule, BillingEvents } from '@jataqi/billing';
 import type { BillingService, Invoice } from '@jataqi/billing';
-import { CommercialControlPlaneModule, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
+import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialEvidence, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentIntent, PaymentsService } from '@jataqi/payments';
@@ -16,6 +16,8 @@ import {
 } from './types.js';
 
 const LEDGER_COLLECTION = 'revenue-ledger.entries';
+/** T-05 durable inbox handler id — stable across restarts/deploys (keys the inbox). */
+export const REVENUE_LEDGER_DURABLE_HANDLER_ID = 'revenue-ledger.invoice-settlement';
 
 export class RevenueLedgerError extends Error {
   constructor(message: string) {
@@ -31,28 +33,36 @@ export class RevenueLedgerError extends Error {
  * deliberately insufficient.
  */
 export class RevenueLedgerService {
+  private storage!: StorageModule;
   private entries!: ICollection<RevenueLedgerEntry>;
   private billing!: BillingService;
   private payments!: PaymentsService;
   private controlPlane!: CommercialControlPlaneService;
-  private unsubscribePaid?: () => void;
-  private unsubscribeRefunded?: () => void;
+  private unregisterDurableHandler?: () => void;
 
   async init(kernel: KernelApi): Promise<void> {
-    this.entries = await kernel.getModule<StorageModule>('storage').collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+    this.storage = kernel.getModule<StorageModule>('storage');
+    this.entries = await this.storage.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
     this.billing = kernel.getModule<BillingModule>('billing').getService();
     this.payments = kernel.getModule<PaymentsModule>('payments').getService();
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
-    // F-01f enveloped cutover: consume first-class envelopes (the full
-    // CommercialEvent view is reconstructed for enveloped producers and
-    // passed through for bridge-synthesized legacy shapes).
-    this.unsubscribePaid = kernel.bus.onEnveloped(BillingEvents.InvoicePaid, async (_topic, envelope) => this.handlePaidInvoice(commercialEventFromEnvelope(envelope)));
-    this.unsubscribeRefunded = kernel.bus.onEnveloped(BillingEvents.InvoiceRefunded, async (_topic, envelope) => this.handleRefundedInvoice(commercialEventFromEnvelope(envelope)));
+    // T-05 durable cutover: paid/refunded invoices reach the ledger ONLY via
+    // the canonical unified-outbox delivery worker behind a durable inbox
+    // record; the effect itself is deduplicated on `sourceEventId`.
+    this.unregisterDurableHandler = this.controlPlane.registerDurableHandler({
+      id: REVENUE_LEDGER_DURABLE_HANDLER_ID,
+      eventTypes: [BillingEvents.InvoicePaid, BillingEvents.InvoiceRefunded],
+      maxAttempts: 5,
+      handle: async (event) => {
+        if (event.eventType === BillingEvents.InvoicePaid) await this.handlePaidInvoice(event);
+        else if (event.eventType === BillingEvents.InvoiceRefunded) await this.handleRefundedInvoice(event);
+      },
+    });
   }
 
   stop(): void {
-    this.unsubscribePaid?.();
-    this.unsubscribeRefunded?.();
+    this.unregisterDurableHandler?.();
+    this.unregisterDurableHandler = undefined;
   }
 
   /** Record an evidenced cost; estimates remain explicitly estimated. */
@@ -118,59 +128,70 @@ export class RevenueLedgerService {
     return { valid: true, entries: entries.length };
   }
 
+  /**
+   * Durable handler effect (idempotent on `sourceEventId`): the ledger entry
+   * and its `revenue.recorded` event commit as ONE composed write (T-05).
+   * Tenant = the event's tenant; invoice and payment must both belong to it.
+   */
   private async handlePaidInvoice(event: CommercialEvent): Promise<void> {
     const invoiceId = event.payload.invoiceId;
     const paymentId = event.payload.paymentId;
     if (typeof invoiceId !== 'string' || typeof paymentId !== 'string') return;
-    if ((await this.entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return;
     const actor = systemActor(event.tenantId);
     const [invoice, payment] = await Promise.all([this.billing.getInvoice(actor, invoiceId), this.payments.getPayment(actor, paymentId)]);
-    if (!invoice || !payment || !isVerifiedPaymentForInvoice(invoice, payment, event.tenantId)) return;
-    const entry = await this.append({
-      tenantId: event.tenantId,
-      entryType: 'REVENUE',
-      recognitionStatus: 'RECOGNIZED',
-      invoiceId: invoice.id,
-      paymentId: payment.id,
-      providerReference: payment.providerReference,
-      productId: invoice.productId,
-      customerReference: invoice.customerReference,
-      amount: copy(invoice.total),
-      sourceEventId: event.id,
-      evidence: copy(payment.verificationEvidence),
-      notes: `Recognized from verified payment ${payment.id}.`,
+    if (!invoice || !payment || !isVerifiedPaymentForInvoice(invoice, payment, event.tenantId) || payment.tenantId !== event.tenantId) return;
+    await this.storage.atomically(async (scope) => {
+      const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+      if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // idempotent redelivery
+      const entry = await this.append({
+        tenantId: event.tenantId,
+        entryType: 'REVENUE',
+        recognitionStatus: 'RECOGNIZED',
+        invoiceId: invoice.id,
+        paymentId: payment.id,
+        providerReference: payment.providerReference,
+        productId: invoice.productId,
+        customerReference: invoice.customerReference,
+        amount: copy(invoice.total),
+        sourceEventId: event.id,
+        evidence: copy(payment.verificationEvidence),
+        notes: `Recognized from verified payment ${payment.id}.`,
+      }, entries);
+      await this.emit(actor, RevenueLedgerEvents.RevenueRecorded, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount }, scope);
     });
-    await this.emit(actor, RevenueLedgerEvents.RevenueRecorded, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount });
   }
 
   private async handleRefundedInvoice(event: CommercialEvent): Promise<void> {
     const invoiceId = event.payload.invoiceId;
     const paymentId = event.payload.paymentId;
     if (typeof invoiceId !== 'string' || typeof paymentId !== 'string') return;
-    if ((await this.entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return;
     const actor = systemActor(event.tenantId);
     const [invoice, payment] = await Promise.all([this.billing.getInvoice(actor, invoiceId), this.payments.getPayment(actor, paymentId)]);
-    if (!invoice || !payment || invoice.status !== 'REFUNDED' || payment.status !== 'REFUNDED' || invoice.tenantId !== event.tenantId) return;
+    if (!invoice || !payment || invoice.status !== 'REFUNDED' || payment.status !== 'REFUNDED' || invoice.tenantId !== event.tenantId || payment.tenantId !== event.tenantId) return;
     const amount = payment.refundAmount ?? payment.amount;
-    const entry = await this.append({
-      tenantId: event.tenantId,
-      entryType: 'REFUND_REVERSAL',
-      recognitionStatus: 'REVERSED',
-      invoiceId: invoice.id,
-      paymentId: payment.id,
-      providerReference: payment.providerReference,
-      productId: invoice.productId,
-      customerReference: invoice.customerReference,
-      amount: copy(amount),
-      sourceEventId: event.id,
-      evidence: copy(payment.verificationEvidence),
-      notes: `Revenue reversal from verified refund ${payment.id}.`,
+    await this.storage.atomically(async (scope) => {
+      const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+      if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // idempotent redelivery
+      const entry = await this.append({
+        tenantId: event.tenantId,
+        entryType: 'REFUND_REVERSAL',
+        recognitionStatus: 'REVERSED',
+        invoiceId: invoice.id,
+        paymentId: payment.id,
+        providerReference: payment.providerReference,
+        productId: invoice.productId,
+        customerReference: invoice.customerReference,
+        amount: copy(amount),
+        sourceEventId: event.id,
+        evidence: copy(payment.verificationEvidence),
+        notes: `Revenue reversal from verified refund ${payment.id}.`,
+      }, entries);
+      await this.emit(actor, RevenueLedgerEvents.RevenueReversed, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount }, scope);
     });
-    await this.emit(actor, RevenueLedgerEvents.RevenueReversed, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount });
   }
 
-  private async append(input: Omit<RevenueLedgerEntry, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'>): Promise<RevenueLedgerEntry> {
-    const previous = (await this.entries.query({ where: (entry) => entry.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
+  private async append(input: Omit<RevenueLedgerEntry, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'>, entries: ICollection<RevenueLedgerEntry> = this.entries): Promise<RevenueLedgerEntry> {
+    const previous = (await entries.query({ where: (entry) => entry.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
     const draft: Omit<RevenueLedgerEntry, 'hash'> = {
       ...input,
       id: randomUUID(),
@@ -179,14 +200,18 @@ export class RevenueLedgerService {
       createdAt: Date.now(),
     };
     const entry: RevenueLedgerEntry = { ...draft, hash: hashEntry({ ...draft, hash: '' }) };
-    await this.entries.put(entry);
+    await entries.put(entry);
     return entry;
   }
 
-  private async emit(actor: CommercialActor, eventType: string, entry: RevenueLedgerEntry, payload: Record<string, unknown>): Promise<void> {
+  private async emit(actor: CommercialActor, eventType: string, entry: RevenueLedgerEntry, payload: Record<string, unknown>, scope?: StorageWriteScope): Promise<void> {
     const now = Date.now();
     const provenance: CommercialProvenance = { source: 'revenue-ledger', collectedAt: now, correlationId: entry.id, causationId: entry.sourceEventId };
-    await this.controlPlane.publishEvent(actor, { eventType, source: 'revenue-ledger', entityId: entry.id, correlationId: entry.id, causationId: entry.sourceEventId, payload, provenance, privacyClassification: 'RESTRICTED', idempotencyKey: `${eventType}:${entry.id}` });
+    await this.controlPlane.publishEvent(
+      actor,
+      { eventType, source: 'revenue-ledger', entityId: entry.id, correlationId: entry.id, causationId: entry.sourceEventId, payload, provenance, privacyClassification: 'RESTRICTED', idempotencyKey: `${eventType}:${entry.id}` },
+      scope ? { scope } : {},
+    );
   }
 }
 

@@ -29,6 +29,7 @@
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "@jataqi/commercial-event-stream": "0.1.0"
   }
 }

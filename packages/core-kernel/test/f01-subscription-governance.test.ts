@@ -10,6 +10,9 @@ import {
 // F-01e (C-4 carried forward): the in-repo subscription inventory. Every
 // bus.on subscription in the workspace must appear here through nomination;
 // new consumers require a reviewed nomination, enforced by this test.
+// T-05: billing / revenue-ledger / commercial-memory consume their topics as
+// durable unified-outbox handlers (no bus subscription); the delivery worker
+// holds the single post-commit wake-up subscription on commercial.event.recorded.
 const IN_REPO_INVENTORY: readonly NominatedSubscription[] = [
   { package: '@jataqi/billing', topic: 'payment.verified' },
   { package: '@jataqi/billing', topic: 'payment.refund.verified' },
@@ -21,6 +24,7 @@ const IN_REPO_INVENTORY: readonly NominatedSubscription[] = [
   { package: '@jataqi/commercial-memory', topic: 'billing.invoice.paid' },
   { package: '@jataqi/commercial-memory', topic: 'billing.invoice.refunded' },
   { package: '@jataqi/commercial-observability', topic: 'commercial.event.recorded' },
+  { package: '@jataqi/commercial-event-stream', topic: 'commercial.event.recorded' },
   { package: '@jataqi/knowledge-graph', topic: 'knowledge.document.ingested' },
   { package: '@jataqi/core-kernel', topic: 'kernel.*' },
 ];

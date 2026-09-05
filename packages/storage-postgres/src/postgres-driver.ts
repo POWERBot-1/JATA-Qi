@@ -307,7 +307,23 @@ export class PostgresDriver implements IStorageDriver {
                meta jsonb,
                updated_at timestamptz NOT NULL DEFAULT now()
              )`;
-    await exec.query(ddl);
+    try {
+      await exec.query(ddl);
+    } catch (error) {
+      // Concurrent first boot (T-05 multi-process evidence): two sessions
+      // racing `CREATE TABLE IF NOT EXISTS` for the same new table can lose
+      // the catalog race with a unique violation (23505 on pg_type) or a
+      // duplicate-table error (42P07). The table now exists, so one retry is
+      // exact; any other failure (or a failure of the retry) surfaces the
+      // ORIGINAL error unchanged (fail-closed, no silent fallback).
+      const code = (error as { code?: string })?.code;
+      if (code !== '23505' && code !== '42P07') throw error;
+      try {
+        await exec.query(ddl);
+      } catch {
+        throw error;
+      }
+    }
     const schema = escapeId(SCHEMA_TABLE);
     await exec.query(
       `INSERT INTO ${schema} (resource_key, kind, logical, version) VALUES ($1, $2, $3, $4)
@@ -332,6 +348,9 @@ export class PostgresDriver implements IStorageDriver {
   async openCollection<T extends { id: string }>(name: string): Promise<ICollection<T>> {
     await this.ensureReady();
     const table = await this.table('collection', name);
+    // Ensured on the pool (autocommit, visible to every session): transaction-
+    // bound handles for the same collection can skip the DDL round trips.
+    this.tables.set(`collection:${name}`, table);
     return new PostgresCollection<T>(name, table, this.pool);
   }
 
@@ -349,7 +368,7 @@ export class PostgresDriver implements IStorageDriver {
 
   /** Open a collection bound to an active transaction client. */
   private async collectionOnClient<T extends { id: string }>(client: pg.PoolClient, name: string): Promise<ICollection<T>> {
-    const table = await this.table('collection', name, client);
+    const table = this.tables.get(`collection:${name}`) ?? (await this.table('collection', name, client));
     return new PostgresCollection<T>(name, table, this.pool, client);
   }
 
@@ -393,6 +412,7 @@ export class PostgresDriver implements IStorageDriver {
     const pool = this._pool;
     this._pool = undefined;
     this.readyPromise = undefined;
+    this.tables.clear();
     if (pool) await pool.end();
   }
 }

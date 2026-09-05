@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
-import type { ICollection } from '@jataqi/storage';
+import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
 import type { ActionExecutionAdapter } from '@jataqi/autonomous-action-runtime';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
@@ -40,6 +40,7 @@ export class PaymentError extends Error {
  */
 export class PaymentsService {
   private api!: KernelApi;
+  private storage!: StorageModule;
   private payments!: ICollection<PaymentIntent>;
   private runtime!: ActionRuntimeService;
   private controlPlane!: CommercialControlPlaneService;
@@ -49,7 +50,8 @@ export class PaymentsService {
 
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
     this.api = kernel;
-    this.payments = await kernel.getModule<StorageModule>('storage').collection<PaymentIntent>(PAYMENTS_COLLECTION);
+    this.storage = kernel.getModule<StorageModule>('storage');
+    this.payments = await this.storage.collection<PaymentIntent>(PAYMENTS_COLLECTION);
     this.runtime = runtime;
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
   }
@@ -148,20 +150,23 @@ export class PaymentsService {
     const payment = await this.requirePayment(actor, paymentId);
     if (payment.status === 'SIMULATED') throw new PaymentError('A simulated payment cannot be verified as real revenue.');
     if (payment.status !== 'SUCCEEDED_UNVERIFIED' || !payment.createActionId) throw new PaymentError('Payment is not awaiting verification.');
-    const action = await this.runtime.verify(actor, payment.createActionId);
-    const result = this.verificationResults.get(payment.createActionId);
-    const verified = action.executionStatus === 'COMPLETED' && result?.providerStatus === 'SUCCEEDED';
-    const updated = await this.update(payment, {
-      status: verified ? 'VERIFIED' : 'FAILED',
-      providerReference: result?.providerReference ?? payment.providerReference,
-      verificationEvidence: copy(action.verificationEvidence),
-      failureReason: verified ? undefined : action.error ?? 'Payment provider verification failed.',
-      verifiedAt: verified ? Date.now() : undefined,
+    const { action, result } = await this.verifiedAction(actor, payment.createActionId);
+    const verified = action.executionStatus === 'COMPLETED' && (result ? result.providerStatus === 'SUCCEEDED' : action.verificationStatus === 'VERIFIED');
+    // T-05: the payment state and its `payment.verified` / `payment.failed`
+    // event (+ unified-outbox record) commit as ONE composed write.
+    return this.storage.atomically(async (scope) => {
+      const updated = await this.update(payment, {
+        status: verified ? 'VERIFIED' : 'FAILED',
+        providerReference: result?.providerReference ?? payment.providerReference,
+        verificationEvidence: copy(action.verificationEvidence),
+        failureReason: verified ? undefined : action.error ?? 'Payment provider verification failed.',
+        verifiedAt: verified ? Date.now() : undefined,
+      }, scope);
+      await this.emit(actor, verified ? PaymentEvents.PaymentVerified : PaymentEvents.PaymentFailed, updated, {
+        paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.amount, providerReference: updated.providerReference,
+      }, scope);
+      return updated;
     });
-    await this.emit(actor, verified ? PaymentEvents.PaymentVerified : PaymentEvents.PaymentFailed, updated, {
-      paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.amount, providerReference: updated.providerReference,
-    });
-    return updated;
   }
 
   /** Refunds require a separate financial decision and independently verified provider state. */
@@ -195,15 +200,16 @@ export class PaymentsService {
     const payment = await this.requirePayment(actor, paymentId);
     if (payment.status === 'SIMULATED') throw new PaymentError('A simulated refund cannot be verified as a real refund.');
     if (payment.status !== 'REFUND_UNVERIFIED' || !payment.refundActionId) throw new PaymentError('Refund is not awaiting verification.');
-    const action = await this.runtime.verify(actor, payment.refundActionId);
-    const result = this.verificationResults.get(payment.refundActionId);
-    const verified = action.executionStatus === 'COMPLETED' && result?.providerStatus === 'REFUNDED';
-    const updated = await this.update(payment, {
-      status: verified ? 'REFUNDED' : 'FAILED', providerReference: result?.providerReference ?? payment.providerReference,
-      verificationEvidence: copy(action.verificationEvidence), failureReason: verified ? undefined : action.error ?? 'Refund verification failed.', refundedAt: verified ? Date.now() : undefined,
+    const { action, result } = await this.verifiedAction(actor, payment.refundActionId);
+    const verified = action.executionStatus === 'COMPLETED' && (result ? result.providerStatus === 'REFUNDED' : action.verificationStatus === 'VERIFIED');
+    return this.storage.atomically(async (scope) => {
+      const updated = await this.update(payment, {
+        status: verified ? 'REFUNDED' : 'FAILED', providerReference: result?.providerReference ?? payment.providerReference,
+        verificationEvidence: copy(action.verificationEvidence), failureReason: verified ? undefined : action.error ?? 'Refund verification failed.', refundedAt: verified ? Date.now() : undefined,
+      }, scope);
+      await this.emit(actor, verified ? PaymentEvents.RefundVerified : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.refundAmount ?? updated.amount, providerReference: updated.providerReference }, scope);
+      return updated;
     });
-    await this.emit(actor, verified ? PaymentEvents.RefundVerified : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.refundAmount ?? updated.amount, providerReference: updated.providerReference });
-    return updated;
   }
 
   async getPayment(actor: CommercialActor, paymentId: string): Promise<PaymentIntent | undefined> {
@@ -247,19 +253,37 @@ export class PaymentsService {
     return { payment, operation };
   }
 
-  private async update(payment: PaymentIntent, patch: Partial<PaymentIntent>): Promise<PaymentIntent> {
+  /**
+   * T-05 (DB atomicity vs external atomicity): the provider verification is
+   * an EXTERNAL effect whose verdict the control plane records durably on the
+   * action (VERIFYING -> COMPLETED/FAILED) in its own write, BEFORE the
+   * composed payment write. If a crash or rollback separates the two, the
+   * action already carries the verdict: resume from that durable state
+   * instead of calling the provider again (the action can never be verified
+   * twice, and the payment must not dead-end on "not awaiting verification").
+   * An action that never reached VERIFYING still fails closed in `verify`.
+   */
+  private async verifiedAction(actor: CommercialActor, actionId: string): Promise<{ action: CommercialAction; result?: PaymentVerificationResult }> {
+    const current = await this.runtime.getAction(actor, actionId);
+    const alreadyJudged = current !== undefined && current.executionStatus !== 'VERIFYING' && (current.verificationStatus === 'VERIFIED' || current.verificationStatus === 'FAILED');
+    const action = alreadyJudged ? current : await this.runtime.verify(actor, actionId);
+    return { action, result: this.verificationResults.get(actionId) };
+  }
+
+  private async update(payment: PaymentIntent, patch: Partial<PaymentIntent>, scope?: StorageWriteScope): Promise<PaymentIntent> {
     const updated: PaymentIntent = { ...payment, ...patch, updatedAt: Date.now() };
-    await this.payments.put(updated);
+    const collection = scope ? await scope.collection<PaymentIntent>(PAYMENTS_COLLECTION) : this.payments;
+    await collection.put(updated);
     return copy(updated);
   }
 
-  private async emit(actor: CommercialActor, eventType: string, payment: PaymentIntent, payload: Record<string, unknown>): Promise<void> {
+  private async emit(actor: CommercialActor, eventType: string, payment: PaymentIntent, payload: Record<string, unknown>, scope?: StorageWriteScope): Promise<void> {
     const now = Date.now();
     const provenance: CommercialProvenance = { source: 'payments', collectedAt: now, correlationId: payment.id };
     await this.controlPlane.publishEvent(actor, {
       eventType, source: 'payments', entityId: payment.id, correlationId: payment.id, payload,
       provenance, privacyClassification: 'RESTRICTED', idempotencyKey: `${eventType}:${payment.id}:${payment.status}:${payment.updatedAt}`,
-    });
+    }, scope ? { scope } : {});
   }
 }
 

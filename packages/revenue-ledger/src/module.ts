@@ -5,7 +5,8 @@ import { RevenueLedgerService } from './revenue-ledger-service.js';
 export class RevenueLedgerModule implements IModule {
   readonly id = 'revenue-ledger';
   readonly tags = ['revenue', 'finance', 'ledger', 'governance'] as const;
-  readonly dependsOn = ['storage', 'commercial-control-plane', 'payments', 'billing'] as const;
+  /** T-05: a durable subscriber requires the canonical delivery worker in the composition (fail-closed at boot). */
+  readonly dependsOn = ['storage', 'commercial-control-plane', 'payments', 'billing', 'commercial-event-stream'] as const;
   private readonly service = new RevenueLedgerService();
 
   async init(kernel: KernelApi): Promise<void> {

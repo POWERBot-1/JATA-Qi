@@ -10,6 +10,7 @@ import {
   type CommercialActor,
   type CommercialEvidence,
 } from '@jataqi/commercial-control-plane';
+import { CommercialEventStreamModule } from '@jataqi/commercial-event-stream';
 import {
   CommercialMemoryError,
   CommercialMemoryModule,
@@ -36,6 +37,7 @@ beforeEach(async () => {
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+  kernel.register(new CommercialEventStreamModule({ now: () => now }));
   kernel.register(new CommercialMemoryModule());
   await kernel.boot();
   control = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
@@ -105,6 +107,7 @@ describe('Commercial memory', () => {
       const first = createTestKernel();
       first.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
       first.register(new CommercialControlPlaneModule({ now: () => now }));
+      first.register(new CommercialEventStreamModule({ now: () => now }));
       first.register(new CommercialMemoryModule());
       await first.boot();
       const firstMemory = first.getModule<CommercialMemoryModule>('commercial-memory').getService();
@@ -116,6 +119,7 @@ describe('Commercial memory', () => {
       const second = createTestKernel();
       second.register(new StorageModule({ driver: 'filesystem', fsRoot: root }));
       second.register(new CommercialControlPlaneModule({ now: () => now }));
+      second.register(new CommercialEventStreamModule({ now: () => now }));
       second.register(new CommercialMemoryModule());
       await second.boot();
       const secondMemory = second.getModule<CommercialMemoryModule>('commercial-memory').getService();

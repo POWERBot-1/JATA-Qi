@@ -1,17 +1,25 @@
 export { CommercialControlPlaneModule } from './commercial-control-plane-module.js';
 export type { CommercialControlPlaneConfig } from './commercial-control-plane-module.js';
 export { CommercialControlPlaneService, CommercialControlPlaneError, commercialEventFromEnvelope } from './commercial-control-plane-service.js';
-export type { CommercialControlPlaneServiceConfig } from './commercial-control-plane-service.js';
+export type { CommercialControlPlaneServiceConfig, PublishEventOptions } from './commercial-control-plane-service.js';
 export {
   UnifiedOutbox,
   UnifiedOutboxError,
   UNIFIED_OUTBOX_COLLECTION,
   UNIFIED_OUTBOX_COUNTER_COLLECTION,
+  UNIFIED_OUTBOX_TERMINAL_STATES,
+  createTenantMutex,
+  isClaimable,
+  verifyOutboxRecordOnRead,
 } from './unified-outbox.js';
 export type {
   UnifiedOutboxRecord,
   UnifiedOutboxCounter,
   UnifiedOutboxState,
+  UnifiedOutboxLease,
+  UnifiedOutboxCollectionSource,
+  ClaimUnifiedOutboxOptions,
+  ClaimedUnifiedOutboxRecord,
   PublishUnifiedOutboxOptions,
   ReplayUnifiedOutboxOptions,
   UnifiedOutboxIntegrity,
@@ -61,6 +69,8 @@ export type {
   CreateCommercialDecisionInput,
   CreateExperimentInput,
   DecisionAlternative,
+  DurableEventHandler,
+  AcceptedEventVersion,
   EvidenceStatus,
   ExperimentBudget,
   ExperimentFinalState,

@@ -44,17 +44,20 @@ where `EventRecorded = 'commercial.event.recorded'`
 `provenance`, and `schemaVersion` inside itself, so a receiver holding only
 the payload can classify it.
 
-Commercial subscribers therefore treat the bus payload as a `CommercialEvent`
-(e.g. `packages/billing/src/billing-service.ts`, lines 56–57;
-`packages/revenue-ledger/src/revenue-ledger-service.ts`, lines 46–47;
-`packages/commercial-memory/src/commercial-memory-service.ts`, line 58).
-Separately, `@jataqi/commercial-event-stream` provides an explicit durable
-delivery path over the control-plane outbox with registered
-`CommercialEventContract` / `CommercialEventHandler` objects, schema
-validation, bounded retry, replay, and dead-letter records
-(`packages/commercial-event-stream/src/types.ts` and
-`commercial-event-stream-service.ts`); that path does not rely on bus
-wildcards.
+Volatile commercial subscribers (commercial-observability) treat the bus
+payload as a `CommercialEvent`. **T-05**: the durable-domain subscribers —
+billing, revenue-ledger, commercial-memory — no longer subscribe to the bus at
+all. They register durable handlers with the control plane
+(`registerDurableHandler`, `packages/billing/src/billing-service.ts`,
+`packages/revenue-ledger/src/revenue-ledger-service.ts`,
+`packages/commercial-memory/src/commercial-memory-service.ts`) and receive
+events only through the canonical unified-outbox delivery worker in
+`@jataqi/commercial-event-stream` (claim/lease → durable per-handler inbox →
+handler effect → fenced ack; bounded retry, dead-letter, quarantine). The bus
+`commercial.event.recorded` envelope is still emitted after commit and serves
+the worker purely as a post-commit wake-up (the pass re-reads the durable
+record; the envelope payload confers no authority). See
+`docs/T05_DURABLE_EVENT_DELIVERY.md`.
 
 ### Core/knowledge plane — plain payloads
 
@@ -101,10 +104,11 @@ guidance above constrains future consumers.
 | Consumer package | Topic(s) subscribed | Source |
 |---|---|---|
 | `@jataqi/knowledge-graph` | `knowledge.document.ingested` | `packages/knowledge-graph/src/graph-module.ts:73` |
-| `@jataqi/billing` | `payment.verified`, `payment.refund.verified` | `packages/billing/src/billing-service.ts:56–57` |
-| `@jataqi/revenue-ledger` | `billing.invoice.paid`, `billing.invoice.refunded` | `packages/revenue-ledger/src/revenue-ledger-service.ts:46–47` |
-| `@jataqi/commercial-memory` | 19 nominated commercial topics (`observedCommercialEvents()`) | `packages/commercial-memory/src/commercial-memory-service.ts:58,233–241` |
-| `@jataqi/commercial-observability` | `commercial.event.recorded` | `packages/commercial-observability/src/commercial-observability-service.ts:103` |
+| `@jataqi/billing` (durable handler `billing.verified-payments`, T-05) | `payment.verified`, `payment.refund.verified` | `packages/billing/src/billing-service.ts` (`registerDurableHandler`) |
+| `@jataqi/revenue-ledger` (durable handler `revenue-ledger.invoice-settlement`, T-05) | `billing.invoice.paid`, `billing.invoice.refunded` | `packages/revenue-ledger/src/revenue-ledger-service.ts` (`registerDurableHandler`) |
+| `@jataqi/commercial-memory` (durable handler `commercial-memory.raw-event-capture`, T-05) | 19 nominated commercial topics (`observedCommercialEvents()`) | `packages/commercial-memory/src/commercial-memory-service.ts` (`registerDurableHandler`) |
+| `@jataqi/commercial-observability` | `commercial.event.recorded` | `packages/commercial-observability/src/commercial-observability-service.ts:107` |
+| `@jataqi/commercial-event-stream` (post-commit wake-up only, T-05) | `commercial.event.recorded` | `packages/commercial-event-stream/src/commercial-event-stream-service.ts` (`start()`) |
 | `@jataqi/core-kernel` (internal) | one-shot lifecycle waits (`bus.once`) | `packages/core-kernel/src/kernel.ts:195` |
 
 Every other declared event has no in-repo subscriber; that is intentional
@@ -165,6 +169,10 @@ unified envelope; no topic was renamed and no subscription was deleted:
   capture (full `CommercialEvent` view via `commercialEventFromEnvelope` from
   `@jataqi/commercial-control-plane`), knowledge-graph document ingest (plain
   payload via `payloadOf` from `@jataqi/core-kernel`).
+- **Durable cutover (T-05)**: billing, revenue-ledger and commercial-memory
+  moved from volatile `onEnveloped` subscriptions to durable handlers over the
+  canonical unified outbox; commercial-observability and knowledge-graph
+  intentionally remain in-process (telemetry / derived index, rebuildable).
 - **Nomination is machine-readable (F-01e/C-4)**: `F01_NOMINATED_SUBSCRIPTIONS`,
   `isNominatedSubscription`, and `auditSubscriptionCoverage` in
   `@jataqi/core-kernel`, enforced by

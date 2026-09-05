@@ -411,6 +411,15 @@ export function emitPlainEnveloped<T>(
  * `@jataqi/commercial-memory`, which observes the enumerated commercial
  * namespace). `kernel.*` covers the kernel-internal one-shot lifecycle waits.
  * There are NO nominated wildcard (`onAny`) consumers.
+ *
+ * T-05: nomination is channel-independent. `@jataqi/billing`,
+ * `@jataqi/revenue-ledger` and `@jataqi/commercial-memory` consume their
+ * nominated topics through the durable unified-outbox inbox (registered
+ * durable handlers delivered by `@jataqi/commercial-event-stream`), not
+ * through a volatile bus subscription. The only bus subscription the delivery
+ * worker itself holds is the post-commit wake-up on
+ * `commercial.event.recorded`, which carries no payload authority: the pass
+ * re-reads and re-verifies the durable record before any handler runs.
  */
 export interface NominatedSubscription {
   /** Workspace package holding the subscription, e.g. `@jataqi/billing`. */
@@ -430,6 +439,7 @@ export const F01_NOMINATED_SUBSCRIPTIONS: readonly NominatedSubscription[] = Obj
   { package: '@jataqi/commercial-memory', topic: 'billing.invoice.paid' },
   { package: '@jataqi/commercial-memory', topic: 'billing.invoice.refunded' },
   { package: '@jataqi/commercial-observability', topic: 'commercial.event.recorded' },
+  { package: '@jataqi/commercial-event-stream', topic: 'commercial.event.recorded' },
   { package: '@jataqi/knowledge-graph', topic: 'knowledge.document.ingested' },
   { package: '@jataqi/core-kernel', topic: 'kernel.*' },
 ]);
