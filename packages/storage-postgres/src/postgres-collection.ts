@@ -165,11 +165,17 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
   ): Promise<CasWriteResult<T>> {
     const t = escapeId(this.table);
     if (this.txClient) {
-      return this.casOn(this.txClient, t, id, guard, makeNext);
+      // This collection is bound to an already-open caller-owned transaction.
+      // CAS must participate in that transaction without changing its
+      // lifecycle; the outer IStorageTransaction retains commit/rollback
+      // ownership.
+      return this.casOn(this.txClient, t, id, guard, makeNext, false);
     }
     const client = await this.pool.connect();
     try {
-      return await this.casOn(client, t, id, guard, makeNext);
+      // Standalone CAS owns this connection's transaction and preserves the
+      // existing one-operation atomic behavior.
+      return await this.casOn(client, t, id, guard, makeNext, true);
     } finally {
       client.release();
     }
@@ -181,13 +187,14 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
     id: string,
     guard: (current: T | undefined) => boolean,
     makeNext: (current: T) => T,
+    ownsTransaction: boolean,
   ): Promise<CasWriteResult<T>> {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     try {
       const res = await client.query(`SELECT body FROM ${t} WHERE id = $1 FOR UPDATE`, [id]);
       const current = this.parse(res.rows[0]);
       if (!guard(current)) {
-        await client.query('COMMIT');
+        if (ownsTransaction) await client.query('COMMIT');
         return { ok: false, doc: current };
       }
       const next = makeNext(current as T);
@@ -197,13 +204,17 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
          ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, updated_at = now()`,
         [id, JSON.stringify(next)],
       );
-      await client.query('COMMIT');
+      if (ownsTransaction) await client.query('COMMIT');
       return { ok: true, doc: next };
     } catch (error) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* preserve original error */
+      // An outer transaction belongs to the caller. Do not roll it back here;
+      // the caller must decide whether to commit or roll back the full scope.
+      if (ownsTransaction) {
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          /* preserve original error */
+        }
       }
       throw error;
     }
