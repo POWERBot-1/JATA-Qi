@@ -19,6 +19,7 @@ import {
   type LoopTask,
 } from '@jataqi/unified-loop';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import type { AuthenticatedPrincipal } from '@jataqi/authentication';
 import {
   InvalidWorkTransitionError,
   LoopHostEvents,
@@ -28,14 +29,14 @@ import {
   type HostedWorkItem,
   type LoopRunner,
 } from '../src/index.js';
-import { buildHarness, gateTask, reasoningTask, sandboxAdapter, type Harness } from './helpers.js';
+import { testPrincipalFor, buildHarness, gateTask, reasoningTask, sandboxAdapter, type Harness } from './helpers.js';
 
 function fakeRunner(
   outcome: LoopOutcome,
   hooks: { onCall?: (actor: CommercialActor, task: LoopTask, opts: { correlationId: string }) => void; failTimes?: number; error?: Error } = {},
 ): LoopRunner & { calls: () => number } {
   let calls = 0;
-  const runner = (async (actor: CommercialActor, task: LoopTask, opts: { correlationId: string; now: () => number; signal: AbortSignal }) => {
+  const runner = (async (actor: CommercialActor, task: LoopTask, opts: { correlationId: string; now: () => number; signal: AbortSignal; principal: AuthenticatedPrincipal }) => {
     calls += 1;
     hooks.onCall?.(actor, task, opts);
     if (hooks.failTimes !== undefined && calls <= hooks.failTimes) throw hooks.error ?? new Error('Fake runner transient failure.');
@@ -124,7 +125,7 @@ describe('O-01 dispatch through the real governed loop (O21, O22)', () => {
     svc.start();
     const events: unknown[] = [];
     h.kernel.bus.on(UnifiedLoopEvents.LoopCompleted, (payload: unknown) => { events.push(payload); });
-    const item = await svc.enqueue(h.actor, { task: reasoningTask() });
+    const item = await svc.enqueue(h.actor,  { task: reasoningTask() }, await testPrincipalFor(h.actor, h.now()));
     const summary = await svc.tick();
     assert.equal(summary.dispatched, 1);
     assert.equal(summary.completed, 1);
@@ -144,7 +145,7 @@ describe('O-01 dispatch through the real governed loop (O21, O22)', () => {
     h.kernel.bus.on(UnifiedLoopEvents.LoopCompleted, () => { completed += 1; });
     h.kernel.bus.on(UnifiedLoopEvents.StageCompleted, () => { stages += 1; });
     h.kernel.bus.on(UnifiedLoopEvents.BoundaryHeld, () => { stages += 1; });
-    await svc.enqueue(h.actor, { task: reasoningTask() });
+    await svc.enqueue(h.actor,  { task: reasoningTask() }, await testPrincipalFor(h.actor, h.now()));
     await svc.tick();
     assert.equal(completed, 1);
     assert.equal(stages, 34);
@@ -158,7 +159,7 @@ describe('O-01 crash, resume, and continuity (O6, O8, O9, O10)', () => {
     const runner = fakeRunner('COMPLETED_DRY_RUN', { failTimes: 1 });
     svc.setRunner(runner);
     svc.start();
-    const item = await svc.enqueue(h.actor, { task: reasoningTask(), correlationId: 'corr-resume-1', baseDelayMs: 0, maxDelayMs: 0 });
+    const item = await svc.enqueue(h.actor,  { task: reasoningTask(), correlationId: 'corr-resume-1', baseDelayMs: 0, maxDelayMs: 0 }, await testPrincipalFor(h.actor, h.now()));
     await svc.tick(); // attempt 1 throws mid-dispatch (crash) → requeued
     const failed = await svc.get(h.actor, item.id);
     assert.equal(failed?.status, 'QUEUED');
@@ -214,7 +215,7 @@ describe('O-01 crash, resume, and continuity (O6, O8, O9, O10)', () => {
     const svc = h.host();
     svc.setRunner(fakeRunner('COMPLETED_DRY_RUN', { failTimes: 99 }));
     svc.start();
-    await svc.enqueue(h.actor, { task: reasoningTask(), maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 });
+    await svc.enqueue(h.actor,  { task: reasoningTask(), maxAttempts: 1, baseDelayMs: 0, maxDelayMs: 0 }, await testPrincipalFor(h.actor, h.now()));
     const summary = await svc.tick();
     assert.equal(summary.deadLettered, 1);
     assert.equal(summary.completed, 0);
@@ -230,7 +231,7 @@ describe('O-01 corrupt checkpoints fail closed (O7)', () => {
     const runner = fakeRunner('COMPLETED_DRY_RUN', { failTimes: 1 });
     svc.setRunner(runner);
     svc.start();
-    const item = await svc.enqueue(h.actor, { task: reasoningTask(), baseDelayMs: 0, maxDelayMs: 0 });
+    const item = await svc.enqueue(h.actor,  { task: reasoningTask(), baseDelayMs: 0, maxDelayMs: 0 }, await testPrincipalFor(h.actor, h.now()));
     await svc.tick(); // failed attempt leaves a valid DISPATCHED checkpoint behind
     const storage = h.kernel.getModule<StorageModule>('storage');
     const items = await storage.collection<HostedWorkItem>(WORK_COLLECTION);
@@ -256,7 +257,7 @@ describe('O-01 gates re-evaluated on resume; no stale approval (O11, O12, O18)',
     const h = await buildHarness();
     const svc = h.host();
     svc.start();
-    const item = await svc.enqueue(h.actor, { task: gateTask() });
+    const item = await svc.enqueue(h.actor,  { task: gateTask() }, await testPrincipalFor(h.actor, h.now()));
     const first = await svc.tick();
     assert.equal(first.held, 1);
     const held = await svc.get(h.actor, item.id);
@@ -289,7 +290,7 @@ describe('O-01 DENY and kill-switch win (O15)', () => {
     await control.setKillSwitch(h.admin, { scopeType: 'TENANT', scope: { tenantId: 'acme' }, active: true, reason: 'O-01 kill-switch-wins test.' });
     const svc = h.host();
     svc.start();
-    const item = await svc.enqueue(h.actor, { task: actionTask({ executeForReal: true }) });
+    const item = await svc.enqueue(h.actor,  { task: actionTask({ executeForReal: true }) }, await testPrincipalFor(h.actor, h.now()));
     const summary = await svc.tick();
     assert.equal(summary.denied, 1);
     assert.equal(summary.completed, 0);
@@ -309,7 +310,7 @@ describe('O-01 scheduler triggers without authorizing (O16)', () => {
     const seen: string[] = [];
     svc.setRunner(fakeRunner('COMPLETED_DRY_RUN', { onCall: (_a, _t, opts) => { seen.push(opts.correlationId); } }));
     svc.start();
-    await svc.enqueue(h.actor, { task: reasoningTask(), correlationId: 'future-1', availableAt: h.now() + 60_000 });
+    await svc.enqueue(h.actor,  { task: reasoningTask(), correlationId: 'future-1', availableAt: h.now() + 60_000 }, await testPrincipalFor(h.actor, h.now()));
     const early = await svc.tick();
     assert.equal(early.dispatched, 0);
     assert.equal(seen.length, 0);
@@ -352,7 +353,7 @@ describe('O-01 governance negatives — host creates nothing authoritative (O17,
     const before = await control.replayEvents(h.admin, {});
     try {
       svc.start();
-      await svc.enqueue(h.actor, { task: reasoningTask() });
+      await svc.enqueue(h.actor,  { task: reasoningTask() }, await testPrincipalFor(h.actor, h.now()));
       await svc.tick();
       for (const spy of spies) assert.equal(spy.count(), 0);
       const after = await control.replayEvents(h.admin, {});
@@ -370,7 +371,7 @@ describe('O-01 governance negatives — host creates nothing authoritative (O17,
     const spy = spyOn(runtime, 'execute');
     try {
       svc.start();
-      await svc.enqueue(h.actor, { task: reasoningTask() });
+      await svc.enqueue(h.actor,  { task: reasoningTask() }, await testPrincipalFor(h.actor, h.now()));
       await svc.tick();
       assert.equal(spy.count(), 0);
       assert.deepEqual(runtime.listAdapters(), []);
@@ -387,7 +388,7 @@ describe('O-01 retries, DLQ, and idempotent replay at service level (O13, O14, O
     svc.setRunner(fakeRunner('COMPLETED_DRY_RUN', { failTimes: 99 }));
     svc.start();
     const seen = collectHostEvents(h);
-    const item = await svc.enqueue(h.actor, { task: reasoningTask(), maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 });
+    const item = await svc.enqueue(h.actor,  { task: reasoningTask(), maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 }, await testPrincipalFor(h.actor, h.now()));
     const first = await svc.tick();
     assert.equal(first.retried, 1);
     const second = await svc.tick();
@@ -406,8 +407,8 @@ describe('O-01 retries, DLQ, and idempotent replay at service level (O13, O14, O
     const svc = h.host();
     svc.setRunner(fakeRunner('DENIED'));
     svc.start();
-    const first = await svc.enqueue(h.actor, { task: reasoningTask(), idempotencyKey: 'dup-1' });
-    const second = await svc.enqueue(h.actor, { task: reasoningTask(), idempotencyKey: 'dup-1' });
+    const first = await svc.enqueue(h.actor,  { task: reasoningTask(), idempotencyKey: 'dup-1' }, await testPrincipalFor(h.actor, h.now()));
+    const second = await svc.enqueue(h.actor,  { task: reasoningTask(), idempotencyKey: 'dup-1' }, await testPrincipalFor(h.actor, h.now()));
     assert.equal(first.id, second.id);
     await svc.tick();
     const denied = await svc.get(h.actor, first.id);
@@ -423,8 +424,8 @@ describe('O-01 multi-tenant isolation across the full lifecycle (O24)', () => {
     const dispatchedTenants: string[] = [];
     svc.setRunner(fakeRunner('COMPLETED_DRY_RUN', { onCall: (actor) => { dispatchedTenants.push(actor.tenantId); } }));
     svc.start();
-    const acme = await svc.enqueue(h.actor, { task: reasoningTask(), correlationId: 'corr-acme' });
-    const other = await svc.enqueue(h.other, { task: reasoningTask(), correlationId: 'corr-other' });
+    const acme = await svc.enqueue(h.actor,  { task: reasoningTask(), correlationId: 'corr-acme' }, await testPrincipalFor(h.actor, h.now()));
+    const other = await svc.enqueue(h.other,  { task: reasoningTask(), correlationId: 'corr-other' }, await testPrincipalFor(h.other, h.now()));
     // Cross-tenant resume is refused.
     await assert.rejects(() => svc.resume(h.other, acme.id), TenantIsolationError);
     // Cross-tenant checkpoint reads are refused.
@@ -447,7 +448,7 @@ describe('O-01 observability without governance bypass (O27)', () => {
     svc.setRunner(fakeRunner('COMPLETED_DRY_RUN'));
     const seen = collectHostEvents(h);
     svc.start();
-    const item = await svc.enqueue(h.actor, { task: reasoningTask(), correlationId: 'corr-obs' });
+    const item = await svc.enqueue(h.actor,  { task: reasoningTask(), correlationId: 'corr-obs' }, await testPrincipalFor(h.actor, h.now()));
     await svc.tick();
     const names = seen.map((entry) => entry.event);
     for (const required of [LoopHostEvents.WorkQueued, LoopHostEvents.LeaseAcquired, LoopHostEvents.Dispatched, LoopHostEvents.CheckpointWritten, LoopHostEvents.Completed]) {

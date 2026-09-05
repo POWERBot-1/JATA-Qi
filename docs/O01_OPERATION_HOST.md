@@ -66,7 +66,9 @@ import { createJataQi } from '@jataqi/cli'; // composition root
 const jataqi = await createJataQi({ loopHost: { enabled: true } }); // opt-in; default OFF
 const host = jataqi.kernel.getModule('loop-host').getService();
 host.start(); // explicit; IDLE → RUNNING
-await host.enqueue(actor, { task }); // tenant-scoped, idempotent
+// T-02: enqueue is authenticated — the actor must derive from a T-01
+// AuthenticatedPrincipal, whose snapshot is embedded on the record.
+await host.enqueue(actor, { task }, principal); // tenant-scoped, idempotent
 await host.tick(); // one explicit scheduler pass (leased dispatch)
 await host.recover(); // explicit crash-recovery pass (reclaim expired, quarantine corrupt)
 await host.resume(actor, heldId); // explicit operator resume of HELD/SLEEPING
@@ -92,6 +94,33 @@ configured AND the host was explicitly started. Boot never starts the host.
 Stale lease holders cannot commit (token mismatch throws `StaleLeaseError`
 with zero state change). Idempotent replays (same idempotency key, same
 terminal loop run) return the existing record.
+
+## T-02 — Authenticated durable authority carry-through
+
+Durable work must never execute on a caller-self-asserted actor. Since
+T-02, `enqueue` requires a T-01 `AuthenticatedPrincipal` alongside the
+actor (same id/tenant, narrowed-or-equal roles); the host embeds an
+immutable principal snapshot (`version`, `principalId`, `tenantId`,
+`roles`, `authenticationMethod`, `verifiedAt`, `authenticationEventId`;
+never tokens/secrets) on the record. Every dispatch re-verifies the
+persisted snapshot — presence, shape, version, freshness against the
+host max-age policy (default 24h, cap 30d), test-method admission,
+snapshot/item/actor tenant match, identity match, and role
+non-expansion via T-01's own `projectToActor` — and executes with the
+verified narrowed actor plus the reconstructed principal, which the
+default runner forwards into the loop's own T-01 match check.
+
+Authority failures HOLD the item with a deterministic `PRINCIPAL_*`
+reason (`PRINCIPAL_ABSENT` for pre-T-02 rows, `PRINCIPAL_STALE`,
+`PRINCIPAL_SKEW`, `PRINCIPAL_MALFORMED`, `PRINCIPAL_VERSION`,
+`PRINCIPAL_MISMATCH`, `PRINCIPAL_ROLE_ESCALATION`,
+`PRINCIPAL_TEST_METHOD`): no checkpoint, no attempt consumed, no
+dispatch, never auto-retried, and operator `resume` refuses them — the
+recovery path is a fresh authenticated enqueue. Loop-reported gate
+holds (no `heldReason`) still resume through the normal operator path.
+Lifecycle audit events carry principal provenance (`principalMethod`,
+`principalEventId`, `principalVerifiedAt`, `principalId`); Held events
+from the authority gate also carry the machine-readable `heldReason`.
 
 ## Validation
 

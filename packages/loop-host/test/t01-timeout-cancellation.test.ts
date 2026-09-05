@@ -23,7 +23,7 @@ import {
   StaleLeaseError,
   type LoopRunner,
 } from '../src/index.js';
-import { buildHarness, reasoningTask, type Harness } from './helpers.js';
+import { testPrincipalFor, buildHarness, reasoningTask, type Harness } from './helpers.js';
 
 function fakeLoopResult(outcome: LoopRunResult['outcome'], tenantId: string, correlationId: string): LoopRunResult {
   const at = Date.now();
@@ -59,7 +59,7 @@ describe('T-01 timeout/cancellation correctness (loop-host)', () => {
     };
     host.setRunner(runner);
 
-    const item = await host.enqueue(actor, { task: reasoningTask() });
+    const item = await host.enqueue(actor,  { task: reasoningTask() }, await testPrincipalFor(actor, Date.now()));
     host.start();
     // Kick off the dispatch in the background; do not await tick yet.
     const tickPromise = host.tick();
@@ -105,7 +105,7 @@ describe('T-01 timeout/cancellation correctness (loop-host)', () => {
     };
     host.setRunner(runner);
 
-    const item = await host.enqueue(actor, { task: reasoningTask() });
+    const item = await host.enqueue(actor,  { task: reasoningTask() }, await testPrincipalFor(actor, Date.now()));
     host.start();
     // Kick off the dispatch in the background.
     const tickPromise = host.tick();
@@ -177,7 +177,7 @@ describe('T-01 timeout/cancellation correctness (loop-host)', () => {
     };
     host.setRunner(runner);
 
-    const item = await host.enqueue(actor, { task: reasoningTask() });
+    const item = await host.enqueue(actor,  { task: reasoningTask() }, await testPrincipalFor(actor, Date.now()));
     host.start();
     const tick1 = await host.tick();
     assert.equal(tick1.examined, 1);

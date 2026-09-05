@@ -24,7 +24,7 @@ import {
   WorkQueue,
   type LoopRunner,
 } from '../src/index.js';
-import { buildHarness, reasoningTask } from './helpers.js';
+import { testPrincipalFor, buildHarness, reasoningTask } from './helpers.js';
 import { bootStorageKernel, dropDb, freshDb, makeDriver, makeStorage, pgAvailable, stopPg } from './pg-host-harness.js';
 
 after(async () => {
@@ -101,7 +101,7 @@ describe('R-01 unattended operation over real PostgreSQL', async () => {
 
     // Three durable items, enqueued before the host ever starts.
     for (let i = 0; i < 3; i += 1) {
-      await host.enqueue(actor, { task: reasoningTask(), idempotencyKey: `r01-pg-multi-${i}` });
+      await host.enqueue(actor,  { task: reasoningTask(), idempotencyKey: `r01-pg-multi-${i}` }, await testPrincipalFor(actor, Date.now()));
     }
 
     const runtime = new HostRuntime(host, {
@@ -146,7 +146,7 @@ describe('R-01 unattended operation over real PostgreSQL', async () => {
       calls += 1;
       return calls === 1 ? loopResult('SLEEP_PENDING') : loopResult('COMPLETED_DRY_RUN');
     });
-    await host.enqueue(actor, { task: reasoningTask(), idempotencyKey: 'r01-pg-sleepwake' }, clock);
+    await host.enqueue(actor,  { task: reasoningTask(), idempotencyKey: 'r01-pg-sleepwake' }, await testPrincipalFor(actor, clock),  clock);
 
     const runtime = new HostRuntime(host, {
       requireDurableStorage: true,
@@ -182,7 +182,7 @@ describe('R-01 unattended operation over real PostgreSQL', async () => {
 
     // Simulate a crashed host: an item left LEASED with an expired lease.
     const base = Date.now();
-    const item = await queue.enqueue(actor, { task: reasoningTask(), idempotencyKey: 'r01-pg-crash' }, base);
+    const item = await queue.enqueue(actor,  { task: reasoningTask(), idempotencyKey: 'r01-pg-crash' }, await testPrincipalFor(actor, base),  base);
     await queue.acquireLease(item.id, 'dead-host', 1_000, base);
 
     const later = base + 60_000;
@@ -236,7 +236,7 @@ describe('R-01 unattended operation over real PostgreSQL', async () => {
       return loopResult('COMPLETED_DRY_RUN');
     });
     for (let i = 0; i < 2; i += 1) {
-      await host.enqueue(actor, { task: reasoningTask(), idempotencyKey: `r01-pg-drain-${i}` });
+      await host.enqueue(actor,  { task: reasoningTask(), idempotencyKey: `r01-pg-drain-${i}` }, await testPrincipalFor(actor, Date.now()));
     }
 
     const stopped: string[] = [];

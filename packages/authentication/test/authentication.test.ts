@@ -18,6 +18,8 @@ import {
   AuthenticatorRegistry,
   DeterministicTestAuthenticator,
   PrincipalValidationError,
+  RECOGNIZED_AUTHENTICATION_METHODS,
+  isAuthenticationMethod,
   StaticTokenAuthenticator,
   UnauthenticatedRequestError,
   UnsupportedAuthenticationMethodError,
@@ -166,5 +168,23 @@ describe('T-01 server-side principal boundary', () => {
     assert.equal(p.tenantId, 'globex');
     // No code path in the registry can rewrite a verified principal's
     // tenantId; structural isolation is preserved.
+  });
+});
+
+describe('T-02 recognized-method guard (durable-boundary support)', () => {
+  it('recognizes exactly the AuthenticationMethod union (single source of truth)', () => {
+    assert.deepEqual(
+      [...RECOGNIZED_AUTHENTICATION_METHODS],
+      ['DETERMINISTIC_TEST', 'STATIC_TOKEN', 'OIDC', 'MTLS', 'KERNEL_INTERNAL'],
+    );
+    for (const method of RECOGNIZED_AUTHENTICATION_METHODS) {
+      assert.ok(isAuthenticationMethod(method));
+    }
+  });
+
+  it('rejects forged, blank, and non-string methods (fail-closed)', () => {
+    for (const bad of ['FORGED', 'forged', '', '  ', 'NONE', 'Basic', 0, null, undefined, {}, []]) {
+      assert.equal(isAuthenticationMethod(bad), false, `must not recognize ${JSON.stringify(bad)}`);
+    }
   });
 });

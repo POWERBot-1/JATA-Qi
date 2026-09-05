@@ -2,7 +2,9 @@ export {
   PrincipalValidationError,
   UnauthenticatedRequestError,
   UnsupportedAuthenticationMethodError,
+  isAuthenticationMethod,
   projectToActor,
+  RECOGNIZED_AUTHENTICATION_METHODS,
 } from './types.js';
 export type {
   AuthenticatedPrincipal,

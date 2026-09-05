@@ -31,6 +31,7 @@ import {
   type LoopCheckpoint,
 } from '../src/index.js';
 import { pgAvailable, freshDb, makeDriver, makeStorage, dropDb, stopPg, bootStorageKernel } from './pg-host-harness.js';
+import { testPrincipalFor } from './helpers.js';
 
 const actor = { id: 'test-actor', tenantId: 'acme', roles: ['agent', 'operator'] as ('agent' | 'operator')[] };
 
@@ -64,7 +65,7 @@ describe('T-01-J queue/checkpoint transactional consistency', async () => {
     await queue.init(kernel);
     await journal.init(kernel);
 
-    const workItem = await queue.enqueue(actor, { task: { objective: 'demo' } });
+    const workItem = await queue.enqueue(actor,  { task: { objective: 'demo' } }, await testPrincipalFor(actor, Date.now()));
     const lease = await queue.acquireLease(workItem.id, 'worker-a', 10_000, Date.now());
     assert.ok(lease.token, 'lease token issued');
 
@@ -116,7 +117,7 @@ describe('T-01-J queue/checkpoint transactional consistency', async () => {
     await queue.init(await bootStorageKernel(makeStorage(driver)));
     await journal.init(await bootStorageKernel(makeStorage(driver)));
 
-    const workItem = await queue.enqueue(actor, { task: { objective: 'rollback' } });
+    const workItem = await queue.enqueue(actor,  { task: { objective: 'rollback' } }, await testPrincipalFor(actor, Date.now()));
     const lease = await queue.acquireLease(workItem.id, 'worker-b', 10_000, Date.now());
     assert.ok(lease.token, 'lease token issued');
 
@@ -174,7 +175,7 @@ describe('T-01-J queue/checkpoint transactional consistency', async () => {
     const queue = new WorkQueue();
     await queue.init(await bootStorageKernel(makeStorage(driver)));
 
-    const workItem = await queue.enqueue(actor, { task: { objective: 'forged' } });
+    const workItem = await queue.enqueue(actor,  { task: { objective: 'forged' } }, await testPrincipalFor(actor, Date.now()));
     const lease = await queue.acquireLease(workItem.id, 'worker-a', 10_000, Date.now());
     assert.ok(lease.token);
 
@@ -201,7 +202,7 @@ describe('T-01-J queue/checkpoint transactional consistency', async () => {
     const queue = new WorkQueue();
     await queue.init(await bootStorageKernel(makeStorage(driver)));
 
-    const workItem = await queue.enqueue(actor, { task: { objective: 'invalid' } });
+    const workItem = await queue.enqueue(actor,  { task: { objective: 'invalid' } }, await testPrincipalFor(actor, Date.now()));
     const lease = await queue.acquireLease(workItem.id, 'worker-c', 10_000, Date.now());
     assert.ok(lease.token);
     // settleTerminal requires status=DISPATCHED; with status=LEASED

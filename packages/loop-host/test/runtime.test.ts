@@ -18,7 +18,7 @@ import {
   isDurableDriver,
   type LoopRunner,
 } from '../src/index.js';
-import { buildHarness, reasoningTask } from './helpers.js';
+import { testPrincipalFor, buildHarness, reasoningTask } from './helpers.js';
 
 function loopResult(outcome: LoopRunResult['outcome'], loopId = `loop:${Math.random().toString(36).slice(2)}`): LoopRunResult {
   return {
@@ -129,7 +129,7 @@ describe('R-01 host runtime — boot recovery and unattended cycles', () => {
       return call === 1 ? loopResult('SLEEP_PENDING') : loopResult('COMPLETED_DRY_RUN');
     };
     host.setRunner(runner);
-    await host.enqueue(h.actor, { task: reasoningTask(), idempotencyKey: 'r01-sleep' });
+    await host.enqueue(h.actor,  { task: reasoningTask(), idempotencyKey: 'r01-sleep' }, await testPrincipalFor(h.actor, h.now()));
 
     const runtime = new HostRuntime(host, {
       requireDurableStorage: false,
@@ -176,7 +176,7 @@ describe('R-01 host runtime — graceful shutdown and fail-closed behaviour', ()
     const h = await buildHarness();
     const host = h.host();
     host.setRunner(async () => loopResult('COMPLETED_DRY_RUN'));
-    await host.enqueue(h.actor, { task: reasoningTask(), idempotencyKey: 'r01-drain' });
+    await host.enqueue(h.actor,  { task: reasoningTask(), idempotencyKey: 'r01-drain' }, await testPrincipalFor(h.actor, h.now()));
 
     const runtime = new HostRuntime(host, {
       requireDurableStorage: false,
@@ -228,13 +228,16 @@ describe('R-01 host runtime — graceful shutdown and fail-closed behaviour', ()
       calls += 1;
       return loopResult('HELD_AT_GATE');
     });
-    await host.enqueue(h.actor, { task: reasoningTask(), idempotencyKey: 'r01-held' });
+    await host.enqueue(h.actor,  { task: reasoningTask(), idempotencyKey: 'r01-held' }, await testPrincipalFor(h.actor, h.now()));
 
     const runtime = new HostRuntime(host, {
       requireDurableStorage: false,
       installSignalHandlers: false,
       maxCycles: 6,
       sleep: fastSleep,
+      // T-02: the supervisor clock must match the host clock, otherwise the
+      // carried principal reads as stale at dispatch (same pattern as above).
+      now: () => h.now(),
     });
     await runtime.run(h.kernel as never);
 
@@ -251,13 +254,16 @@ describe('R-01 host runtime — graceful shutdown and fail-closed behaviour', ()
       calls += 1;
       return loopResult('DENIED');
     });
-    await host.enqueue(h.actor, { task: reasoningTask(), idempotencyKey: 'r01-denied' });
+    await host.enqueue(h.actor,  { task: reasoningTask(), idempotencyKey: 'r01-denied' }, await testPrincipalFor(h.actor, h.now()));
 
     const runtime = new HostRuntime(host, {
       requireDurableStorage: false,
       installSignalHandlers: false,
       maxCycles: 6,
       sleep: fastSleep,
+      // T-02: the supervisor clock must match the host clock, otherwise the
+      // carried principal reads as stale at dispatch (same pattern as above).
+      now: () => h.now(),
     });
     await runtime.run(h.kernel as never);
 

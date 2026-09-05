@@ -14,18 +14,23 @@ import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import type { AuthenticatedPrincipal } from '@jataqi/authentication';
 import {
+  AUTHORITY_HELD_REASONS,
   InvalidWorkTransitionError,
   LeaseConflictError,
   LoopHostError,
+  PrincipalAuthorityError,
   StaleLeaseError,
   TenantIsolationError,
+  type AuthorityHoldReason,
   type DispatchFailureClass,
   type EnqueueWorkInput,
   type HostedWorkItem,
   type HostedWorkStatus,
   type WorkSettlement,
 } from './types.js';
+import { assertActorDerivedFromPrincipal, freezePrincipalSnapshot } from './principal-snapshot.js';
 
 export const WORK_COLLECTION = 'loop-host.work-items';
 
@@ -75,6 +80,20 @@ function deterministicIdFor(tenantId: string, key: string): string {
   return `work:${createHash('sha256').update(`tenant:${tenantId}\0key:${key}`).digest('hex').slice(0, 40)}`;
 }
 
+/**
+ * T-02: authority-held records (pre-dispatch PRINCIPAL_* holds) can never
+ * resume into execution through operator resume — their authority evidence
+ * is absent, stale, or invalid, and resume must not launder that. The
+ * operator path is a fresh authenticated enqueue of the work.
+ */
+function assertResumableHold(item: HostedWorkItem): void {
+  if (item.heldReason !== undefined && AUTHORITY_HELD_REASONS.has(item.heldReason)) {
+    throw new PrincipalAuthorityError(
+      `Work item "${item.id}" is held for authority (${item.heldReason}); operator resume cannot release it — submit a fresh authenticated enqueue instead.`,
+    );
+  }
+}
+
 export class WorkQueue {
   private items!: ICollection<HostedWorkItem>;
 
@@ -114,12 +133,36 @@ export class WorkQueue {
   }
 
   /**
-   * Enqueue work. Idempotent: the same tenant + idempotency key returns the
-   * existing record without creating a duplicate.
+   * T-02 authenticated enqueue. The caller MUST present an authenticated
+   * principal (T-01 boundary); the actor MUST be derivable from it (same
+   * id/tenant, narrowed-or-equal roles). The queue embeds an immutable
+   * principal snapshot on the record — dispatch executes under that
+   * snapshot, never under a caller-supplied actor. Unsigned, malformed,
+   * or mismatched authority fails closed here, before any write.
+   *
+   * Idempotent: the same tenant + idempotency key returns the existing
+   * record unchanged (first-writer-wins: a re-enqueue presents its own
+   * principal for validation but can never override persisted authority).
+   *
+   * The queue enforces STRUCTURAL authority (presence/shape/derivation).
+   * Clock policy (freshness horizon, test-method admission) is enforced
+   * by the service layer, which owns configuration.
    */
-  async enqueue(actor: CommercialActor, input: EnqueueWorkInput, now?: number): Promise<HostedWorkItem> {
+  async enqueue(
+    actor: CommercialActor,
+    input: EnqueueWorkInput,
+    principal: AuthenticatedPrincipal,
+    now?: number,
+  ): Promise<HostedWorkItem> {
     assertActor(actor);
     if (!input.task || !input.task.objective.trim()) throw new LoopHostError('A loop task objective is required.');
+    if (!principal || typeof principal !== 'object') {
+      throw new PrincipalAuthorityError('Authenticated enqueue requires an authenticated principal (fail-closed).');
+    }
+    // Validate (and freeze) before any storage access: unsigned callers
+    // learn nothing, and no orphaned or half-authorized record can form.
+    const snapshot = freezePrincipalSnapshot(principal);
+    assertActorDerivedFromPrincipal(actor, principal);
     const at = now ?? Date.now();
     const callerKey = input.idempotencyKey?.trim();
     const key = callerKey ? callerKey : `work:${randomUUID()}`;
@@ -148,6 +191,7 @@ export class WorkQueue {
       idempotencyKey: key,
       task: copy(input.task),
       actor: { id: actor.id, tenantId: actor.tenantId, roles: [...actor.roles] },
+      principal: copy(snapshot),
       status: 'QUEUED',
       attemptCount: 0,
       maxAttempts: normalizeAttempts(input.maxAttempts),
@@ -454,6 +498,47 @@ export class WorkQueue {
     return copy(failed);
   }
 
+  /**
+   * T-02 authority hold: quarantine a leased record that failed
+   * pre-dispatch authority validation. Requires the live lease token
+   * (ownership boundary); consumes no attempt (no dispatch occurred);
+   * records the deterministic hold reason for operators and audit.
+   * Authority-held records resume ONLY via fresh authenticated enqueue —
+   * operator resume refuses them (see `resumeWork`).
+   */
+  async holdForAuthority(
+    id: string,
+    token: string,
+    reason: AuthorityHoldReason,
+    detail: string,
+    now: number,
+  ): Promise<HostedWorkItem> {
+    if (!token.trim()) throw new LoopHostError('A lease token is required to hold.');
+    if (!detail.trim()) throw new LoopHostError('An authority-hold detail is required.');
+    const holder = this.leaseHolderGuard(id, token);
+    const held = await this.transition(
+      id,
+      (cur) => {
+        holder(cur);
+        if (cur!.status !== 'LEASED') {
+          throw new InvalidWorkTransitionError(`Work item "${id}" cannot be authority-held from status ${cur!.status}.`);
+        }
+        return true;
+      },
+      (cur) => ({
+        ...cur,
+        status: 'HELD',
+        heldReason: reason,
+        lastError: detail,
+        leaseOwner: undefined,
+        leaseToken: undefined,
+        leaseExpiry: undefined,
+        updatedAt: now,
+      }),
+    );
+    return copy(held);
+  }
+
   /** Park the record until `availableAt` (SLEEP_PENDING outcome path). */
   async parkSleeping(id: string, token: string, availableAt: number, loopId: string, now: number): Promise<HostedWorkItem> {
     const holder = this.leaseHolderGuard(id, token);
@@ -491,11 +576,13 @@ export class WorkQueue {
     const item = await this.items.get(id);
     if (!item) throw new LoopHostError(`Work item "${id}" was not found.`);
     assertCanAccess(actor, item.tenantId);
+    assertResumableHold(item);
     const resumed = await this.transition(
       id,
       (cur) => {
         if (!cur) throw new LoopHostError(`Work item "${id}" was not found.`);
         assertCanAccess(actor, cur.tenantId);
+        assertResumableHold(cur);
         if (cur.status !== 'HELD' && cur.status !== 'SLEEPING') {
           throw new InvalidWorkTransitionError(`Work item "${id}" cannot resume from status ${cur.status}.`);
         }

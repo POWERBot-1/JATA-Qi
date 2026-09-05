@@ -3,6 +3,13 @@
 // no external effects. Mirrors the W22/W23 harness conventions.
 
 import { createTestKernel } from '@jataqi/core-kernel/testing';
+import {
+  DeterministicTestAuthenticator,
+  newRequestId,
+  testCredential,
+  type AuthenticatedPrincipal,
+  type TestPrincipalRecord,
+} from '@jataqi/authentication';
 import { StorageModule } from '@jataqi/storage';
 import { VectorSearchModule } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
@@ -292,4 +299,25 @@ export function gateTask() {
       executeForReal: false,
     },
   };
+}
+
+/**
+ * T-02: mint a verified test principal through the REAL test-authenticator
+ * boundary (exact-match lookup, fail-closed, no production use). `now` must
+ * be the same clock the host/queue under test runs on (e.g. `h.now()` for
+ * harness-backed services, `Date.now()`/`nowMs()` for standalone ones) so
+ * the snapshot's verifiedAt is fresh at both the enqueue and dispatch
+ * freshness checks.
+ */
+export async function mintTestPrincipal(
+  record: TestPrincipalRecord,
+  now: number,
+): Promise<AuthenticatedPrincipal> {
+  const auth = new DeterministicTestAuthenticator([record]);
+  return auth.verify(testCredential(record), now, newRequestId());
+}
+
+/** T-02: mint a principal matching a harness-style actor (same id/tenant/roles). */
+export function testPrincipalFor(actor: CommercialActor, now: number): Promise<AuthenticatedPrincipal> {
+  return mintTestPrincipal({ id: actor.id, tenantId: actor.tenantId, roles: actor.roles }, now);
 }

@@ -41,6 +41,29 @@ export type AuthenticationMethod =
   | 'KERNEL_INTERNAL';  // kernel-internal system actor; never a user request
 
 /**
+ * T-02: closed, machine-readable form of the `AuthenticationMethod` union.
+ * Consumers that must reject unrecognized methods (e.g. the durable host's
+ * principal-snapshot validation) check membership here instead of
+ * re-declaring the method set, so the union stays the single source of
+ * truth. Any new method MUST be added to both the union and this list.
+ */
+export const RECOGNIZED_AUTHENTICATION_METHODS: readonly AuthenticationMethod[] = Object.freeze([
+  'DETERMINISTIC_TEST',
+  'STATIC_TOKEN',
+  'OIDC',
+  'MTLS',
+  'KERNEL_INTERNAL',
+]);
+
+/** T-02: true when `value` is a recognized authentication method. */
+export function isAuthenticationMethod(value: unknown): value is AuthenticationMethod {
+  return (
+    typeof value === 'string' &&
+    (RECOGNIZED_AUTHENTICATION_METHODS as readonly string[]).includes(value)
+  );
+}
+
+/**
  * A presented credential. The request boundary is responsible for collecting
  * these from the wire (HTTP headers, mTLS peer certs, OAuth bearer tokens,
  * etc.) and handing them to the authenticator. The principal boundary never

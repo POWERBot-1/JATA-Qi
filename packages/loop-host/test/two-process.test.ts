@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
 import { LoopHostService, WorkQueue } from '../src/index.js';
-import { reasoningTask } from './helpers.js';
+import { testPrincipalFor, reasoningTask } from './helpers.js';
 import { bootStorageKernel, dropDb, freshDb, makeDriver, makeStorage, pgAvailable, stopPg } from './pg-host-harness.js';
 
 after(async () => {
@@ -87,7 +87,7 @@ describe('R-01 two-process contention over one authoritative PostgreSQL', async 
     await queue.init(kernel);
 
     // One single item that both processes will fight over.
-    const item = await queue.enqueue(actor, { task: reasoningTask(), idempotencyKey: 'r01-two-proc-race' }, Date.now());
+    const item = await queue.enqueue(actor,  { task: reasoningTask(), idempotencyKey: 'r01-two-proc-race' }, await testPrincipalFor(actor, Date.now()),  Date.now());
 
     const conn = db.config.connectionString as string;
     const [a, b] = await Promise.all([
@@ -124,7 +124,7 @@ describe('R-01 two-process contention over one authoritative PostgreSQL', async 
     const queue = new WorkQueue();
     await queue.init(kernel);
 
-    const item = await queue.enqueue(actor, { task: reasoningTask(), idempotencyKey: 'r01-two-proc-crash' }, Date.now());
+    const item = await queue.enqueue(actor,  { task: reasoningTask(), idempotencyKey: 'r01-two-proc-crash' }, await testPrincipalFor(actor, Date.now()),  Date.now());
 
     // Process 1 leases the item with a 1s TTL and dies hard (exit code 9).
     const conn = db.config.connectionString as string;
@@ -173,7 +173,7 @@ describe('R-01 two-process contention over one authoritative PostgreSQL', async 
     const queue = new WorkQueue();
     await queue.init(kernel);
 
-    const item = await queue.enqueue(actor, { task: reasoningTask(), idempotencyKey: 'r01-active-lease' }, Date.now());
+    const item = await queue.enqueue(actor,  { task: reasoningTask(), idempotencyKey: 'r01-active-lease' }, await testPrincipalFor(actor, Date.now()),  Date.now());
     // This process takes a long lease.
     await queue.acquireLease(item.id, 'in-test-holder', 600_000, Date.now());
 

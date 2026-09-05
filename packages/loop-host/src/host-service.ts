@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import type { AuthenticatedPrincipal } from '@jataqi/authentication';
 import {
   UnifiedLoopModule,
   type LoopRunResult,
@@ -17,9 +18,20 @@ import {
 import { CheckpointJournal, fingerprintTask } from './checkpoints.js';
 import { nextWakeInMs } from './scheduler.js';
 import {
+  assertValidMaxAgeMs,
+  assessPersistedSnapshot,
+  assertActorDerivedFromPrincipal,
+  authorizeDispatch,
+  freezePrincipalSnapshot,
+  provenanceOf,
+  type ResolvedPrincipalPolicy,
+} from './principal-snapshot.js';
+import {
+  DEFAULT_MAX_PRINCIPAL_AGE_MS,
   HostLifecycleError,
   LoopHostError,
   LoopHostEvents,
+  PrincipalAuthorityError,
   type DispatchFailureClass,
   type EnqueueWorkInput,
   type HostedWorkItem,
@@ -27,17 +39,22 @@ import {
   type HostLifecycle,
   type LoopCheckpoint,
   type LoopHostAuditEvent,
+  type PrincipalPolicy,
   type RecoverSummary,
   type TickSummary,
   type WorkSettlement,
 } from './types.js';
 import { WorkQueue } from './work-queue.js';
 
-/** Injected loop runner. The default resolves the governed UnifiedLoopService. */
+/**
+ * Injected loop runner. The default resolves the governed UnifiedLoopService.
+ * T-02: dispatch always carries the verified principal reconstructed from
+ * the persisted snapshot; runners receive it alongside the narrowed actor.
+ */
 export type LoopRunner = (
   actor: CommercialActor,
   task: LoopTask,
-  opts: { correlationId: string; now: () => number; signal: AbortSignal },
+  opts: { correlationId: string; now: () => number; signal: AbortSignal; principal: AuthenticatedPrincipal },
 ) => Promise<LoopRunResult>;
 
 export interface LoopHostConfig {
@@ -51,6 +68,19 @@ export interface LoopHostConfig {
   /** When > 0 and started, background wake checks run on this interval. Off by default. */
   autoTickMs?: number;
   now?: () => number;
+  /**
+   * T-02 maximum age (ms) of a principal snapshot's `verifiedAt` at
+   * enqueue/dispatch. Default 24h (`DEFAULT_MAX_PRINCIPAL_AGE_MS`);
+   * must be an integer within [0, MAX_PRINCIPAL_AGE_MS].
+   */
+  maxPrincipalAgeMs?: number;
+  /**
+   * T-02 principal admission policy. `allowTestMethod: false` refuses
+   * DETERMINISTIC_TEST authority at enqueue and dispatch (production
+   * posture); default true so tests and development can mint authority
+   * through the test authenticator.
+   */
+  principalPolicy?: PrincipalPolicy;
 }
 
 const DEFAULT_LEASE_TTL_MS = 30_000;
@@ -89,6 +119,8 @@ export class LoopHostService {
   private readonly sleepDelayMs: number;
   private readonly autoTickMs: number;
   private readonly clock: () => number;
+  /** T-02 resolved principal policy (max age + test-method admission). */
+  private readonly principalPolicy: ResolvedPrincipalPolicy;
   private lifecycle: HostLifecycle = 'IDLE';
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = 0;
@@ -102,6 +134,12 @@ export class LoopHostService {
       throw new LoopHostError('maxBatch must be an integer between 1 and 100.');
     }
     this.sleepDelayMs = normalizePositive(config.sleepDelayMs, DEFAULT_SLEEP_DELAY_MS, 'sleepDelayMs');
+    const maxPrincipalAgeMs = config.maxPrincipalAgeMs ?? DEFAULT_MAX_PRINCIPAL_AGE_MS;
+    assertValidMaxAgeMs(maxPrincipalAgeMs);
+    this.principalPolicy = {
+      maxAgeMs: maxPrincipalAgeMs,
+      allowTestMethod: config.principalPolicy?.allowTestMethod ?? true,
+    };
     this.autoTickMs = config.autoTickMs ?? 0;
     if (!Number.isInteger(this.autoTickMs) || this.autoTickMs < 0 || this.autoTickMs > 3_600_000) {
       throw new LoopHostError('autoTickMs must be an integer between 0 and 3600000.');
@@ -179,9 +217,39 @@ export class LoopHostService {
     });
   }
 
-  async enqueue(actor: CommercialActor, input: EnqueueWorkInput, now?: number): Promise<HostedWorkItem> {
+  /**
+   * T-02 authenticated enqueue (the production-shaped durable enqueue
+   * path). Requires an authenticated principal; the actor must be
+   * derivable from it, the principal must satisfy the host freshness
+   * policy, and test authentication must be admitted by policy. Any
+   * failure rejects the enqueue BEFORE any write — unsigned callers can
+   * neither create work nor probe idempotency state. Never persists
+   * secrets: only the fixed snapshot provenance fields are stored.
+   */
+  async enqueue(
+    actor: CommercialActor,
+    input: EnqueueWorkInput,
+    principal: AuthenticatedPrincipal,
+    now?: number,
+  ): Promise<HostedWorkItem> {
     const at = now ?? this.clock();
-    const item = await this.queue.enqueue(actor, input, at);
+    if (!principal || typeof principal !== 'object') {
+      throw new PrincipalAuthorityError('Authenticated enqueue requires an authenticated principal (fail-closed).');
+    }
+    const snapshot = freezePrincipalSnapshot(principal);
+    assertActorDerivedFromPrincipal(actor, principal);
+    const fresh = assessPersistedSnapshot(snapshot, at, this.principalPolicy.maxAgeMs);
+    if (!fresh.ok) {
+      throw new PrincipalAuthorityError(
+        `Authenticated enqueue refused (${fresh.reason}): ${fresh.detail}`,
+      );
+    }
+    if (!this.principalPolicy.allowTestMethod && snapshot.authenticationMethod === 'DETERMINISTIC_TEST') {
+      throw new PrincipalAuthorityError(
+        'Authenticated enqueue refused (PRINCIPAL_TEST_METHOD): test authentication is not admitted under this host principal policy.',
+      );
+    }
+    const item = await this.queue.enqueue(actor, input, principal, at);
     const scheduled = item.availableAt > at;
     void this.emit(scheduled ? LoopHostEvents.WorkScheduled : LoopHostEvents.WorkQueued, {
       workId: item.id,
@@ -189,6 +257,7 @@ export class LoopHostService {
       correlationId: item.correlationId,
       attempt: item.attemptCount,
       status: item.status,
+      ...provenanceOf(snapshot),
       summary: scheduled
         ? `Work ${item.id} scheduled for ${item.availableAt} (attempt ${item.attemptCount}).`
         : `Work ${item.id} queued (attempt ${item.attemptCount}).`,
@@ -338,7 +407,21 @@ export class LoopHostService {
   private resolveRunner(): LoopRunner {
     if (this.runner) return this.runner;
     const svc = this.api.getModule<UnifiedLoopModule>('unified-loop').getService();
-    return (actor, task, opts) => svc.runLoop(actor, task, { correlationId: opts.correlationId, now: opts.now, signal: opts.signal });
+    // T-02: the default runner forwards the verified principal into the
+    // loop's own T-01 principal/actor match check (defense in depth behind
+    // pre-dispatch authorization). Dispatch without principal evidence is
+    // structurally impossible — and refused here if ever attempted.
+    return (actor, task, opts) => {
+      if (!opts.principal || typeof opts.principal !== 'object') {
+        throw new LoopHostError('Dispatch requires authenticated principal evidence (fail-closed).');
+      }
+      return svc.runLoop(actor, task, {
+        correlationId: opts.correlationId,
+        now: opts.now,
+        signal: opts.signal,
+        principal: opts.principal,
+      });
+    };
   }
 
   private async dispatchLeased(leased: HostedWorkItem, token: string, at: number, summary: TickSummary): Promise<void> {
@@ -347,6 +430,30 @@ export class LoopHostService {
     this.abortControllers.add(controller);
     this.inFlight += 1;
     try {
+      // T-02 pre-dispatch authority validation: the leased record must
+      // carry a verifiable principal snapshot (present, well-formed,
+      // fresh, policy-admitted, tenant-matched, role-contained). Invalid
+      // authority HELDs the record with a deterministic reason — no
+      // checkpoint, no attempt, no dispatch, no silent extension, and
+      // never an automatic denial.
+      const authorized = authorizeDispatch(leased, at, this.principalPolicy);
+      if (!authorized.ok) {
+        await this.queue.holdForAuthority(leased.id, token, authorized.reason, authorized.detail, at);
+        summary.held += 1;
+        void this.emit(LoopHostEvents.Held, {
+          workId: leased.id,
+          tenantId: leased.tenantId,
+          correlationId: leased.correlationId,
+          attempt: leased.attemptCount,
+          status: 'HELD',
+          heldReason: authorized.reason,
+          reason: `${authorized.reason}: ${authorized.detail}`,
+          ...bestEffortProvenance(leased.principal),
+          summary: `Work ${leased.id} held before dispatch (${authorized.reason}); authority evidence insufficient — never auto-retried.`,
+        });
+        return;
+      }
+      const provenance = provenanceOf(authorized.snapshot);
       // 1. Substantive pre-dispatch checkpoint (identities, phase, attempt, task fingerprint).
       const preCheckpoint = await this.journal.write(leased, { phase: 'DISPATCHED' }, at);
       const dispatched = await this.queue.markDispatched(leased.id, token, preCheckpoint.id, at);
@@ -357,6 +464,7 @@ export class LoopHostService {
         correlationId: dispatched.correlationId,
         attempt: dispatched.attemptCount,
         status: dispatched.status,
+        ...provenance,
         summary: `Checkpoint ${preCheckpoint.id} (DISPATCHED, seq ${preCheckpoint.sequence}) written for work ${dispatched.id}.`,
       });
       void this.emit(LoopHostEvents.Dispatched, {
@@ -365,6 +473,7 @@ export class LoopHostService {
         correlationId: dispatched.correlationId,
         attempt: dispatched.attemptCount,
         status: dispatched.status,
+        ...provenance,
         summary: `Work ${dispatched.id} dispatched to the governed unified loop (attempt ${dispatched.attemptCount}).`,
       });
 
@@ -382,12 +491,16 @@ export class LoopHostService {
       // work item's leaseToken is the ownership boundary: recordFailure /
       // settleTerminal / markDispatched all require the live token, so even
       // a leaked in-flight runner cannot issue a conflicting state mutation.
-      const actor: CommercialActor = {
-        id: dispatched.actor.id,
-        tenantId: dispatched.actor.tenantId,
-        roles: [...dispatched.actor.roles],
-      };
-      const runnerPromise = runner(actor, copy(dispatched.task), { correlationId: dispatched.correlationId, now: this.clock, signal: controller.signal });
+      // T-02: the execution actor is the narrowed actor verified against
+      // the persisted snapshot (never a caller-supplied replacement), and
+      // the verified principal rides alongside into the loop's own T-01
+      // principal/actor match check.
+      const runnerPromise = runner(authorized.actor, copy(dispatched.task), {
+        correlationId: dispatched.correlationId,
+        now: this.clock,
+        signal: controller.signal,
+        principal: authorized.principal,
+      });
       const timeoutPromise = new Promise<never>((_, reject) => {
         const timer = setTimeout(() => reject(new Error(`Host dispatch timed out after ${this.leaseTtlMs} ms.`)), this.leaseTtlMs);
         if (typeof timer.unref === 'function') timer.unref();
@@ -429,6 +542,7 @@ export class LoopHostService {
               attempt: leased.attemptCount,
               status: leased.status,
               reason: `Runner did not honour abort within grace period after timeout; left for recovery.`,
+              ...provenance,
               summary: `Work ${leased.id}: runner did not stop within grace period; lease left held for expiry reclaim (no retry issued; ownership boundary prevents concurrent execution).`,
             });
             return;
@@ -458,6 +572,7 @@ export class LoopHostService {
         correlationId: dispatched.correlationId,
         attempt: dispatched.attemptCount,
         status: dispatched.status,
+        ...provenance,
         summary: `Checkpoint ${postCheckpoint.id} (SETTLED, seq ${postCheckpoint.sequence}) written for work ${dispatched.id}.`,
       });
 
@@ -473,6 +588,7 @@ export class LoopHostService {
             correlationId: dispatched.correlationId,
             attempt: dispatched.attemptCount,
             status: 'COMPLETED',
+            ...provenance,
             summary: `Work ${dispatched.id} completed as reported by the loop (${result.outcome}).`,
           });
           break;
@@ -486,6 +602,7 @@ export class LoopHostService {
             correlationId: dispatched.correlationId,
             attempt: dispatched.attemptCount,
             status: 'SLEEPING',
+            ...provenance,
             summary: `Work ${dispatched.id} sleeping until ${at + this.sleepDelayMs} (loop requested SLEEP).`,
           });
           break;
@@ -501,6 +618,7 @@ export class LoopHostService {
             attempt: dispatched.attemptCount,
             status: 'HELD',
             reason: result.failureReason ?? 'Held at human/regulatory or verification gate; explicit operator resume required.',
+            ...provenance,
             summary: `Work ${dispatched.id} held at gate; never auto-retried.`,
           });
           break;
@@ -516,6 +634,7 @@ export class LoopHostService {
             attempt: dispatched.attemptCount,
             status: 'DENIED',
             reason: result.failureReason ?? 'Denied by policy, kill-switch, or authority check; terminal.',
+            ...provenance,
             summary: `Work ${dispatched.id} denied; terminal and never retried.`,
           });
           break;
@@ -532,6 +651,7 @@ export class LoopHostService {
               attempt: failed.attemptCount,
               status: 'DLQ',
               reason: failed.dlqReason,
+              ...provenance,
               summary: `Work ${failed.id} dead-lettered after bounded retries.`,
             });
           } else {
@@ -543,6 +663,7 @@ export class LoopHostService {
               attempt: failed.attemptCount,
               status: failed.status,
               reason: failed.lastError,
+              ...provenance,
               summary: `Work ${failed.id} requeued with backoff (attempt ${failed.attemptCount}/${failed.maxAttempts}).`,
             });
           }
@@ -559,6 +680,7 @@ export class LoopHostService {
         attempt: leased.attemptCount,
         status: leased.status,
         reason: err instanceof Error ? err.message : String(err),
+        ...bestEffortProvenance(leased.principal),
         summary: `Host substrate failure for work ${leased.id}; outcome not fabricated, lease left for expiry reclaim.`,
       });
     } finally {
@@ -585,6 +707,7 @@ export class LoopHostService {
         attempt: failed.attemptCount,
         status: 'DLQ',
         reason: failed.dlqReason,
+        ...bestEffortProvenance(dispatched.principal),
         summary: `Work ${failed.id} dead-lettered (${failureClass}).`,
       });
     } else {
@@ -596,6 +719,7 @@ export class LoopHostService {
         attempt: failed.attemptCount,
         status: failed.status,
         reason: failed.lastError,
+        ...bestEffortProvenance(dispatched.principal),
         summary: `Work ${failed.id} requeued after ${failureClass} (attempt ${failed.attemptCount}/${failed.maxAttempts}).`,
       });
     }
@@ -616,4 +740,34 @@ export class LoopHostService {
   static taskFingerprint(task: LoopTask): string {
     return fingerprintTask(task);
   }
+}
+
+/**
+ * T-02: best-effort provenance projection for audit events emitted on
+ * paths where the snapshot did not (or may not) validate — e.g. the
+ * authority-HELD event itself, or substrate-failure events. Extracts
+ * only well-typed string/number fields; anything else is omitted rather
+ * than fabricated. Never secrets (snapshots cannot carry them).
+ */
+function bestEffortProvenance(value: unknown): Partial<
+  Pick<LoopHostAuditEvent, 'principalMethod' | 'principalEventId' | 'principalVerifiedAt' | 'principalId'>
+> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const out: Partial<
+    Pick<LoopHostAuditEvent, 'principalMethod' | 'principalEventId' | 'principalVerifiedAt' | 'principalId'>
+  > = {};
+  if (typeof record.authenticationMethod === 'string' && record.authenticationMethod) {
+    out.principalMethod = record.authenticationMethod;
+  }
+  if (typeof record.authenticationEventId === 'string' && record.authenticationEventId) {
+    out.principalEventId = record.authenticationEventId;
+  }
+  if (typeof record.verifiedAt === 'number' && Number.isFinite(record.verifiedAt)) {
+    out.principalVerifiedAt = record.verifiedAt;
+  }
+  if (typeof record.principalId === 'string' && record.principalId) {
+    out.principalId = record.principalId;
+  }
+  return out;
 }
