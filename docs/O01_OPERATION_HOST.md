@@ -134,7 +134,20 @@ unchanged as regression.
 
 ## Gaps carried forward (do not over-claim)
 
-- **P-01 (production durability):** still open — Postgres, transactions, distributed leases, backups, RPO/RTO.
-- **F-01 (event fabric):** still open — two-plane split unchanged; host emits its own `loop-host.*` topics and reuses the manual pump.
+> **Correction (T-03):** this section originally listed P-01 and F-01 as
+> "still open". Both have since merged — P-01 via PR #8 (`1701f65`) and F-01
+> via PR #11 (`54d3f14`) — so those two bullets were stale and are corrected
+> below. The remaining statements are still accurate.
+
+- **P-01 (production durability):** MERGED (PR #8). PostgreSQL, transactions,
+  and row-lock leases are delivered. Still genuinely open within it: backups,
+  PITR, replication, failover — RPO/RTO remain UNDEFINED.
+- **F-01 (event fabric):** MERGED (PR #11). The two-plane split is unified
+  behind `EventEnvelope`. The host still emits its own `loop-host.*` topics
+  and reuses the manual pump.
+- **T-01/T-02/T-03 (authority):** the principal boundary, the durable
+  principal snapshot, and the authenticated work ingress are all merged. See
+  [`T03_AUTHENTICATED_WORK_INGRESS.md`](./T03_AUTHENTICATED_WORK_INGRESS.md).
 - **No live connectors, providers, credentials, or production side effects** are introduced or claimed.
 - **No quantum execution, no AGI/superintelligence, no production deployment** is claimed or introduced.
+

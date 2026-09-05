@@ -5,6 +5,7 @@ import { createJataQiFromEnv } from './bootstrap.js';
 import { loadEnv } from './config.js';
 import { parseHostArgs, runHostCommand } from './host-command.js';
 import { runHostInspectCommand } from './host-inspect.js';
+import { runHostEnqueueCommand } from './host-ingress-command.js';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
@@ -38,8 +39,27 @@ Host runtime (R-01):
   host:dlq            Read-only: list dead-lettered / quarantined work items.
   host:health         Read-only: print host lifecycle, storage driver, next wake.
 
+Authenticated work ingress (T-03):
+  host:enqueue [options]
+                      Create durable work behind the T-01/T-03 principal
+                      boundary. Fails closed unless an authentication method is
+                      configured; never self-attests a principal.
+        --objective <text>          Required. What the loop is asked to do.
+        --correlation-id <id>       Optional correlation identity.
+        --idempotency-key <key>     Optional; re-submitting returns the same item.
+        --tenant <tenantId>         Optional consistency check ONLY. Must equal
+                                    the authenticated tenant or the request is
+                                    refused; it can never override it.
+        --roles <r1,r2>             Optional role NARROWING. Widening is refused.
+        --knowledge-query <text>    Optional retrieval query for the loop.
+
+      Credential material is read from JATAQI_AUTH_TOKEN (never argv), and the
+      authentication METHOD comes from the configured JATAQI_AUTH_MODE — a
+      caller cannot choose it. With no method configured the command refuses.
+
 Host inspection commands are strictly read-only: they never dispatch, resume,
-retry, approve, or settle anything.
+retry, approve, or settle anything. host:enqueue creates work; it never
+dispatches, and the full 34-stage governed loop remains the only executor.
 `;
 
 async function main() {
@@ -56,6 +76,11 @@ async function main() {
   }
   if (cmd === 'host:work' || cmd === 'host:dlq' || cmd === 'host:health') {
     const code = await runHostInspectCommand(cmd, args.slice(1));
+    process.exit(code);
+  }
+  // T-03: authenticated work ingress. Creates durable work and nothing else.
+  if (cmd === 'host:enqueue') {
+    const code = await runHostEnqueueCommand(args.slice(1));
     process.exit(code);
   }
 

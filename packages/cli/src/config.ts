@@ -15,6 +15,27 @@ export interface EnvConfig {
   OPENAI_EMBEDDING_MODEL?: string;
   AGENT_LLM?: 'echo' | 'openai';
   OPENAI_CHAT_MODEL?: string;
+  /**
+   * T-03 authentication posture for the composition root.
+   * `none` (default) registers no authenticator, so every authenticated
+   * ingress request fails closed.
+   */
+  JATAQI_AUTH_MODE?: 'none' | 'static-token' | 'test-only';
+  /** T-03: path to a JSON array of principal records for the configured mode. */
+  JATAQI_AUTH_PRINCIPALS?: string;
+  /**
+   * T-03: second, redundant opt-in required before DETERMINISTIC_TEST
+   * authority can be admitted. Must be exactly `true` in test-only mode.
+   */
+  JATAQI_ALLOW_TEST_AUTH?: string;
+  /** T-03: T-02 principal-snapshot freshness horizon (ms) for the host. */
+  JATAQI_MAX_PRINCIPAL_AGE_MS?: number;
+  /**
+   * T-03: credential material presented by `jataqi host:enqueue`. Read from
+   * the environment (never argv) so it does not appear in process listings or
+   * shell history.
+   */
+  JATAQI_AUTH_TOKEN?: string;
 }
 
 /** Parse a .env file into an object (KEY=VALUE lines, ignores comments/blanks). */
@@ -61,5 +82,12 @@ export function readConfig(): EnvConfig {
     OPENAI_EMBEDDING_MODEL: process.env.OPENAI_EMBEDDING_MODEL,
     AGENT_LLM: process.env.AGENT_LLM as EnvConfig['AGENT_LLM'],
     OPENAI_CHAT_MODEL: process.env.OPENAI_CHAT_MODEL,
+    JATAQI_AUTH_MODE: process.env.JATAQI_AUTH_MODE as EnvConfig['JATAQI_AUTH_MODE'],
+    JATAQI_AUTH_PRINCIPALS: process.env.JATAQI_AUTH_PRINCIPALS,
+    JATAQI_ALLOW_TEST_AUTH: process.env.JATAQI_ALLOW_TEST_AUTH,
+    JATAQI_MAX_PRINCIPAL_AGE_MS: process.env.JATAQI_MAX_PRINCIPAL_AGE_MS
+      ? Number(process.env.JATAQI_MAX_PRINCIPAL_AGE_MS)
+      : undefined,
+    JATAQI_AUTH_TOKEN: process.env.JATAQI_AUTH_TOKEN,
   };
 }

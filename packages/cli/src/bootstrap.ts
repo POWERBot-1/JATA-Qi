@@ -44,7 +44,12 @@ import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
 import { CapabilityFabricModule } from '@jataqi/capability-fabric';
 import { UnifiedLoopModule } from '@jataqi/unified-loop';
-import { LoopHostModule } from '@jataqi/loop-host';
+import { LoopHostModule, WorkIngressModule } from '@jataqi/loop-host';
+import type { PrincipalPolicy } from '@jataqi/loop-host';
+import {
+  AuthenticationModule,
+  type AuthenticationModuleConfig,
+} from '@jataqi/authentication';
 import {
   AgentRuntimeModule,
   EchoLLM,
@@ -54,6 +59,7 @@ import {
 } from '@jataqi/agent-runtime';
 import { readConfig } from './config.js';
 import { resolveStorageDriver } from './storage-driver.js';
+import { hostAllowsTestMethod, resolveCliAuthentication } from './auth-config.js';
 
 export interface JataQiConfig {
   /** Kernel-level overrides. */
@@ -69,12 +75,36 @@ export interface JataQiConfig {
   /** Agent runtime config. */
   agent?: AgentModuleConfig;
   /**
+   * T-03 server-side principal boundary. Always registered; by default it is
+   * constructed with NO authenticators and the production admission policy, so
+   * a composition that has not been told how to authenticate callers cannot
+   * authenticate anyone and every ingress request fails closed. Supply
+   * `authenticators` (or use `createJataQiFromEnv` with `JATAQI_AUTH_MODE`) to
+   * make authenticated work ingress available.
+   */
+  authentication?: AuthenticationModuleConfig;
+  /**
    * O-01 continuous-operation host. Disabled by default: the module is only
    * registered when `enabled` is explicitly true, and even then the host
    * starts IDLE — an operator must call `start()` and `tick()`/`recover()`.
    * There is no automatic production start.
+   *
+   * T-03 adds the authority policy fields that were previously unreachable
+   * from the composition root. `principalPolicy.allowTestMethod` is DERIVED
+   * from `authentication.policy` and may not be forced on independently:
+   * requesting it under a production authentication policy throws.
    */
-  loopHost?: { enabled?: boolean; leaseTtlMs?: number; maxBatch?: number; sleepDelayMs?: number; autoTickMs?: number };
+  loopHost?: {
+    enabled?: boolean;
+    leaseTtlMs?: number;
+    maxBatch?: number;
+    sleepDelayMs?: number;
+    autoTickMs?: number;
+    /** T-02 snapshot freshness horizon (ms) for dispatched authority. */
+    maxPrincipalAgeMs?: number;
+    /** T-02 authority admission policy; `allowTestMethod` is policy-derived. */
+    principalPolicy?: PrincipalPolicy;
+  };
 }
 
 export interface JataQiInstance {
@@ -142,6 +172,29 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
       ...cfg.agent,
     }),
   );
+  // T-03: the server-side principal boundary. ALWAYS registered, so the T-01
+  // authority architecture is reachable from every real composition instead of
+  // only from test code. Constructed with no authenticators unless the caller
+  // supplies them, and with the production admission policy, so an
+  // unconfigured process authenticates nobody and fails closed.
+  const authenticationConfig: AuthenticationModuleConfig = cfg.authentication ?? {};
+  kernel.register(new AuthenticationModule(authenticationConfig));
+
+  // T-03: the T-02 authority-admission policy is DERIVED from the
+  // authentication posture. The library default of `allowTestMethod: true`
+  // exists so unit tests can mint authority; it is NOT a production default and
+  // is never inherited here. Attempting to force it on under a production
+  // authentication policy is a configuration error, not a silent widening.
+  const authenticationMode = authenticationConfig.policy?.mode ?? 'production';
+  const allowTestMethod = authenticationMode === 'test-only';
+  const explicitAllowTestMethod = cfg.loopHost?.principalPolicy?.allowTestMethod;
+  if (explicitAllowTestMethod === true && !allowTestMethod) {
+    throw new Error(
+      'loopHost.principalPolicy.allowTestMethod:true requires authentication.policy.mode:"test-only". ' +
+        'DETERMINISTIC_TEST authority can never be admitted by a production composition (fail-closed).',
+    );
+  }
+
   // W22 (C-1): native in-repo unified cognitive/execution loop driver. It owns
   // orchestration over the existing fabric; it adds no engine and performs no
   // external action unless explicitly governed and authorized.
@@ -155,8 +208,19 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
         maxBatch: cfg.loopHost.maxBatch,
         sleepDelayMs: cfg.loopHost.sleepDelayMs,
         autoTickMs: cfg.loopHost.autoTickMs,
+        maxPrincipalAgeMs: cfg.loopHost.maxPrincipalAgeMs,
+        // Explicit, policy-derived, and always present: the host never falls
+        // back to its permissive library default inside a real composition.
+        // A caller may NARROW it further (explicit false); widening already
+        // threw above.
+        principalPolicy: {
+          allowTestMethod: explicitAllowTestMethod ?? allowTestMethod,
+        },
       }),
     );
+    // T-03: the authenticated work ingress. Registered only alongside the host
+    // (it needs a durable queue to submit to). It creates nothing at boot.
+    kernel.register(new WorkIngressModule());
   }
 
   await kernel.boot();
@@ -169,6 +233,11 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 /** Build JATA Qi using environment variables / .env (see .env.example). */
 export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise<JataQiInstance> {
   const env = readConfig();
+  // T-03: resolve the process's authentication posture up front. Throws for an
+  // unusable configuration (unknown mode, unreadable or malformed principal
+  // file, test mode without its redundant opt-in), so a misconfigured process
+  // never boots.
+  const resolved = resolveCliAuthentication(process.env);
   // R-01: resolve a durable driver instance when one is selected by name.
   // Returns undefined for memory/filesystem so default behaviour is unchanged.
   // Fails closed (throws) when 'postgres' is selected without configuration.
@@ -202,9 +271,25 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     graph: overrides.graph,
     commercialControlPlane: overrides.commercialControlPlane,
     kernel: overrides.kernel,
+    // T-03: resolve the authentication posture from the environment. This
+    // throws on an unusable configuration rather than booting a process that
+    // silently trusts nothing or, worse, silently trusts test authority.
+    authentication: overrides.authentication ?? {
+      authenticators: resolved.authenticators,
+      policy: resolved.policy,
+    },
     // R-01: forward the host opt-in. Still disabled unless a caller explicitly
     // sets it (the `jataqi host` command does); default remains off.
-    loopHost: overrides.loopHost,
+    // T-03: the authority policy is derived from the resolved authentication
+    // posture, so `allowTestMethod` can never sit at its permissive library
+    // default in a real process.
+    loopHost: overrides.loopHost
+      ? {
+          maxPrincipalAgeMs: env.JATAQI_MAX_PRINCIPAL_AGE_MS,
+          principalPolicy: { allowTestMethod: hostAllowsTestMethod(resolved) },
+          ...overrides.loopHost,
+        }
+      : undefined,
   });
 }
 
