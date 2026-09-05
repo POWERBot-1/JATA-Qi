@@ -23,6 +23,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@jataqi/authentication": "0.1.0",
     "@jataqi/commercial-control-plane": "0.1.0",
     "@jataqi/core-kernel": "0.1.0",
     "@jataqi/storage": "0.1.0",

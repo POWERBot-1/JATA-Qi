@@ -6,7 +6,15 @@ export { isDispatchEligible, isReclaimable, nextWakeInMs } from './scheduler.js'
 export { HostRuntime, assertDurableStorage, isDurableDriver, type HostRuntimeConfig } from './runtime.js';
 export { OutboxInbox, OUTBOX_COLLECTION, INBOX_COLLECTION, newOutboxEventId } from './outbox-inbox.js';
 export type { OutboxRecord, InboxRecord } from './outbox-inbox.js';
-export { LoopHostEvents, LOOP_HOST_CHECKPOINT_SCHEMA_VERSION } from './types.js';
+export {
+  LoopHostEvents,
+  LOOP_HOST_CHECKPOINT_SCHEMA_VERSION,
+  PRINCIPAL_SNAPSHOT_VERSION,
+  DEFAULT_MAX_PRINCIPAL_AGE_MS,
+  MAX_PRINCIPAL_AGE_MS,
+  MAX_PRINCIPAL_CLOCK_SKEW_MS,
+  AUTHORITY_HELD_REASONS,
+} from './types.js';
 export {
   LoopHostError,
   TenantIsolationError,
@@ -18,6 +26,7 @@ export {
   HostLifecycleError,
   HostRuntimeError,
   NonDurableStorageError,
+  PrincipalAuthorityError,
 } from './types.js';
 export type {
   HostedWorkItem,
@@ -33,4 +42,18 @@ export type {
   LoopHostAuditEvent,
   HostRuntimeStatus,
   HostRuntimeCycle,
+  AuthenticatedPrincipalSnapshot,
+  AuthorityHoldReason,
+  PrincipalPolicy,
 } from './types.js';
+export {
+  assertActorDerivedFromPrincipal,
+  assertValidMaxAgeMs,
+  assessPersistedSnapshot,
+  authorizeDispatch,
+  freezePrincipalSnapshot,
+  principalFromSnapshot,
+  provenanceOf,
+  serializePrincipalSnapshot,
+} from './principal-snapshot.js';
+export type { DispatchAuthorization, ResolvedPrincipalPolicy, SnapshotAssessment } from './principal-snapshot.js';

@@ -5,10 +5,15 @@
 // (G-11): two independent Node processes, one authoritative PostgreSQL, and the
 // invariant that a given work item is executed exactly once.
 //
-// Usage: node two-process-worker.mjs <connectionString> <mode> <workerId>
+// Usage: node two-process-worker.mjs <connectionString> <mode> <workerId> [extra...]
 //   mode=compete  : try to lease every due item; print each lease win as JSON
 //   mode=crash    : lease one item, then die HARD (process.exit) while holding
 //                   the lease, leaving it for expiry reclaim by recovery
+//   mode=echo-principal <actorJson> <workId>:
+//                   read one item and print its persisted principal snapshot
+//                   as JSON. The child receives NO principal material on its
+//                   command line — whatever it prints came from durable
+//                   PostgreSQL state (T-02 evidence).
 //
 // It performs no reasoning and no side effects; the runner is a stub because
 // this test is about persistence-level contention, not cognition.
@@ -63,6 +68,28 @@ async function main() {
       }
     }
     emit({ workerId, event: 'done', wins });
+    await driver.close();
+    process.exit(0);
+  }
+
+  if (mode === 'echo-principal') {
+    const [, , , , , actorJson, workId] = process.argv;
+    const actor = JSON.parse(actorJson);
+    const item = await queue.get(actor, workId);
+    if (!item) {
+      emit({ workerId, event: 'principal-echo', found: false });
+      await driver.close();
+      process.exit(1);
+    }
+    emit({
+      workerId,
+      event: 'principal-echo',
+      found: true,
+      workId: item.id,
+      tenantId: item.tenantId,
+      status: item.status,
+      snapshot: item.principal ?? null,
+    });
     await driver.close();
     process.exit(0);
   }

@@ -24,6 +24,7 @@ import {
   type LoopCheckpoint,
 } from '../src/index.js';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import { testPrincipalFor } from './helpers.js';
 
 const actor: CommercialActor = { id: 'agent-1', tenantId: 'acme', roles: ['agent', 'operator'] };
 const stranger: CommercialActor = { id: 'agent-9', tenantId: 'other', roles: ['agent'] };
@@ -46,7 +47,7 @@ async function boot() {
 describe('O-01 work queue — creation, tenancy, idempotency (O1, O26)', () => {
   it('O1: enqueue creates a tenant-scoped QUEUED record with correlation and idempotency identity', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     assert.equal(item.status, 'QUEUED');
     assert.equal(item.tenantId, 'acme');
     assert.ok(item.id.length > 0);
@@ -58,7 +59,7 @@ describe('O-01 work queue — creation, tenancy, idempotency (O1, O26)', () => {
 
   it('O1: cross-tenant reads are rejected fail-closed', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     await assert.rejects(() => queue.get(stranger, item.id), TenantIsolationError);
     assert.deepEqual(await queue.list(stranger, {}), []);
     assert.equal((await queue.list(actor, {})).length, 1);
@@ -66,15 +67,15 @@ describe('O-01 work queue — creation, tenancy, idempotency (O1, O26)', () => {
 
   it('O26: re-enqueue with the same idempotency key returns the existing record (no duplicate)', async () => {
     const { queue } = await boot();
-    const first = await queue.enqueue(actor, { task: task(), idempotencyKey: 'k-1' }, 1_000);
-    const second = await queue.enqueue(actor, { task: task(), idempotencyKey: 'k-1' }, 2_000);
+    const first = await queue.enqueue(actor,  { task: task(), idempotencyKey: 'k-1' }, await testPrincipalFor(actor, 1_000),  1_000);
+    const second = await queue.enqueue(actor,  { task: task(), idempotencyKey: 'k-1' }, await testPrincipalFor(actor, 2_000),  2_000);
     assert.equal(first.id, second.id);
     assert.equal((await queue.list(actor, {})).length, 1);
   });
 
   it('O26: terminal settlement delivery is idempotent for the same loop run, refused otherwise', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     const { token } = await queue.acquireLease(item.id, 'owner-a', 5_000, 1_000);
     const ck = await queue.markDispatched(item.id, token, 'ckpt-1', 1_000);
     assert.equal(ck.attemptCount, 1);
@@ -92,14 +93,14 @@ describe('O-01 work queue — creation, tenancy, idempotency (O1, O26)', () => {
 describe('O-01 leases — exclusivity, expiry, stale holders (O2, O3, O4)', () => {
   it('O2: an active lease cannot be double-acquired', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     await queue.acquireLease(item.id, 'owner-a', 5_000, 1_000);
     await assert.rejects(() => queue.acquireLease(item.id, 'owner-b', 5_000, 2_000), LeaseConflictError);
   });
 
   it('O3: an expired lease is safely reclaimed; an active lease is never stolen', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     await queue.acquireLease(item.id, 'owner-a', 1_000, 1_000);
     await assert.rejects(() => queue.reclaimExpired(item.id, 1_500), LeaseConflictError);
     const reclaimed = await queue.reclaimExpired(item.id, 2_001);
@@ -110,7 +111,7 @@ describe('O-01 leases — exclusivity, expiry, stale holders (O2, O3, O4)', () =
 
   it('O4: a stale lease holder cannot commit; the current holder is unaffected', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     const first = await queue.acquireLease(item.id, 'owner-a', 1_000, 1_000);
     // Recovery reclaims the expired lease before any new holder is admitted.
     await queue.reclaimExpired(item.id, 2_001);
@@ -130,7 +131,7 @@ describe('O-01 leases — exclusivity, expiry, stale holders (O2, O3, O4)', () =
 
   it('O2: release requires the live token and returns the record to QUEUED', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     const { token } = await queue.acquireLease(item.id, 'owner-a', 5_000, 1_000);
     await assert.rejects(() => queue.releaseLease(item.id, 'wrong-token', 1_000), StaleLeaseError);
     const released = await queue.releaseLease(item.id, token, 1_000);
@@ -145,7 +146,7 @@ describe('O-01 retries and DLQ (O13, O14)', () => {
     assert.equal(computeBackoffMs(3, 1_000, 60_000), 4_000);
     assert.equal(computeBackoffMs(9, 1_000, 5_000), 5_000);
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task(), maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 60_000 }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task(), maxAttempts: 3, baseDelayMs: 1_000, maxDelayMs: 60_000 }, await testPrincipalFor(actor, 1_000),  1_000);
     const first = await queue.acquireLease(item.id, 'h', 5_000, 1_000);
     await queue.markDispatched(item.id, first.token, 'c1', 1_000);
     const retry = await queue.recordFailure(item.id, first.token, 'TRANSIENT', 'boom', 1_000);
@@ -156,14 +157,14 @@ describe('O-01 retries and DLQ (O13, O14)', () => {
 
   it('O14: exhausted budgets and permanent failures reach DLQ with a recorded reason', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task(), maxAttempts: 1 }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task(), maxAttempts: 1 }, await testPrincipalFor(actor, 1_000),  1_000);
     const held = await queue.acquireLease(item.id, 'h', 5_000, 1_000);
     await queue.markDispatched(item.id, held.token, 'c1', 1_000);
     const dead = await queue.recordFailure(item.id, held.token, 'TRANSIENT', 'boom', 1_000);
     assert.equal(dead.status, 'DLQ');
     assert.ok((dead.dlqReason ?? '').includes('boom'));
 
-    const item2 = await queue.enqueue(actor, { task: task(), maxAttempts: 5 }, 1_000);
+    const item2 = await queue.enqueue(actor,  { task: task(), maxAttempts: 5 }, await testPrincipalFor(actor, 1_000),  1_000);
     const held2 = await queue.acquireLease(item2.id, 'h', 5_000, 1_000);
     await queue.markDispatched(item2.id, held2.token, 'c1', 1_000);
     const dead2 = await queue.recordFailure(item2.id, held2.token, 'PERMANENT', 'malformed', 1_000);
@@ -172,7 +173,7 @@ describe('O-01 retries and DLQ (O13, O14)', () => {
 
   it('HELD/SLEEPING terminal-adjacent records resume only via explicit operator resume', async () => {
     const { queue } = await boot();
-    const item = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     const { token } = await queue.acquireLease(item.id, 'h', 5_000, 1_000);
     await queue.markDispatched(item.id, token, 'c1', 1_000);
     await queue.settleTerminal(item.id, token, { status: 'HELD', loopId: 'loop-1', loopOutcome: 'HELD_AT_GATE' }, 'c2', 1_000);
@@ -181,7 +182,7 @@ describe('O-01 retries and DLQ (O13, O14)', () => {
     assert.equal(resumed.availableAt, 2_000);
     await assert.rejects(() => queue.resumeWork(stranger, item.id, 2_000), TenantIsolationError);
     // Terminal DENIED records are never resumable.
-    const item2 = await queue.enqueue(actor, { task: task() }, 1_000);
+    const item2 = await queue.enqueue(actor,  { task: task() }, await testPrincipalFor(actor, 1_000),  1_000);
     const held2 = await queue.acquireLease(item2.id, 'h', 5_000, 1_000);
     await queue.markDispatched(item2.id, held2.token, 'c1', 1_000);
     await queue.settleTerminal(item2.id, held2.token, { status: 'DENIED', loopId: 'loop-9', loopOutcome: 'DENIED' }, 'c2', 1_000);

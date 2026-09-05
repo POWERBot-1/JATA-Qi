@@ -23,7 +23,7 @@ import {
   type HostedWorkItem,
   type LoopRunner,
 } from '../src/index.js';
-import { buildHarness, reasoningTask, type Harness } from './helpers.js';
+import { testPrincipalFor, buildHarness, reasoningTask, type Harness } from './helpers.js';
 import { bootStorageKernel, dropDb, freshDb, makeDriver, makeStorage, pgAvailable, stopPg } from './pg-host-harness.js';
 
 after(async () => {
@@ -94,7 +94,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
 
   it('two workers competing for the same task: exactly one wins the lease (DB row-lock CAS)', async () => {
     const { db, wqA, wqB, driverA, driverB } = await twoWorkers();
-    const seeded = await wqA.enqueue(actorA, { task: simpleTask('lease race') });
+    const seeded = await wqA.enqueue(actorA,  { task: simpleTask('lease race') }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     const attempts: Promise<boolean>[] = [];
     for (let i = 0; i < 10; i++) attempts.push(wqA.acquireLease(id, `hostA${i}`, 30000, nowMs()).then(() => true).catch(() => false));
@@ -111,7 +111,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
 
   it('stale worker cannot settle; the valid holder can', async () => {
     const { db, wqA, wqB, driverA, driverB } = await twoWorkers();
-    const seeded = await wqA.enqueue(actorA, { task: simpleTask('stale settle') });
+    const seeded = await wqA.enqueue(actorA,  { task: simpleTask('stale settle') }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     const { token } = await wqA.acquireLease(id, 'hostA', 30000, nowMs());
     await wqA.markDispatched(id, token, 'ckpt-1', nowMs());
@@ -132,7 +132,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
 
   it('expired lease is reclaimed by a competing worker; active lease is never stolen', async () => {
     const { db, wqA, wqB, driverA, driverB } = await twoWorkers();
-    const seeded = await wqA.enqueue(actorA, { task: simpleTask('reclaim') });
+    const seeded = await wqA.enqueue(actorA,  { task: simpleTask('reclaim') }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     const t0 = nowMs();
     await wqA.acquireLease(id, 'hostA', 100, t0);
@@ -149,7 +149,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
 
   it('lease renewal: holder renews, stale holder is rejected', async () => {
     const { db, wqA, wqB, driverA, driverB } = await twoWorkers();
-    const seeded = await wqA.enqueue(actorA, { task: simpleTask('renew') });
+    const seeded = await wqA.enqueue(actorA,  { task: simpleTask('renew') }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     const { token } = await wqA.acquireLease(id, 'hostA', 100, nowMs());
     const renewed = await wqA.renewLease(id, token, 1000, nowMs());
@@ -164,8 +164,8 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
     const { db, wqA, wqB, driverA, driverB } = await twoWorkers();
     const key = `dup-key-${Math.random().toString(36).slice(2)}`;
     const [r1, r2] = await Promise.all([
-      wqA.enqueue(actorA, { task: simpleTask('dup'), idempotencyKey: key }),
-      wqB.enqueue(actorA, { task: simpleTask('dup'), idempotencyKey: key }),
+      wqA.enqueue(actorA,  { task: simpleTask('dup'), idempotencyKey: key }, await testPrincipalFor(actorA, nowMs())),
+      wqB.enqueue(actorA,  { task: simpleTask('dup'), idempotencyKey: key }, await testPrincipalFor(actorA, nowMs())),
     ]);
     assert.equal(r1.id, r2.id);
     const all = await wqA.list(actorA, {});
@@ -177,7 +177,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
 
   it('tenant A cannot read or resume tenant B state (isolation at persistence boundary)', async () => {
     const { db, wqA, wqB, driverA, driverB } = await twoWorkers();
-    const seeded = await wqA.enqueue(actorA, { task: simpleTask('tenant-a') });
+    const seeded = await wqA.enqueue(actorA,  { task: simpleTask('tenant-a') }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     await assert.rejects(() => wqB.get(actorOtherTenant, id), TenantIsolationError);
     await assert.rejects(() => wqB.resumeWork(actorOtherTenant, id, nowMs()), TenantIsolationError);
@@ -191,7 +191,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
 
   it('checkpoint ordering is monotonic and persists across a database-backed journal', async () => {
     const { db, wqA, driverA } = await twoWorkers();
-    const seeded = await wqA.enqueue(actorA, { task: simpleTask('ckpt order') });
+    const seeded = await wqA.enqueue(actorA,  { task: simpleTask('ckpt order') }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     const raw = await wqA.get(actorA, id);
     assert.ok(raw);
@@ -212,7 +212,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
     const driver1 = makeDriver(db.config);
     const q1 = new WorkQueue();
     await q1.init(await bootStorageKernel(makeStorage(driver1)));
-    const seeded = await q1.enqueue(actorA, { task: simpleTask('crash-restart'), correlationId: 'corr-crash' });
+    const seeded = await q1.enqueue(actorA,  { task: simpleTask('crash-restart'), correlationId: 'corr-crash' }, await testPrincipalFor(actorA, nowMs()));
     const id = seeded.id;
     const t0 = nowMs();
     const { token } = await q1.acquireLease(id, 'host1', 100, t0);
@@ -248,7 +248,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
     const runner = fakeRunner('COMPLETED_DRY_RUN');
     host.setRunner(runner);
     host.start();
-    const item = await host.enqueue(actorA, { task: simpleTask('host-over-pg') });
+    const item = await host.enqueue(actorA,  { task: simpleTask('host-over-pg') }, await testPrincipalFor(actorA, nowMs()));
     const summary = await host.tick();
     assert.equal(summary.dispatched, 1);
     assert.equal(summary.completed, 1);
@@ -270,7 +270,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
     await host.init(kernel);
     host.setRunner(fakeRunner('COMPLETED_DRY_RUN', 99));
     host.start();
-    await host.enqueue(actorA, { task: simpleTask('dlq'), maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 });
+    await host.enqueue(actorA,  { task: simpleTask('dlq'), maxAttempts: 2, baseDelayMs: 0, maxDelayMs: 0 }, await testPrincipalFor(actorA, nowMs()));
     const first = await host.tick();
     assert.equal(first.retried, 1);
     const second = await host.tick();
@@ -295,7 +295,7 @@ describe('loop-host over real PostgreSQL (P-01)', async () => {
     h.kernel.bus.on(UnifiedLoopEvents.LoopCompleted, () => { completed += 1; });
     h.kernel.bus.on(UnifiedLoopEvents.StageCompleted, () => { stages += 1; });
     h.kernel.bus.on(UnifiedLoopEvents.BoundaryHeld, () => { stages += 1; });
-    await svc.enqueue(h.actor, { task: reasoningTask() });
+    await svc.enqueue(h.actor,  { task: reasoningTask() }, await testPrincipalFor(h.actor, h.now()));
     const summary = await svc.tick();
     assert.equal(summary.dispatched, 1);
     assert.equal(summary.completed, 1);
