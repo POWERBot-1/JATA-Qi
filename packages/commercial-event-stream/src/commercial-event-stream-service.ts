@@ -10,6 +10,8 @@ import {
   type EventDeliveryRecord,
   type PumpCommercialEventsOptions,
   type PumpCommercialEventsResult,
+  type ResolvedEventContract,
+  type SchemaCompatibilityPolicy,
 } from './types.js';
 
 const DELIVERIES_COLLECTION = 'commercial-event-stream.deliveries';
@@ -37,6 +39,8 @@ export class CommercialEventStreamService {
   private controlPlane!: CommercialControlPlaneService;
   private readonly contracts = new Map<string, CommercialEventContract>();
   private readonly handlers = new Map<string, CommercialEventHandler>();
+  /** F-01e: per-event-type compatibility policy (default `exact`). */
+  private readonly compatibilityPolicies = new Map<string, SchemaCompatibilityPolicy>();
   private readonly clock: () => number;
 
   constructor(config: CommercialEventStreamConfig = {}) {
@@ -54,6 +58,42 @@ export class CommercialEventStreamService {
       throw new CommercialEventStreamError('Event contract type, event version, and schema version are required.');
     }
     this.contracts.set(contractKey(contract.eventType, contract.eventVersion, contract.schemaVersion), contract);
+  }
+
+  /**
+   * F-01e: set the schema-compatibility policy for an event type.
+   * Administrator-only; unknown policies are rejected fail-closed.
+   */
+  setCompatibilityPolicy(actor: CommercialActor, eventType: string, policy: SchemaCompatibilityPolicy): void {
+    assertAdministrator(actor);
+    if (!eventType.trim()) throw new CommercialEventStreamError('Event type is required.');
+    if (policy !== 'exact' && policy !== 'fallback-previous-schema') {
+      throw new CommercialEventStreamError(`Unknown schema compatibility policy "${policy}" (fail-closed).`);
+    }
+    this.compatibilityPolicies.set(eventType, policy);
+  }
+
+  getCompatibilityPolicy(eventType: string): SchemaCompatibilityPolicy {
+    return this.compatibilityPolicies.get(eventType) ?? 'exact';
+  }
+
+  /**
+   * F-01e: resolve the validating contract for a versioned event. Exact match
+   * wins; under `fallback-previous-schema` the highest lower-schema contract
+   * for the same (eventType, eventVersion) applies. Returns undefined when no
+   * contract applies (the caller must SCHEMA_REJECT fail-closed).
+   */
+  resolveContract(eventType: string, eventVersion: number, schemaVersion: number): ResolvedEventContract | undefined {
+    const exact = this.contracts.get(contractKey(eventType, eventVersion, schemaVersion));
+    if (exact) return { contract: exact, fallback: false };
+    if (this.getCompatibilityPolicy(eventType) !== 'fallback-previous-schema') return undefined;
+    let best: CommercialEventContract | undefined;
+    for (const candidate of this.contracts.values()) {
+      if (candidate.eventType !== eventType || candidate.eventVersion !== eventVersion) continue;
+      if (candidate.schemaVersion >= schemaVersion) continue;
+      if (!best || candidate.schemaVersion > best.schemaVersion) best = candidate;
+    }
+    return best ? { contract: best, fallback: true } : undefined;
   }
 
   registerHandler(actor: CommercialActor, handler: CommercialEventHandler): void {
@@ -95,14 +135,14 @@ export class CommercialEventStreamService {
           result.skipped++;
           continue;
         }
-        const contract = this.contracts.get(contractKey(event.eventType, event.eventVersion, event.schemaVersion));
-        if (!contract) {
+        const resolved = this.resolveContract(event.eventType, event.eventVersion, event.schemaVersion);
+        if (!resolved) {
           await this.saveDelivery(delivery, { state: 'SCHEMA_REJECTED', lastError: `No registered contract for ${event.eventType}@${event.eventVersion}/schema-${event.schemaVersion}.`, nextAttemptAt: undefined });
           result.schemaRejected++;
           await this.emit(actor, CommercialEventStreamEvents.SchemaRejected, delivery, { eventId: event.id, handlerId: handler.id });
           continue;
         }
-        const errors = contract.validate(event);
+        const errors = resolved.contract.validate(event);
         if (errors.length > 0) {
           await this.saveDelivery(delivery, { state: 'SCHEMA_REJECTED', lastError: errors.join(' '), nextAttemptAt: undefined });
           result.schemaRejected++;

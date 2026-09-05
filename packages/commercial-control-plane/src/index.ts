@@ -1,7 +1,21 @@
 export { CommercialControlPlaneModule } from './commercial-control-plane-module.js';
 export type { CommercialControlPlaneConfig } from './commercial-control-plane-module.js';
-export { CommercialControlPlaneService, CommercialControlPlaneError } from './commercial-control-plane-service.js';
+export { CommercialControlPlaneService, CommercialControlPlaneError, commercialEventFromEnvelope } from './commercial-control-plane-service.js';
 export type { CommercialControlPlaneServiceConfig } from './commercial-control-plane-service.js';
+export {
+  UnifiedOutbox,
+  UnifiedOutboxError,
+  UNIFIED_OUTBOX_COLLECTION,
+  UNIFIED_OUTBOX_COUNTER_COLLECTION,
+} from './unified-outbox.js';
+export type {
+  UnifiedOutboxRecord,
+  UnifiedOutboxCounter,
+  UnifiedOutboxState,
+  PublishUnifiedOutboxOptions,
+  ReplayUnifiedOutboxOptions,
+  UnifiedOutboxIntegrity,
+} from './unified-outbox.js';
 export { assertCampaignTransition, assertProductTransition, isCampaignTransitionAllowed, isProductTransitionAllowed } from './state-machine.js';
 export { evaluatePolicy, scopeMatches, scopeSpecificity, selectPolicy } from './policy-engine.js';
 export { CommercialAutonomy, CommercialControlPlaneEvents } from './types.js';

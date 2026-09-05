@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
-import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { CommercialControlPlaneModule, commercialEventFromEnvelope } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentsService } from '@jataqi/payments';
@@ -53,8 +53,11 @@ export class BillingService {
     this.invoices = await storage.collection<Invoice>(INVOICES_COLLECTION);
     this.payments = kernel.getModule<PaymentsModule>('payments').getService();
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
-    this.unsubscribePayment = kernel.bus.on('payment.verified', async (event) => this.handleVerifiedPayment(event as CommercialEvent));
-    this.unsubscribeRefund = kernel.bus.on('payment.refund.verified', async (event) => this.handleVerifiedRefund(event as CommercialEvent));
+    // F-01f enveloped cutover: consume first-class envelopes (the full
+    // CommercialEvent view is reconstructed for enveloped producers and
+    // passed through for bridge-synthesized legacy shapes).
+    this.unsubscribePayment = kernel.bus.onEnveloped('payment.verified', async (_topic, envelope) => this.handleVerifiedPayment(commercialEventFromEnvelope(envelope)));
+    this.unsubscribeRefund = kernel.bus.onEnveloped('payment.refund.verified', async (_topic, envelope) => this.handleVerifiedRefund(commercialEventFromEnvelope(envelope)));
   }
 
   stop(): void {

@@ -1,4 +1,5 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
+import { payloadOf } from '@jataqi/core-kernel';
 import type { ICollection } from '@jataqi/storage';
 import { KnowledgeEvents, KnowledgeService } from '@jataqi/knowledge-service';
 import type { VectorSearchModule } from '@jataqi/vector-search';
@@ -70,7 +71,10 @@ export class KnowledgeGraphModule implements IModule {
     if (this.cfg.autoIndexDocuments) {
       // When documents are ingested into knowledge service, automatically create
       // a Document entity and link it to its chunks.
-      kernel.bus.on(KnowledgeEvents.DocumentIngested, async (p: any) => {
+      // F-01f enveloped cutover: read the ingested-document payload from the
+      // envelope (bridge-synthesized while the knowledge producer migrates).
+      kernel.bus.onEnveloped(KnowledgeEvents.DocumentIngested, async (_topic, envelope) => {
+        const p = payloadOf<{ docId: string }>(envelope);
         const svc = kernel.getModule<KnowledgeService>('knowledge');
         const doc = await svc.getDocument(p.docId);
         if (!doc) return;

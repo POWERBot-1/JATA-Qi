@@ -10,6 +10,7 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
+import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import type { AuthenticatedPrincipal } from '@jataqi/authentication';
 import { CapabilityFabricModule } from '@jataqi/capability-fabric';
 
@@ -187,9 +188,29 @@ export class UnifiedLoopService {
     let governanceHeld = false;
     let holdReason = '';
 
+    // F-01b enveloped producer: loop audit events are first-class envelopes
+    // (tenant/actor/correlation preserved); the exact legacy LoopAuditEvent
+    // payload is preserved for existing subscribers. Stage entry is now
+    // emitted (G-10: UnifiedLoopEvents.StageEntered was declared but never
+    // emitted); entry emission is observational only and changes no control flow.
     const emit = (stage: LoopStage, status: StageStatus, summary: string): void => {
       const event: LoopAuditEvent = { loopId, correlationId, tenantId: actor.tenantId, stage, status, at: now(), summary };
-      void this.kernel.bus.emit(status === 'BOUNDARY_HELD' ? UnifiedLoopEvents.BoundaryHeld : UnifiedLoopEvents.StageCompleted, event);
+      const topic = status === 'BOUNDARY_HELD' ? UnifiedLoopEvents.BoundaryHeld : UnifiedLoopEvents.StageCompleted;
+      void emitPlainEnveloped(this.kernel.bus, topic, event, {
+        source: 'unified-loop',
+        tenantId: actor.tenantId,
+        actor: actor.id,
+        correlationId,
+      });
+    };
+    const emitEntered = (stage: LoopStage): void => {
+      const event: LoopAuditEvent = { loopId, correlationId, tenantId: actor.tenantId, stage, status: 'ENTERED', at: now(), summary: `Entered ${stage}.` };
+      void emitPlainEnveloped(this.kernel.bus, UnifiedLoopEvents.StageEntered, event, {
+        source: 'unified-loop',
+        tenantId: actor.tenantId,
+        actor: actor.id,
+        correlationId,
+      });
     };
 
     try {
@@ -198,6 +219,7 @@ export class UnifiedLoopService {
       // Drive every canonical stage exactly once, in order.
       while (true) {
         const stageStarted = now();
+        emitEntered(stage);
         const cap = registry.get(stage);
 
         // Decide whether this stage is skipped because a governance boundary
@@ -328,9 +350,11 @@ export class UnifiedLoopService {
           audit.notCompleted.length ? `notCompleted=${audit.notCompleted.join(',')}` : '',
         ].filter(Boolean).join('; ');
         baseResult.failureReason = `Mandatory-stage invariant violated: ${detail}`;
-        void this.kernel.bus.emit(UnifiedLoopEvents.LoopFailed, {
+        void emitPlainEnveloped(this.kernel.bus, UnifiedLoopEvents.LoopFailed, {
           loopId, correlationId, tenantId: actor.tenantId, at: endedAt, error: baseResult.failureReason,
-        } as LoopFailedEvent);
+        } as LoopFailedEvent, {
+          source: 'unified-loop', tenantId: actor.tenantId, actor: actor.id, correlationId,
+        });
         return baseResult;
       }
 
@@ -339,9 +363,11 @@ export class UnifiedLoopService {
         ...baseResult,
         outcome,
       };
-      void this.kernel.bus.emit(UnifiedLoopEvents.LoopCompleted, {
+      void emitPlainEnveloped(this.kernel.bus, UnifiedLoopEvents.LoopCompleted, {
         loopId, correlationId, tenantId: actor.tenantId, outcome, at: endedAt, stages: trace.length,
-      } as LoopCompletedEvent);
+      } as LoopCompletedEvent, {
+        source: 'unified-loop', tenantId: actor.tenantId, actor: actor.id, correlationId,
+      });
       return result;
     } catch (err) {
       const endedAt = now();
@@ -359,9 +385,11 @@ export class UnifiedLoopService {
         continuation: 'TERMINATE',
         failureReason: (err as Error).message,
       };
-      void this.kernel.bus.emit(UnifiedLoopEvents.LoopFailed, {
+      void emitPlainEnveloped(this.kernel.bus, UnifiedLoopEvents.LoopFailed, {
         loopId, correlationId, tenantId: actor.tenantId, at: endedAt, error: (err as Error).message,
-      } as LoopFailedEvent);
+      } as LoopFailedEvent, {
+        source: 'unified-loop', tenantId: actor.tenantId, actor: actor.id, correlationId,
+      });
       return failed;
     }
   }

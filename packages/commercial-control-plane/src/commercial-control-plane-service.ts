@@ -1,5 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { toEnvelopeFromCommercial, type EventEnvelope } from '@jataqi/core-kernel';
+import {
+  UnifiedOutbox,
+  UNIFIED_OUTBOX_COLLECTION,
+  UNIFIED_OUTBOX_COUNTER_COLLECTION,
+  createTenantMutex,
+  type ReplayUnifiedOutboxOptions,
+  type UnifiedOutboxIntegrity,
+  type UnifiedOutboxRecord,
+} from './unified-outbox.js';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { evaluatePolicy, scopeMatches, selectPolicy } from './policy-engine.js';
@@ -77,6 +87,7 @@ const COLLECTIONS = Object.freeze({
   experiments: 'commercial-control.experiments',
   experimentMeasurements: 'commercial-control.experiment-measurements',
   events: 'commercial-control.events',
+  eventSequence: 'commercial-control.events-seq',
 });
 
 export interface CommercialControlPlaneServiceConfig {
@@ -126,6 +137,20 @@ export class CommercialControlPlaneService {
   private experiments!: ICollection<CommercialExperiment>;
   private experimentMeasurements!: ICollection<CommercialExperimentMeasurement>;
   private events!: ICollection<CommercialEvent>;
+  /** F-01c: per-tenant atomic event-sequence counter (replaces count()+1). */
+  private eventSequence!: ICollection<{ id: string; tenantId: string; sequence: number }>;
+  /** F-01d: unified durable outbox bound to the service collections. */
+  private unifiedOutbox!: UnifiedOutbox;
+  /**
+   * F-01c/F-01d: per-tenant in-process publish mutex. Serializes each
+   * tenant's idempotency-check → sequence → persist → outbox critical
+   * section so concurrent publishers in this process cannot interleave
+   * check-then-act races (including the shared-driver absent-row
+   * create-race). Bus delivery happens AFTER the lock is released, so a
+   * subscriber that republishes can never self-deadlock. Cross-process
+   * atomicity still rests on the storage driver's row-lock CAS.
+   */
+  private readonly publishMutex = createTenantMutex();
 
   constructor(config: CommercialControlPlaneServiceConfig = {}) {
     this.clock = config.now ?? (() => Date.now());
@@ -151,6 +176,11 @@ export class CommercialControlPlaneService {
     this.experiments = await storage.collection<CommercialExperiment>(COLLECTIONS.experiments);
     this.experimentMeasurements = await storage.collection<CommercialExperimentMeasurement>(COLLECTIONS.experimentMeasurements);
     this.events = await storage.collection<CommercialEvent>(COLLECTIONS.events);
+    this.eventSequence = await storage.collection<{ id: string; tenantId: string; sequence: number }>(COLLECTIONS.eventSequence);
+    this.unifiedOutbox = new UnifiedOutbox(
+      await storage.collection<UnifiedOutboxRecord>(UNIFIED_OUTBOX_COLLECTION),
+      await storage.collection<{ id: string; tenantId: string; sequence: number }>(UNIFIED_OUTBOX_COUNTER_COLLECTION),
+    );
     // T-01-I: per-tenant atomic sequence counter for the ledger.
     this.ledgerSequence = await storage.collection<{ id: string; tenantId: string; sequence: number }>('commercial-control-plane.ledger-seq');
   }
@@ -1197,25 +1227,128 @@ export class CommercialControlPlaneService {
     return copy(updated);
   }
 
-  /** Versioned durable event recording with idempotency and tenant-scoped replay. */
+  /**
+   * Versioned durable event recording with idempotency and tenant-scoped replay.
+   *
+   * F-01: sequence is assigned from a per-tenant CAS counter (replacing the
+   * previous global `count() + 1`, which raced under concurrency); every event
+   * is projected into the unified durable outbox (idempotent, self-healing on
+   * the duplicate path); bus delivery is enveloped with the exact legacy
+   * `CommercialEvent` payload preserved for existing subscribers.
+   */
   async publishEvent(actor: CommercialActor, input: PublishCommercialEventInput): Promise<CommercialEvent> {
     assertActor(actor);
     validateEventInput(input);
-    if (input.idempotencyKey) {
-      const duplicate = (await this.events.query({ where: (event) => event.tenantId === actor.tenantId && event.idempotencyKey === input.idempotencyKey, limit: 1 }))[0];
-      if (duplicate) return copy(duplicate);
-    }
-    const now = this.now();
-    const event: CommercialEvent = {
-      id: randomUUID(), sequence: (await this.events.count()) + 1, eventType: input.eventType, eventVersion: input.eventVersion ?? 1,
-      tenantId: actor.tenantId, source: input.source, actor: actor.id, entityId: input.entityId, timestamp: now,
-      correlationId: input.correlationId, causationId: input.causationId, payload: copy(input.payload), schemaVersion: input.schemaVersion ?? 1,
-      provenance: copy(input.provenance), privacyClassification: input.privacyClassification ?? 'INTERNAL', idempotencyKey: input.idempotencyKey,
-    };
-    await this.events.put(event);
-    await this.api.bus.emit(event.eventType, copy(event));
-    await this.api.bus.emit(CommercialControlPlaneEvents.EventRecorded, copy(event));
+    // Durable state (idempotency check, sequencing, persistence, outbox
+    // projection) commits under the per-tenant mutex BEFORE volatile bus
+    // delivery: a crash between the two is recoverable via replay
+    // (at-least-once + idempotent).
+    const event = await this.publishMutex.runExclusive(actor.tenantId, async () => {
+      if (input.idempotencyKey) {
+        const duplicate = (await this.events.query({ where: (event) => event.tenantId === actor.tenantId && event.idempotencyKey === input.idempotencyKey, limit: 1 }))[0];
+        if (duplicate) {
+          // Self-healing: a pre-F-01 duplicate may lack a unified-outbox record.
+          await this.unifiedOutbox.publish(toEnvelopeFromCommercial(duplicate.eventType, duplicate));
+          return copy(duplicate);
+        }
+      }
+      const now = this.now();
+      const fresh: CommercialEvent = {
+        id: randomUUID(), sequence: await this.nextEventSequence(actor.tenantId), eventType: input.eventType, eventVersion: input.eventVersion ?? 1,
+        tenantId: actor.tenantId, source: input.source, actor: actor.id, entityId: input.entityId, timestamp: now,
+        correlationId: input.correlationId, causationId: input.causationId, payload: copy(input.payload), schemaVersion: input.schemaVersion ?? 1,
+        provenance: copy(input.provenance), privacyClassification: input.privacyClassification ?? 'INTERNAL', idempotencyKey: input.idempotencyKey,
+      };
+      await this.events.put(fresh);
+      await this.unifiedOutbox.publish(toEnvelopeFromCommercial(fresh.eventType, fresh));
+      return copy(fresh);
+    });
+    await this.emitEnvelopedEvent(event);
     return copy(event);
+  }
+
+  /**
+   * F-01 enveloped dual delivery: every recorded commercial event is emitted
+   * once under its own type and once under the canonical audit topic, exactly
+   * as before — but as a first-class envelope, with the legacy
+   * `CommercialEvent` payload preserved for existing subscribers.
+   */
+  private async emitEnvelopedEvent(event: CommercialEvent): Promise<void> {
+    const envelope: EventEnvelope = toEnvelopeFromCommercial(event.eventType, event);
+    const auditEnvelope: EventEnvelope = toEnvelopeFromCommercial(CommercialControlPlaneEvents.EventRecorded, event);
+    await this.api.bus.emitEnveloped(event.eventType, envelope, { legacyPayload: copy(event) });
+    await this.api.bus.emitEnveloped(CommercialControlPlaneEvents.EventRecorded, auditEnvelope, { legacyPayload: copy(event) });
+  }
+
+  /**
+   * F-01c: concurrency-safe per-tenant event sequencing (T-01-I pattern).
+   * Replaces the previous global `(await this.events.count()) + 1`, under
+   * which two concurrent publishers could both observe the same count and
+   * produce duplicate sequences.
+   *
+   * Sequences are per-tenant (replay is tenant-scoped). The counter is
+   * initialized from the tenant's current maximum sequence so pre-F-01 rows
+   * (globally numbered) are never collided with.
+   */
+  private async nextEventSequence(tenantId: string): Promise<number> {
+    const counterId = `seq:${tenantId}`;
+    const absent = await this.eventSequence.get(counterId);
+    if (!absent) {
+      const rows = await this.events.query({ where: (event) => event.tenantId === tenantId });
+      let maximum = 0;
+      for (const row of rows) {
+        if (row.sequence > maximum) maximum = row.sequence;
+      }
+      // Preserve-existing create (never clobber): on drivers where CAS of an
+      // absent row cannot lock, a late-committing create must not reset a
+      // concurrently advanced counter. First-use callers serialize in-process
+      // via `publishMutex`; see the residual cross-process note on
+      // `UnifiedOutbox.nextSequence`.
+      await this.eventSequence.cas(
+        counterId,
+        () => true,
+        (current) => (current as { id: string; tenantId: string; sequence: number } | undefined) ?? { id: counterId, tenantId, sequence: maximum },
+      );
+    }
+    // Bounded but burst-tolerant: concurrent-publish bursts larger than a
+    // handful of writers need more rounds than the T-01-I ledger default of 8
+    // (each round lets at least one writer through). The bound keeps the
+    // fail-closed property; sustained exhaustion still throws rather than
+    // spinning forever.
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const current = await this.eventSequence.get(counterId);
+      const observed = current ?? { id: counterId, tenantId, sequence: 0 };
+      const next = { id: counterId, tenantId, sequence: observed.sequence + 1 };
+      const res = await this.eventSequence.cas(
+        counterId,
+        (candidate) => (candidate?.sequence ?? 0) === observed.sequence,
+        () => next,
+      );
+      if (res.ok) return next.sequence;
+    }
+    throw new CommercialControlPlaneError('Event sequence counter CAS exhausted retries.');
+  }
+
+  /** Access the unified durable outbox (F-01d). Callers must respect tenant boundaries. */
+  getUnifiedOutbox(): UnifiedOutbox {
+    return this.unifiedOutbox;
+  }
+
+  /**
+   * Tenant-scoped replay over the unified durable outbox (F-01d). The replay
+   * is inherently tenant-bound: only the actor's own tenant records are
+   * visible (global_admin reads another tenant only via explicit per-tenant
+   * tooling, never implicitly here).
+   */
+  async replayUnifiedOutbox(actor: CommercialActor, options: ReplayUnifiedOutboxOptions = {}): Promise<UnifiedOutboxRecord[]> {
+    assertActor(actor);
+    return this.unifiedOutbox.replay(actor.tenantId, options);
+  }
+
+  /** Verify unified-outbox integrity for the actor tenant (F-01d). */
+  async verifyUnifiedOutboxIntegrity(actor: CommercialActor): Promise<UnifiedOutboxIntegrity> {
+    assertActor(actor);
+    return this.unifiedOutbox.verifyIntegrity(actor.tenantId);
   }
 
   async replayEvents(actor: CommercialActor, options: ReplayCommercialEventsOptions = {}): Promise<CommercialEvent[]> {
@@ -1722,6 +1855,61 @@ function stableStringify(value: unknown): string {
 
 function copy<T>(value: T): T {
   return structuredClone(value);
+}
+
+/**
+ * F-01f enveloped cutover: rebuild the `CommercialEvent` view a legacy
+ * subscriber expects from a first-class envelope (metadata from the envelope,
+ * content from its payload). When the envelope content already IS a legacy
+ * `CommercialEvent` (bridge-synthesized from a raw `CommercialEvent` emit by
+ * a not-yet-migrated producer), it is returned as-is. Never grants authority:
+ * pure data reconstruction for migrated consumers.
+ */
+export function commercialEventFromEnvelope(envelope: EventEnvelope): CommercialEvent {
+  const inner = envelope.payload as Partial<CommercialEvent> | undefined;
+  if (isCommercialEventShape(inner)) return inner as CommercialEvent;
+  const content: Record<string, unknown> =
+    inner !== null && typeof inner === 'object' && !Array.isArray(inner)
+      ? (inner as Record<string, unknown>)
+      : {};
+  return {
+    id: envelope.id,
+    // First-class commercial envelopes always carry a sequence; unsequenced
+    // bridge deliveries (plain-payload producers) report 0 rather than a
+    // fabricated order position.
+    sequence: envelope.sequence ?? 0,
+    eventType: envelope.eventType,
+    eventVersion: envelope.eventVersion,
+    tenantId: envelope.tenantId,
+    source: envelope.source,
+    ...(envelope.actor !== undefined ? { actor: envelope.actor } : {}),
+    ...(envelope.entityId !== undefined ? { entityId: envelope.entityId } : {}),
+    timestamp: envelope.timestamp,
+    correlationId: envelope.correlationId,
+    ...(envelope.causationId !== undefined ? { causationId: envelope.causationId } : {}),
+    payload: content,
+    schemaVersion: envelope.schemaVersion,
+    provenance: envelope.provenance,
+    privacyClassification: envelope.privacyClassification,
+    ...(envelope.idempotencyKey !== undefined ? { idempotencyKey: envelope.idempotencyKey } : {}),
+  };
+}
+
+function isCommercialEventShape(value: unknown): value is CommercialEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const event = value as Partial<CommercialEvent>;
+  return (
+    typeof event.id === 'string' &&
+    typeof event.tenantId === 'string' &&
+    typeof event.eventType === 'string' &&
+    typeof event.eventVersion === 'number' &&
+    typeof event.schemaVersion === 'number' &&
+    typeof event.source === 'string' &&
+    typeof event.correlationId === 'string' &&
+    typeof event.timestamp === 'number' &&
+    event.payload !== null &&
+    typeof event.payload === 'object'
+  );
 }
 
 function unique(values: readonly string[]): string[] {

@@ -1,4 +1,5 @@
 import { EventBus } from './event-bus.js';
+import { SYSTEM_TENANT, emitPlainEnveloped } from './event-envelope.js';
 import { Container } from './container.js';
 import { Logger } from './logger.js';
 import { Config, EnvConfigSource, ObjectConfigSource } from './config.js';
@@ -56,7 +57,19 @@ export class Kernel implements KernelApi {
     this.modules.set(module.id, module);
     this.states.set(module.id, 'registered');
     this.logger.debug(`module registered: ${module.id}`);
-    this.bus.emit(KernelEvents.ModuleRegistered, { id: module.id });
+    this.emitKernel(KernelEvents.ModuleRegistered, { id: module.id });
+  }
+
+  /**
+   * F-01b enveloped producer for kernel lifecycle events. Kernel events belong
+   * to no tenant, so envelopes carry SYSTEM_TENANT; the exact legacy payload
+   * is preserved for existing subscribers (single emission, no topic renames).
+   */
+  private emitKernel(event: KernelEventName, payload: Record<string, unknown>): Promise<void> {
+    return emitPlainEnveloped(this.bus, event, payload, {
+      source: 'core-kernel',
+      tenantId: SYSTEM_TENANT,
+    });
   }
 
   getModule<T extends IModule = IModule>(id: ModuleId): T {
@@ -112,7 +125,7 @@ export class Kernel implements KernelApi {
   async boot(): Promise<void> {
     if (this.booted) return;
     this.logger.info('kernel booting');
-    await this.bus.emit(KernelEvents.KernelBooting, {});
+    await this.emitKernel(KernelEvents.KernelBooting, {});
 
     const order = this.topology();
 
@@ -120,14 +133,14 @@ export class Kernel implements KernelApi {
     for (const id of order) {
       const m = this.modules.get(id)!;
       this.setState(id, 'initializing');
-      await this.bus.emit(KernelEvents.ModuleInitStart, { id });
+      await this.emitKernel(KernelEvents.ModuleInitStart, { id });
       try {
         if (m.init) await m.init(this);
         this.setState(id, 'initialized');
-        await this.bus.emit(KernelEvents.ModuleInitDone, { id });
+        await this.emitKernel(KernelEvents.ModuleInitDone, { id });
       } catch (err) {
         this.setState(id, 'error');
-        await this.bus.emit(KernelEvents.ModuleError, { id, phase: 'init', err });
+        await this.emitKernel(KernelEvents.ModuleError, { id, phase: 'init', err });
         throw err;
       }
     }
@@ -136,15 +149,15 @@ export class Kernel implements KernelApi {
     for (const id of order) {
       const m = this.modules.get(id)!;
       this.setState(id, 'starting');
-      await this.bus.emit(KernelEvents.ModuleStart, { id });
+      await this.emitKernel(KernelEvents.ModuleStart, { id });
       try {
         if (m.start) await m.start(this);
         this.setState(id, 'started');
         this.startedOrder.push(id);
-        await this.bus.emit(KernelEvents.ModuleStarted, { id });
+        await this.emitKernel(KernelEvents.ModuleStarted, { id });
       } catch (err) {
         this.setState(id, 'error');
-        await this.bus.emit(KernelEvents.ModuleError, { id, phase: 'start', err });
+        await this.emitKernel(KernelEvents.ModuleError, { id, phase: 'start', err });
         // Best-effort shutdown of already-started modules.
         await this.shutdown();
         throw err;
@@ -153,33 +166,33 @@ export class Kernel implements KernelApi {
 
     this.booted = true;
     this.logger.info(`kernel booted (${order.length} modules)`);
-    await this.bus.emit(KernelEvents.KernelBooted, { moduleCount: order.length });
+    await this.emitKernel(KernelEvents.KernelBooted, { moduleCount: order.length });
   }
 
   /** Graceful shutdown in reverse-start order. Idempotent. */
   async shutdown(): Promise<void> {
     if (!this.booted && this.startedOrder.length === 0) return;
     this.logger.info('kernel shutting down');
-    await this.bus.emit(KernelEvents.KernelShuttingDown, {});
+    await this.emitKernel(KernelEvents.KernelShuttingDown, {});
 
     for (const id of [...this.startedOrder].reverse()) {
       const m = this.modules.get(id);
       if (!m) continue;
       this.setState(id, 'stopping');
-      await this.bus.emit(KernelEvents.ModuleStop, { id });
+      await this.emitKernel(KernelEvents.ModuleStop, { id });
       try {
         if (m.stop) await m.stop(this);
       } catch (err) {
         this.logger.error(`error stopping module ${id}`, err as Error);
-        await this.bus.emit(KernelEvents.ModuleError, { id, phase: 'stop', err });
+        await this.emitKernel(KernelEvents.ModuleError, { id, phase: 'stop', err });
       }
       this.setState(id, 'stopped');
-      await this.bus.emit(KernelEvents.ModuleStopped, { id });
+      await this.emitKernel(KernelEvents.ModuleStopped, { id });
     }
     this.startedOrder = [];
     this.booted = false;
     this.logger.info('kernel shut down');
-    await this.bus.emit(KernelEvents.KernelShutdown, {});
+    await this.emitKernel(KernelEvents.KernelShutdown, {});
   }
 
   /** Wait for a kernel event once. Convenience for tests/orchestration. */

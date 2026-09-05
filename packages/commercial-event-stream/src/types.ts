@@ -9,6 +9,27 @@ export interface CommercialEventContract {
   validate(event: CommercialEvent): string[];
 }
 
+/**
+ * F-01e schema-compatibility policy per event type.
+ *
+ * `exact` (default): only an exactly matching
+ * (eventType, eventVersion, schemaVersion) contract validates; anything else
+ * is SCHEMA_REJECTED fail-closed.
+ *
+ * `fallback-previous-schema`: when no exact contract exists, the highest
+ * registered contract with the same (eventType, eventVersion) and a LOWER
+ * schemaVersion validates instead. This is an explicit, admin-registered
+ * opt-in for additive schema evolution — never implicit.
+ */
+export type SchemaCompatibilityPolicy = 'exact' | 'fallback-previous-schema';
+
+/** Result of registry contract resolution. */
+export interface ResolvedEventContract {
+  contract: CommercialEventContract;
+  /** True when resolution used the fallback policy rather than an exact match. */
+  fallback: boolean;
+}
+
 export interface CommercialEventHandler {
   id: string;
   eventTypes: string[];

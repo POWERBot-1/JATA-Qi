@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
@@ -117,7 +118,7 @@ export class CapabilityFabricService {
     await assertNoCapabilityCycle(capability, all);
     await this.capabilities.put(capability);
     const audit = await this.appendAudit(capability.tenantId, 'CAPABILITY_REGISTERED', capability.id, actor.id, digest(capability));
-    await this.api.bus.emit(CapabilityFabricEvents.CapabilityRegistered, {
+    await this.emitFabricEvent(CapabilityFabricEvents.CapabilityRegistered, capability.tenantId, actor.id, audit.id, {
       capabilityId: capability.id, tenantId: capability.tenantId, lifecycleState: capability.lifecycleState,
       safetyClass: capability.safetyClass, auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -134,7 +135,7 @@ export class CapabilityFabricService {
     const updated: JqCapability = { ...capability, lifecycleState: input.state, updatedAt: Date.now() };
     await this.capabilities.put(updated);
     const audit = await this.appendAudit(updated.tenantId, 'CAPABILITY_TRANSITIONED', updated.id, actor.id, digest({ from: capability.lifecycleState, to: updated.lifecycleState, reason: input.reason, provenance: input.provenance }));
-    await this.api.bus.emit(CapabilityFabricEvents.CapabilityTransitioned, {
+    await this.emitFabricEvent(CapabilityFabricEvents.CapabilityTransitioned, updated.tenantId, actor.id, audit.id, {
       capabilityId: updated.id, tenantId: updated.tenantId, previousState: capability.lifecycleState, lifecycleState: updated.lifecycleState,
       safetyClass: updated.safetyClass, auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -156,7 +157,7 @@ export class CapabilityFabricService {
     };
     await this.grants.put(grant);
     const audit = await this.appendAudit(grant.tenantId, 'GRANT_ISSUED', grant.id, actor.id, digest(grant));
-    await this.api.bus.emit(CapabilityFabricEvents.GrantIssued, {
+    await this.emitFabricEvent(CapabilityFabricEvents.GrantIssued, grant.tenantId, actor.id, audit.id, {
       grantId: grant.id, capabilityId: grant.capabilityId, subjectActorId: grant.subjectActorId,
       expiresAt: grant.expiresAt, auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -175,7 +176,7 @@ export class CapabilityFabricService {
     };
     await this.grants.put(updated);
     const audit = await this.appendAudit(updated.tenantId, 'GRANT_REVOKED', updated.id, actor.id, digest({ grantId: updated.id, reason: updated.revocationReason, provenance: updated.provenance }));
-    await this.api.bus.emit(CapabilityFabricEvents.GrantRevoked, {
+    await this.emitFabricEvent(CapabilityFabricEvents.GrantRevoked, updated.tenantId, actor.id, audit.id, {
       grantId: updated.id, capabilityId: updated.capabilityId, subjectActorId: updated.subjectActorId,
       auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -216,7 +217,7 @@ export class CapabilityFabricService {
     };
     await this.assessments.put(assessment);
     const audit = await this.appendAudit(assessment.tenantId, 'ACCESS_ASSESSED', assessment.id, actor.id, digest({ capabilityId: capability.id, outcome: assessment.outcome, checks }));
-    await this.api.bus.emit(CapabilityFabricEvents.AccessAssessed, {
+    await this.emitFabricEvent(CapabilityFabricEvents.AccessAssessed, assessment.tenantId, actor.id, audit.id, {
       assessmentId: assessment.id, capabilityId: capability.id, actorId: actor.id, outcome: assessment.outcome,
       auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -268,7 +269,7 @@ export class CapabilityFabricService {
     assertNoEngineCycle(engine, engines);
     await this.engines.put(engine);
     const audit = await this.appendAudit(engine.tenantId, 'ENGINE_REGISTERED', engine.id, actor.id, digest(engine));
-    await this.api.bus.emit(CapabilityFabricEvents.EngineRegistered, {
+    await this.emitFabricEvent(CapabilityFabricEvents.EngineRegistered, engine.tenantId, actor.id, audit.id, {
       engineGenomeId: engine.id, engineId: engine.engineId, tenantId: engine.tenantId, lifecycleState: engine.lifecycleState,
       safetyClass: engine.safetyClass, auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -292,7 +293,7 @@ export class CapabilityFabricService {
     const updated: EngineGenome = { ...engine, lifecycleState: input.state, updatedAt: Date.now() };
     await this.engines.put(updated);
     const audit = await this.appendAudit(updated.tenantId, 'ENGINE_TRANSITIONED', updated.id, actor.id, digest({ from: engine.lifecycleState, to: updated.lifecycleState, reason: input.reason, provenance: input.provenance }));
-    await this.api.bus.emit(CapabilityFabricEvents.EngineTransitioned, {
+    await this.emitFabricEvent(CapabilityFabricEvents.EngineTransitioned, updated.tenantId, actor.id, audit.id, {
       engineGenomeId: updated.id, engineId: updated.engineId, tenantId: updated.tenantId,
       previousState: engine.lifecycleState, lifecycleState: updated.lifecycleState, auditReference: audit.id, doesNotAuthorizeExecution: true,
     });
@@ -364,6 +365,26 @@ export class CapabilityFabricService {
       previousHash = entry.hash;
     }
     return { tenantId, valid: true, entries: entries.length };
+  }
+
+  /**
+   * F-01b enveloped producer: every registry event is a first-class envelope
+   * carrying tenant/actor/correlation, with the exact legacy payload preserved
+   * for existing subscribers (single emission, no topic renames).
+   */
+  private emitFabricEvent(
+    event: string,
+    tenantId: string,
+    actorId: string,
+    correlationId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    return emitPlainEnveloped(this.api.bus, event, payload, {
+      source: 'capability-fabric',
+      tenantId,
+      actor: actorId,
+      correlationId,
+    });
   }
 
   private async requireCapabilityForActor(actor: CommercialActor, capabilityId: string): Promise<JqCapability> {

@@ -128,13 +128,11 @@ in-repo consumer only through an explicit, reviewed nomination — new wildcard
 or catch-all consumers should not be added while the two-plane split (F-01)
 is open.
 
-## D. Explicit limitation
+## D. Explicit limitation (pre-F-01 baseline note; see Section E)
 
-This document records and clarifies the existing event-surface contract. It
-does not perform code-level schema unification.
+This document records and clarifies the existing event-surface contract. At
+the time of writing it did not perform code-level schema unification.
 
-- **F-01 remains open.** No payload shape, topic name, emission site, or
-  subscription was changed by this document.
 - Unification conditions C-3 (document the two-plane schema) and C-4 (confirm
   publish-only intent and nominate consumers) are addressed here at the
   documentation level; conditions C-1 (in-repo loop orchestration) and C-2
@@ -142,3 +140,43 @@ does not perform code-level schema unification.
   `JATA_QI_RECOVERY_MANIFEST.md`.
 - Documenting a contract is not implementing a unified schema, and passing
   documentation review is not production verification.
+
+## E. F-01 unification (implemented)
+
+F-01 closes the two-plane split described above with a backward-compatible
+unified envelope; no topic was renamed and no subscription was deleted:
+
+- **Envelope + bus** (`packages/core-kernel/src/event-envelope.ts`,
+  `packages/core-kernel/src/event-bus.ts`): `EventEnvelope` v1 with canonical
+  JSON/sha256 helpers, chain sealing/verification, and dual verification for
+  historical chains. `emitEnveloped` / `onEnveloped` / `onAnyEnveloped` carry
+  `(topic, envelope)`; legacy `emit` bridges a best-effort envelope to
+  enveloped listeners, and `emitEnveloped` delivers a preserved legacy payload
+  to legacy listeners — one emission, no duplicates.
+- **Producers migrated (F-01b)**: core-kernel lifecycle, commercial-control-plane
+  (dual delivery under the event type and `commercial.event.recorded`),
+  capability-fabric registry events, commercial-observability telemetry,
+  unified-loop audit events (stage entry now emitted under the previously
+  declared-but-silent `UnifiedLoopEvents.StageEntered`), loop-host audit
+  events. All other milestone emitters are unchanged and served by the bridge
+  (explicit F-01b scope boundary).
+- **Subscribers cut over (F-01f)** to `onEnveloped` on the same nominated
+  topics: billing, revenue-ledger, commercial-memory, commercial-observability
+  capture (full `CommercialEvent` view via `commercialEventFromEnvelope` from
+  `@jataqi/commercial-control-plane`), knowledge-graph document ingest (plain
+  payload via `payloadOf` from `@jataqi/core-kernel`).
+- **Nomination is machine-readable (F-01e/C-4)**: `F01_NOMINATED_SUBSCRIPTIONS`,
+  `isNominatedSubscription`, and `auditSubscriptionCoverage` in
+  `@jataqi/core-kernel`, enforced by
+  `packages/core-kernel/test/f01-subscription-governance.test.ts`. Still no
+  `onAny` consumer in non-test source.
+- **Sequencing + durability (F-01c/d)**: per-tenant CAS event sequencing and a
+  hash-chained unified durable outbox with tenant-scoped replay, tenant-guarded
+  ack/dead-letter/quarantine, and integrity verification
+  (`packages/commercial-control-plane/src/unified-outbox.ts`,
+  `commercial-control-plane-service.ts`). Delivery is at-least-once with
+  idempotent processing — exactly-once is not claimed.
+- **Schema registry + governance (F-01e)**: versioned contracts with a default
+  `exact` policy (unknown/incompatible schemas are SCHEMA_REJECTED
+  fail-closed) and an explicit admin-registered `fallback-previous-schema`
+  opt-in (`packages/commercial-event-stream/src/`).
