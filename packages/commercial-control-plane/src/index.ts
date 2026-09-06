@@ -28,21 +28,47 @@ export { assertCampaignTransition, assertProductTransition, isCampaignTransition
 export { evaluatePolicy, scopeMatches, scopeSpecificity, selectPolicy } from './policy-engine.js';
 export {
   DEFAULT_MONETARY_SCALE,
+  MINOR_SCALE_BY_CURRENCY,
   MONEY_ROUNDING_RULE,
+  MONTHS_PER_YEAR,
+  MoneyError,
+  annualToMonthly,
+  assertMonetaryValue,
   decimalParts,
+  divideMinorUnitsHalfUp,
   fromMinorUnits,
+  fromMinorUnitsAtScale,
   isQuantizedAmount,
+  minorUnitsAtScale,
   minorUnitsOf,
+  minorUnitsOfValue,
   moneyAtLeast,
   moneyEquals,
   moneyLessThan,
   moneyProductEquals,
   moneyWithin,
+  normalizeCurrency,
   quantizeAmount,
+  quantizeAmountAtScale,
   quantizeMonetaryValue,
+  roundHalfUpToScale,
+  scaleOf,
   sumMonetaryAmounts,
   sumMoney,
 } from './money.js';
+export { convertMoney, createStaticFxProvider } from './fx.js';
+export type { FxConversion, FxRateProvider, FxRateResolver, FxSource, StaticFxRateTable } from './fx.js';
+export {
+  LEGACY_FIXED_MONETARY_SCALE,
+  T09_MONEY_MIGRATION_MODE,
+  auditMonetaryValue,
+  auditMonetaryValues,
+  isBitIdenticalUnderPerCurrencyScale,
+  legacyMinorUnits,
+  legacyQuantizeAmount,
+  planMonetaryScaleMigration,
+} from './money-migration.js';
+export type { MonetaryScaleAuditReport, MonetaryScaleAuditRow, MonetaryScaleMigrationPlan } from './money-migration.js';
 export { CommercialAutonomy, CommercialControlPlaneEvents } from './types.js';
 export type {
   ActionExecutionStatus,

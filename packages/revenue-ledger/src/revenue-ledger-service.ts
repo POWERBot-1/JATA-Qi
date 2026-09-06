@@ -116,7 +116,8 @@ export class RevenueLedgerService {
   async recordCost(actor: CommercialActor, input: RecordCostInput): Promise<RevenueLedgerEntry> {
     assertManager(actor);
     if (!input.evidence.length || !input.category || !input.notes?.trim() && input.notes !== undefined) throw new RevenueLedgerError('Cost category, evidence, and any supplied notes must be valid.');
-    // T-07 money policy: amounts quantize at the boundary (2 dp default).
+    // T-07/T-09 money policy: amounts quantize at the boundary at THEIR OWN
+    // currency's minor-unit scale (JPY/KRW/CLP 0dp, BHD/KWD/OMR 3dp, default 2dp).
     const amount = quantizeMonetaryValue(input.amount);
     assertMoney(amount);
     // T-06: entry + sequence allocation commit as ONE composed write (on
@@ -157,7 +158,8 @@ export class RevenueLedgerService {
     const byCurrency = new Map<string, { recognized: bigint; reversed: bigint; measured: bigint; estimated: bigint }>();
     for (const entry of entries) {
       const bucket = byCurrency.get(entry.amount.currency) ?? { recognized: 0n, reversed: 0n, measured: 0n, estimated: 0n };
-      const minor = minorUnitsOf(entry.amount.amount);
+      // T-09: minor units are derived at the entry currency's own scale.
+      const minor = minorUnitsOf(entry.amount.amount, entry.amount.currency);
       if (entry.entryType === 'REVENUE' && entry.recognitionStatus === 'RECOGNIZED') bucket.recognized += minor;
       if (entry.entryType === 'REFUND_REVERSAL' && entry.recognitionStatus === 'REVERSED') bucket.reversed += minor;
       if (entry.entryType === 'COST') {
@@ -169,11 +171,11 @@ export class RevenueLedgerService {
     return [...byCurrency.entries()]
       .map(([currency, bucket]) => ({
         currency,
-        recognizedRevenue: fromMinorUnits(bucket.recognized),
-        reversedRevenue: fromMinorUnits(bucket.reversed),
-        measuredCosts: fromMinorUnits(bucket.measured),
-        estimatedCosts: fromMinorUnits(bucket.estimated),
-        contribution: fromMinorUnits(bucket.recognized - bucket.reversed - bucket.measured),
+        recognizedRevenue: fromMinorUnits(bucket.recognized, currency),
+        reversedRevenue: fromMinorUnits(bucket.reversed, currency),
+        measuredCosts: fromMinorUnits(bucket.measured, currency),
+        estimatedCosts: fromMinorUnits(bucket.estimated, currency),
+        contribution: fromMinorUnits(bucket.recognized - bucket.reversed - bucket.measured, currency),
       }))
       .sort((a, b) => a.currency.localeCompare(b.currency));
   }

@@ -1487,7 +1487,28 @@ export class CommercialControlPlaneService {
         // T-07 money policy: monetary budgets consume exact minor units so
         // accumulation of float amounts (0.1 + 0.2) can never drift and the
         // limit comparison is scale-exact.
-        const requestedMinor = sumMatchingResourceMinorUnits(decision.resourceRequirements, budget);
+        // T-09: minor units are only comparable inside ONE currency, so the
+        // budget's currency is resolved explicitly first (per-currency scale:
+        // JPY 0dp, KWD 3dp, default 2dp). A monetary budget whose matching
+        // resources span more than one currency cannot be evaluated in exact
+        // minor units and fails closed rather than silently mixing scales.
+        const matchedCurrencies = collectMatchingMoneyCurrencies(decision.resourceRequirements, budget);
+        for (const action of allActions) {
+          const actionDecision = allDecisions.get(action.decisionId);
+          if (!actionDecision || !scopeMatches(budget.scope, actionDecision)) continue;
+          if (!withinBudgetPeriod(action.completedAt ?? action.createdAt, budget.period, now)) continue;
+          const consumedResources = action.resourceConsumption.length > 0 ? action.resourceConsumption : action.resourceRequirements;
+          collectMatchingMoneyCurrencies(action.executionStatus === 'COMPLETED' ? consumedResources : action.resourceRequirements, budget, matchedCurrencies);
+          if (action.financialCost && moneyMatchesBudget(action.financialCost, budget)) matchedCurrencies.add(action.financialCost.currency);
+        }
+        const budgetCurrency = resolveMonetaryBudgetCurrency(budget, matchedCurrencies);
+        if (budgetCurrency === undefined) {
+          return {
+            budgetId: budget.id, allowed: false, limit: 0, consumed: 0, reserved: 0, requested: 0, remaining: 0,
+            currency: budget.currency ?? [...matchedCurrencies].sort().join('+'),
+          };
+        }
+        const requestedMinor = sumMatchingResourceMinorUnits(decision.resourceRequirements, budget, budgetCurrency);
         let consumedMinor = 0n;
         let reservedMinor = 0n;
         for (const action of allActions) {
@@ -1496,24 +1517,24 @@ export class CommercialControlPlaneService {
           if (!withinBudgetPeriod(action.completedAt ?? action.createdAt, budget.period, now)) continue;
           if (action.executionStatus === 'COMPLETED') {
             const consumedResources = action.resourceConsumption.length > 0 ? action.resourceConsumption : action.resourceRequirements;
-            consumedMinor += sumMatchingResourceMinorUnits(consumedResources, budget);
+            consumedMinor += sumMatchingResourceMinorUnits(consumedResources, budget, budgetCurrency);
             const hasMatchingMoneyConsumption = consumedResources.some((resource) =>
               resource.resourceType === 'MONEY' && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency),
             );
             if (budget.resourceType === 'MONEY' && action.financialCost && !hasMatchingMoneyConsumption && moneyMatchesBudget(action.financialCost, budget)) {
-              consumedMinor += minorUnitsOf(action.financialCost.amount);
+              consumedMinor += minorUnitsOf(action.financialCost.amount, action.financialCost.currency);
             }
           } else if (['QUEUED', 'EXECUTING', 'VERIFYING', 'RETRYING'].includes(action.executionStatus)) {
-            reservedMinor += sumMatchingResourceMinorUnits(action.resourceRequirements, budget);
+            reservedMinor += sumMatchingResourceMinorUnits(action.resourceRequirements, budget, budgetCurrency);
           }
         }
-        const limitMinor = minorUnitsOf(budget.limit);
+        const limitMinor = minorUnitsOf(budget.limit, budgetCurrency);
         const effectiveRemainingMinor = limitMinor - consumedMinor - reservedMinor < 0n ? 0n : limitMinor - consumedMinor - reservedMinor;
-        const requested = fromMinorUnits(requestedMinor);
-        const consumed = fromMinorUnits(consumedMinor);
-        const reserved = fromMinorUnits(reservedMinor);
-        const remaining = fromMinorUnits(effectiveRemainingMinor);
-        return { budgetId: budget.id, allowed: requestedMinor <= effectiveRemainingMinor, limit: fromMinorUnits(limitMinor), consumed, reserved, requested, remaining, currency: budget.currency ?? '' };
+        const requested = fromMinorUnits(requestedMinor, budgetCurrency);
+        const consumed = fromMinorUnits(consumedMinor, budgetCurrency);
+        const reserved = fromMinorUnits(reservedMinor, budgetCurrency);
+        const remaining = fromMinorUnits(effectiveRemainingMinor, budgetCurrency);
+        return { budgetId: budget.id, allowed: requestedMinor <= effectiveRemainingMinor, limit: fromMinorUnits(limitMinor, budgetCurrency), consumed, reserved, requested, remaining, currency: budget.currency ?? budgetCurrency };
       }
       const requested = sumMatchingResources(decision.resourceRequirements, budget);
       let consumed = 0;
@@ -1920,17 +1941,62 @@ function isMonetaryBudget(budget: CommercialBudget): boolean {
   return budget.resourceType === 'MONEY' || budget.currency !== undefined;
 }
 
-/** T-07: exact minor-unit sum of the resources matching a monetary budget. */
-function sumMatchingResourceMinorUnits(resources: readonly ResourceRequirement[], budget: CommercialBudget): bigint {
+/**
+ * T-07/T-09: exact minor-unit sum of the resources matching a monetary budget,
+ * converted at the RESOLVED budget currency's minor-unit scale (never at a
+ * fixed 2-decimal assumption).
+ */
+function sumMatchingResourceMinorUnits(resources: readonly ResourceRequirement[], budget: CommercialBudget, currency: string): bigint {
   let minor = 0n;
   for (const resource of resources) {
     if (resource.resourceType === budget.resourceType && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency)) {
-      minor += minorUnitsOf(resource.amount);
+      // A resource that carries its own currency is converted at that
+      // currency's scale; matching already guarantees it is the budget
+      // currency whenever the budget declares one.
+      minor += minorUnitsOf(resource.amount, resource.currency ?? currency);
     }
   }
   return minor;
 }
 
+/** T-09: the distinct currencies of the MONEY resources matching a monetary budget. */
+function collectMatchingMoneyCurrencies(
+  resources: readonly ResourceRequirement[],
+  budget: CommercialBudget,
+  into: Set<string> = new Set<string>(),
+): Set<string> {
+  for (const resource of resources) {
+    if (resource.resourceType !== budget.resourceType || resource.unit !== budget.unit) continue;
+    if (budget.currency !== undefined && resource.currency !== budget.currency) continue;
+    if (resource.resourceType === 'MONEY' && resource.currency) into.add(resource.currency);
+  }
+  return into;
+}
+
+/**
+ * T-09: resolve the ONE currency a monetary budget is denominated in.
+ *
+ * Precedence: the explicit `budget.currency`; otherwise the single distinct
+ * currency of the matching MONEY resources; otherwise the budget unit (which
+ * existing monetary budgets use as the currency label). More than one distinct
+ * resource currency without an explicit budget currency is ambiguous — minor
+ * units of different currencies are not comparable — and resolves to
+ * `undefined` so the budget check fails closed instead of mixing scales.
+ */
+function resolveMonetaryBudgetCurrency(budget: CommercialBudget, matchedCurrencies: ReadonlySet<string>): string | undefined {
+  if (budget.currency) return budget.currency;
+  if (matchedCurrencies.size === 1) return [...matchedCurrencies][0];
+  if (matchedCurrencies.size > 1) return undefined;
+  return budget.unit && budget.unit.trim() ? budget.unit.trim() : undefined;
+}
+
+/**
+ * Non-monetary budget path (COMPUTE / API_CALLS quantities). T-09 AC-9 note:
+ * this float accumulation is deliberately NOT converted to minor units — the
+ * amounts are resource quantities, not money, and every monetary budget takes
+ * the exact minor-unit path above. Changing this would be unrelated numeric
+ * logic, which the T-09 authorization explicitly excludes.
+ */
 function sumMatchingResources(resources: readonly ResourceRequirement[], budget: CommercialBudget): number {
   return resources
     .filter((resource) => resource.resourceType === budget.resourceType && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency))
@@ -1947,6 +2013,7 @@ function experimentMoneyConsumptionExceeded(cost: readonly ResourceRequirement[]
     cost
       .filter((item) => item.resourceType === 'MONEY' && item.currency === maximum.currency)
       .map((item) => item.amount),
+    maximum.currency,
   );
   return moneyAtLeast({ amount: money, currency: maximum.currency }, maximum);
 }

@@ -126,9 +126,10 @@ export class PaymentsService {
     if (!provider || (provider.tenantId && !canRead(actor, provider.tenantId))) throw new PaymentError('Payment provider is not registered for this tenant.');
     if (!provider.currencies.includes(input.amount.currency)) throw new PaymentError(`Provider does not support ${input.amount.currency}.`);
     const now = Date.now();
-    // T-07 money policy: amounts are quantized to the minor-unit scale at the
-    // boundary (documented default 2 dp), so every stored payment amount and
-    // every later comparison/sum is scale-exact.
+    // T-07/T-09 money policy: amounts are quantized at the boundary to the
+    // minor-unit scale OF THE PAYMENT CURRENCY (JPY/KRW/CLP 0dp, BHD/KWD/OMR
+    // 3dp, default 2dp), so every stored payment amount and every later
+    // comparison/sum is scale-exact in that currency.
     const amount = quantizeMonetaryValue(input.amount);
     const intent: PaymentIntent = {
       id: randomUUID(), tenantId: actor.tenantId, ventureId: input.ventureId, productId: input.productId, campaignId: input.campaignId,
