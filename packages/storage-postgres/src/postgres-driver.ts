@@ -417,10 +417,28 @@ export class PostgresDriver implements IStorageDriver {
     return new PostgresCollection<T>(name, table, this.pool);
   }
 
+  async openTenantNamespace(name: string, tenantId: string): Promise<INamespace> {
+    if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('openTenantNamespace requires a non-empty tenantId (fail-closed).');
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw new Error(`tenantId "${tenantId}" contains characters that are not safe.`);
+    await this.ensureReady();
+    const scopedLogical = `${name}::${tenantId}`;
+    const table = await this.table('namespace', scopedLogical);
+    return new PostgresNamespace(`${name}::${tenantId}`, table, this.pool);
+  }
+
   async openNamespace(name: string): Promise<INamespace> {
     await this.ensureReady();
     const table = await this.table('namespace', name);
     return new PostgresNamespace(name, table, this.pool);
+  }
+
+  async openTenantBlobStore(name: string, tenantId: string): Promise<IBlobStore> {
+    if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('openTenantBlobStore requires a non-empty tenantId (fail-closed).');
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw new Error(`tenantId "${tenantId}" contains characters that are not safe.`);
+    await this.ensureReady();
+    const scopedLogical = `${name}::${tenantId}`;
+    const table = await this.table('blob', scopedLogical);
+    return new PostgresBlobStore(`${name}::${tenantId}`, table, this.pool);
   }
 
   async openBlobStore(name: string): Promise<IBlobStore> {

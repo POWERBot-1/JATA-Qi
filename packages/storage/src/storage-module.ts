@@ -76,7 +76,29 @@ export class StorageModule implements IModule {
     this.blobs.clear();
   }
 
-  /** Get or open a namespace. */
+  /**
+   * T-08 D-4: preferred — open a tenant-scoped namespace. Requires tenant
+   * identity/context; validates tenantId and delegates to
+   * `driver.openTenantNamespace`. Tenant-bound handles are cached per
+   * `(name, tenantId)` to preserve T-06/T-07 isolation.
+   */
+  async openTenantNamespace(name: string, tenantId: string): Promise<INamespace> {
+    StorageModule.validateTenantId(tenantId);
+    const cacheKey = `${name}::${tenantId}`;
+    let ns = this.namespaces.get(cacheKey);
+    if (!ns) {
+      ns = await this.driver.openTenantNamespace(name, tenantId);
+      this.namespaces.set(cacheKey, ns);
+      await this.api.bus.emit(StorageEvents.NamespaceCreated, { name, tenantId } as any);
+    }
+    return ns;
+  }
+
+  /**
+   * @deprecated T-08 D-4 — unscoped namespace opens bypass tenant guardrails.
+   * Use `openTenantNamespace(name, tenantId)`. Retained only for driver
+   * internals and isolated tests; lint guard rejects external unscoped use.
+   */
   async namespace(name: string): Promise<INamespace> {
     let ns = this.namespaces.get(name);
     if (!ns) {
@@ -98,7 +120,24 @@ export class StorageModule implements IModule {
     return c as ICollection<T>;
   }
 
-  /** Get or open a blob store. */
+  /**
+   * T-08 D-4: preferred — open a tenant-scoped blob store.
+   */
+  async openTenantBlobStore(name: string, tenantId: string): Promise<IBlobStore> {
+    StorageModule.validateTenantId(tenantId);
+    const cacheKey = `${name}::${tenantId}`;
+    let b = this.blobs.get(cacheKey);
+    if (!b) {
+      b = await this.driver.openTenantBlobStore(name, tenantId);
+      this.blobs.set(cacheKey, b);
+      await this.api.bus.emit(StorageEvents.BlobStoreCreated, { name, tenantId } as any);
+    }
+    return b;
+  }
+
+  /**
+   * @deprecated T-08 D-4 — unscoped blob store. Use `openTenantBlobStore(name, tenantId)`.
+   */
   async blobStore(name: string): Promise<IBlobStore> {
     let b = this.blobs.get(name);
     if (!b) {

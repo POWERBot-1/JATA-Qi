@@ -859,6 +859,22 @@ export class FsDriver implements IStorageDriver {
     return this.ready;
   }
 
+  async openTenantNamespace(name: string, tenantId: string): Promise<INamespace> {
+    if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('openTenantNamespace requires a non-empty tenantId (fail-closed).');
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw new Error(`tenantId "${tenantId}" contains characters that are not safe.`);
+    const state = await this.ensureReady();
+    const safeName = sanitizeSegment(name);
+    const safeTenant = sanitizeSegment(tenantId);
+    const cacheKey = `${safeName}::${safeTenant}`;
+    let namespace = state.namespaces.get(cacheKey);
+    if (!namespace) {
+      namespace = new FsNamespace(cacheKey, path.join(this.root, 'ns', safeTenant, safeName));
+      await namespace.init();
+      state.namespaces.set(cacheKey, namespace);
+    }
+    return namespace;
+  }
+
   async openNamespace(name: string): Promise<INamespace> {
     const state = await this.ensureReady();
     const safeName = sanitizeSegment(name);
@@ -880,6 +896,22 @@ export class FsDriver implements IStorageDriver {
       state.collections.set(safeName, collection);
     }
     return collection;
+  }
+
+  async openTenantBlobStore(name: string, tenantId: string): Promise<IBlobStore> {
+    if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('openTenantBlobStore requires a non-empty tenantId (fail-closed).');
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw new Error(`tenantId "${tenantId}" contains characters that are not safe.`);
+    const state = await this.ensureReady();
+    const safeName = sanitizeSegment(name);
+    const safeTenant = sanitizeSegment(tenantId);
+    const cacheKey = `${safeName}::${safeTenant}`;
+    let blobStore = state.blobs.get(cacheKey);
+    if (!blobStore) {
+      blobStore = new FsBlobStore(cacheKey, this.root);
+      await blobStore.init();
+      state.blobs.set(cacheKey, blobStore);
+    }
+    return blobStore;
   }
 
   async openBlobStore(name: string): Promise<IBlobStore> {

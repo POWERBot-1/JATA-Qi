@@ -55,6 +55,42 @@ export default tseslint.config(
     },
   },
   {
+    // T-08 D-4 tenant guardrail: unscoped driver opens bypass tenant isolation.
+    // Preferred: openTenantNamespace(name, tenantId) / openTenantBlobStore(name, tenantId).
+    // Rejected outside storage drivers and tests.
+    files: ['**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.property.name='openNamespace']",
+          message:
+            'T-08 D-4: Use openTenantNamespace(name, tenantId) — unscoped openNamespace bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='openBlobStore']",
+          message:
+            'T-08 D-4: Use openTenantBlobStore(name, tenantId) — unscoped openBlobStore bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+        },
+      ],
+    },
+  },
+  {
+    // Driver internals and tests are the only allowed call sites for the
+    // deprecated unscoped driver opens (thin wrapper over the deprecated API).
+    files: [
+      'packages/storage/src/drivers/**/*.ts',
+      'packages/storage/src/storage-module.ts',
+      'packages/storage-postgres/src/**/*.ts',
+      '**/test/**/*.ts',
+      '**/*.test.ts',
+      'packages/cli/src/storage-driver.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+  {
     // Test files may use looser typing for fixtures and fakes.
     files: ['**/test/**/*.ts'],
     rules: {

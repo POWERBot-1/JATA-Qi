@@ -8,6 +8,13 @@
  * span tenants must NOT use this module unscoped for retrieval of tenant
  * knowledge; tenant knowledge access requires an explicit tenant id.
  */
+/**
+ * @deprecated T-08 D — silent DEFAULT_TENANT_ID fallback is deprecated.
+ * Knowledge operations should pass an explicit tenantId. When omitted, the
+ * service warns via observability and, outside test/compat mode
+ * (JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1 or NODE_ENV=test), fails closed.
+ * The constant remains exported only for test-only isolated fail-safe.
+ */
 export const DEFAULT_TENANT_ID = 'default';
 
 /** Metadata about an ingested source document. */
