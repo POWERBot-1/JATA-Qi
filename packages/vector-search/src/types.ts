@@ -32,6 +32,14 @@ export interface SearchOptions {
   topK?: number;
   /** If provided, filter candidates before ranking. */
   filter?: (metadata: Record<string, unknown> | undefined) => boolean;
+  /**
+   * T-06: when set, only records whose metadata carries exactly this
+   * `tenantId` are considered. Records without a tenant marker are never
+   * returned for a tenant-scoped search (fail-closed), so an in-memory index
+   * shared across tenants can never leak another tenant's vectors. The
+   * search layer enforces this in addition to any caller filter.
+   */
+  tenantId?: string;
   /** Score threshold in [0,1]; results below this are dropped (cosine only). */
   minScore?: number;
 }

@@ -120,8 +120,16 @@ export interface ICollection<T extends { id: string } = { id: string }> {
  * Every `collection()` handle returned from a scope is bound to one backend
  * transaction/connection, so operations across collections commit or roll back
  * together. Non-transactional drivers do not implement `beginTransaction`.
+ *
+ * T-06: a transaction may be tenant-scoped. When opened with a `tenantId`,
+ * the backend sets the tenant RLS context inside the transaction so every
+ * read and write in the transaction is database-enforced to that tenant
+ * (fails closed on any other tenant's rows). `tenantId` is the resolved
+ * binding (a real tenant id, or the driver's system marker for unscoped
+ * transactions when the driver always sets one).
  */
 export interface IStorageTransaction {
+  readonly tenantId?: string;
   collection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
   commit(): Promise<void>;
   rollback(): Promise<void>;
@@ -149,6 +157,12 @@ export interface IStorageTransaction {
  */
 export interface StorageWriteScope {
   readonly atomic: boolean;
+  /**
+   * Tenant the scope is bound to. `undefined` on non-transactional
+   * development drivers and when no tenant was requested; on a transactional
+   * driver with `atomically(fn, { tenantId })` this is that tenant id.
+   */
+  readonly tenantId?: string;
   collection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
   onCommit(callback: () => void | Promise<void>): void;
   onSettle(callback: () => void | Promise<void>): void;
@@ -179,8 +193,13 @@ export interface IStorageDriver {
   /**
    * Start a real multi-operation transaction when the driver supports one
    * (e.g. a transactional database). Undefined for development-only drivers.
+   *
+   * T-06: pass `{ tenantId }` to bind the transaction to a tenant (the driver
+   * sets the tenant RLS context inside the transaction when it supports row
+   * level security). Callers MUST pass the tenant when the transaction reads
+   * or writes tenant-owned documents.
    */
-  beginTransaction?(): Promise<IStorageTransaction>;
+  beginTransaction?(options?: { tenantId?: string }): Promise<IStorageTransaction>;
 }
 
 /** Events published on the kernel event bus. */

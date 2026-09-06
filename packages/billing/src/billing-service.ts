@@ -190,6 +190,9 @@ export class BillingService {
     const actor = systemActor(event.tenantId);
     const payment = await this.payments.getPayment(actor, paymentId);
     if (!payment || payment.status !== 'VERIFIED' || payment.tenantId !== event.tenantId) return;
+    // T-06: the composed write runs under the EVENT's tenant (the invoice and
+    // payment both provably belong to it), so the database RLS context is set
+    // inside this transaction.
     await this.storage.atomically(async (scope) => {
       const invoices = await scope.collection<Invoice>(INVOICES_COLLECTION);
       const invoice = await invoices.get(invoiceId);
@@ -209,7 +212,7 @@ export class BillingService {
           await this.emit(actor, BillingEvents.SubscriptionActivated, active.id, { subscriptionId: active.id, invoiceId: paid.id }, { key: `${active.id}:${paid.id}`, causationId: event.id, scope });
         }
       }
-    });
+    }, { tenantId: event.tenantId });
   }
 
   private async handleVerifiedRefund(event: CommercialEvent): Promise<void> {
@@ -227,7 +230,7 @@ export class BillingService {
       const refunded: Invoice = { ...invoice, status: 'REFUNDED', providerReference: payment.providerReference, refundedAt: Date.now(), updatedAt: Date.now() };
       await invoices.put(refunded);
       await this.emit(actor, BillingEvents.InvoiceRefunded, refunded.id, { invoiceId: refunded.id, paymentId: payment.id, amount: payment.refundAmount ?? payment.amount }, { key: `${refunded.id}:${payment.id}`, causationId: event.id, scope });
-    });
+    }, { tenantId: event.tenantId });
   }
 
   private async requireInvoice(actor: CommercialActor, invoiceId: string): Promise<Invoice> {

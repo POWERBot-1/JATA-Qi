@@ -44,8 +44,13 @@ export class GraphRAGRetriever {
     const depth = opts.graphDepth ?? 1;
     const gWeight = opts.graphWeight ?? 0.3;
     const graphTopK = opts.graphTopK ?? topK * 2;
+    // T-06: graph-RAG retrieval is tenant-scoped end to end. The tenant (when
+    // given) flows into the knowledge retrieval, every graph lookup, and every
+    // chunk/document re-read, so cross-tenant knowledge is unreachable.
+    const tenantId = opts.tenantId;
+    const docOpts = tenantId !== undefined ? { tenantId } : {};
 
-    // 1. Vector retrieval.
+    // 1. Vector retrieval (tenant-scoped when opts.tenantId is given).
     const vectorHits = await svc.retrieve(query, { ...opts, topK: topK + graphTopK });
 
     // 2. Find entities "mentioned" in the retrieved chunks.
@@ -58,18 +63,18 @@ export class GraphRAGRetriever {
       const found = new Map<string, Entity>();
 
       // Direct chunk->entity edges.
-      for (const t of graph.triplesFrom(chunkEntityId, 'mentions')) {
-        const e = graph.getEntity(t.object);
+      for (const t of graph.triplesFrom(chunkEntityId, 'mentions', tenantId)) {
+        const e = graph.getEntity(t.object, tenantId);
         if (e) found.set(e.id, e);
       }
       // Also link document-level entities.
-      for (const t of graph.triplesFrom(docEntityId)) {
-        const e = graph.getEntity(t.object);
+      for (const t of graph.triplesFrom(docEntityId, undefined, tenantId)) {
+        const e = graph.getEntity(t.object, tenantId);
         if (e) found.set(e.id, e);
       }
       // Also support the reverse: entity appears_in chunk/doc.
-      for (const t of graph.triplesTo(chunkEntityId, 'appearsIn')) {
-        const e = graph.getEntity(t.subject);
+      for (const t of graph.triplesTo(chunkEntityId, 'appearsIn', tenantId)) {
+        const e = graph.getEntity(t.subject, tenantId);
         if (e) found.set(e.id, e);
       }
       const ents = [...found.values()];
@@ -87,20 +92,20 @@ export class GraphRAGRetriever {
         maxDepth: depth,
         followPredicates: opts.expandPredicates,
         limit: 5,
-      });
+      }, tenantId);
       for (const p of paths) {
         const terminal = p.entities[p.entities.length - 1]!;
         // Find chunks linked to this terminal entity via appearsIn/mentions.
         const docTriples: Triple[] = [
-          ...graph.triplesTo(terminal.id, 'mentions'),
-          ...graph.triplesFrom(terminal.id, 'appearsIn'),
+          ...graph.triplesTo(terminal.id, 'mentions', tenantId),
+          ...graph.triplesFrom(terminal.id, 'appearsIn', tenantId),
         ];
         for (const t of docTriples) {
           const chunkId = t.predicate === 'mentions' ? t.subject : t.object;
           // Only consider chunk ids we know about: resolve through knowledge service.
-          const chunk = await svc.getChunk(chunkId.startsWith('chunk:') ? chunkId.slice(6) : chunkId);
+          const chunk = await svc.getChunk(chunkId.startsWith('chunk:') ? chunkId.slice(6) : chunkId, docOpts);
           if (!chunk) continue;
-          const doc = await svc.getDocument(chunk.documentId);
+          const doc = await svc.getDocument(chunk.documentId, docOpts);
           if (!doc) continue;
           const existing = extraChunks.get(chunk.id);
           const s = baseScore * p.score * (t.confidence ?? 1.0);
@@ -130,11 +135,11 @@ export class GraphRAGRetriever {
     }
     for (const [cid, info] of extraChunks) {
       if (merged.has(cid)) continue;
-      const chunk = await svc.getChunk(cid.startsWith('chunk:') ? cid.slice(6) : cid);
+      const chunk = await svc.getChunk(cid.startsWith('chunk:') ? cid.slice(6) : cid, docOpts);
       if (!chunk) continue;
-      const doc = await svc.getDocument(chunk.documentId);
+      const doc = await svc.getDocument(chunk.documentId, docOpts);
       if (!doc) continue;
-      const entities = collectEntitiesForChunk(graph, chunk.id);
+      const entities = collectEntitiesForChunk(graph, chunk.id, tenantId);
       merged.set(cid, {
         chunk,
         document: doc,
@@ -152,15 +157,15 @@ export class GraphRAGRetriever {
   }
 }
 
-function collectEntitiesForChunk(graph: KnowledgeGraphModule, chunkId: string): Entity[] {
+function collectEntitiesForChunk(graph: KnowledgeGraphModule, chunkId: string, tenantId?: string): Entity[] {
   const found = new Map<string, Entity>();
   const cid = chunkId.startsWith('chunk:') ? chunkId : `chunk:${chunkId}`;
-  for (const t of graph.triplesFrom(cid, 'mentions')) {
-    const e = graph.getEntity(t.object);
+  for (const t of graph.triplesFrom(cid, 'mentions', tenantId)) {
+    const e = graph.getEntity(t.object, tenantId);
     if (e) found.set(e.id, e);
   }
-  for (const t of graph.triplesTo(cid, 'appearsIn')) {
-    const e = graph.getEntity(t.subject);
+  for (const t of graph.triplesTo(cid, 'appearsIn', tenantId)) {
+    const e = graph.getEntity(t.subject, tenantId);
     if (e) found.set(e.id, e);
   }
   return [...found.values()];

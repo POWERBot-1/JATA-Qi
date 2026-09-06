@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/commercial-memory",
   "version": "0.1.0",
-  "description": "JATA Qi Commercial Memory — tenant-bound evidence, decision/outcome feedback, advertising memory, and correlation/causation graph",
+  "description": "JATA Qi Commercial Memory \u2014 tenant-bound evidence, decision/outcome feedback, advertising memory, and correlation/causation graph",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -12,12 +12,15 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && node -e \"require('fs').copyFileSync('test/t06-memory-worker.mjs','dist/test/t06-memory-worker.mjs')\"",
     "clean": "rm -rf dist",
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
     "@jataqi/commercial-control-plane": "0.1.0",
@@ -27,6 +30,8 @@
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "@jataqi/storage-postgres": "0.1.0",
+    "embedded-postgres": "^18.4.0-beta.17"
   }
 }

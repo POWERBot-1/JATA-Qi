@@ -101,14 +101,32 @@ export class VectorSearchModule implements IModule {
   async embedAndSearch(indexName: string, text: string, opts?: SearchOptions): Promise<SearchHit[]> {
     const idx = await this.index(indexName);
     const q = await this.model.embed(text);
-    const hits = await idx.search(q, opts);
+    const hits = await idx.search(q, this.scopeOptions(opts));
     await this.api.bus.emit(VectorEvents.Searched, { index: indexName, topK: opts?.topK ?? 10, returned: hits.length });
     return hits;
   }
 
   async search(indexName: string, vec: Vector, opts?: SearchOptions): Promise<SearchHit[]> {
     const idx = await this.index(indexName);
-    return idx.search(vec, opts);
+    return idx.search(vec, this.scopeOptions(opts));
+  }
+
+  /**
+   * T-06 tenant scoping: when the caller supplies a `tenantId`, candidate
+   * records are restricted to vectors whose metadata carries exactly that
+   * tenant id — enforced HERE in the vector layer so every search path (raw
+   * `search`, `embedAndSearch`) fails closed at the module boundary, not only
+   * when callers remember to filter.
+   */
+  private scopeOptions(opts?: SearchOptions): SearchOptions | undefined {
+    if (!opts || opts.tenantId === undefined) return opts;
+    const { tenantId, filter } = opts;
+    const scoped = { ...opts, tenantId: undefined };
+    scoped.filter = (metadata: Record<string, unknown> | undefined): boolean => {
+      if (metadata?.tenantId !== tenantId) return false;
+      return filter ? filter(metadata) : true;
+    };
+    return scoped;
   }
 
   /** Persist an index to storage as a collection. */

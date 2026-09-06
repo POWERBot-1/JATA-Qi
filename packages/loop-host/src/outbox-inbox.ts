@@ -130,8 +130,12 @@ export class OutboxInbox {
     // be undefined prevents duplicate outbox entries.
     const res = await this.outbox.cas(outbox.id, (cur) => cur === undefined, () => outbox);
     if (res.ok) return outbox;
-    // Already present: return the existing record (idempotent).
-    return res.doc as OutboxRecord;
+    // Already present: return the existing record (idempotent). The loser of a
+    // first-create election may not see the winner's row through its own CAS
+    // result (insert-if-absent refused), so re-read it.
+    const existing = await this.outbox.get(outbox.id);
+    if (existing) return existing as OutboxRecord;
+    throw new LoopHostError(`Outbox record "${outbox.id}" lost a create race and the winner is not visible (fail-closed).`);
   }
 
   /**
