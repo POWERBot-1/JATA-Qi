@@ -26,6 +26,23 @@ export type {
 } from './unified-outbox.js';
 export { assertCampaignTransition, assertProductTransition, isCampaignTransitionAllowed, isProductTransitionAllowed } from './state-machine.js';
 export { evaluatePolicy, scopeMatches, scopeSpecificity, selectPolicy } from './policy-engine.js';
+export {
+  DEFAULT_MONETARY_SCALE,
+  MONEY_ROUNDING_RULE,
+  decimalParts,
+  fromMinorUnits,
+  isQuantizedAmount,
+  minorUnitsOf,
+  moneyAtLeast,
+  moneyEquals,
+  moneyLessThan,
+  moneyProductEquals,
+  moneyWithin,
+  quantizeAmount,
+  quantizeMonetaryValue,
+  sumMonetaryAmounts,
+  sumMoney,
+} from './money.js';
 export { CommercialAutonomy, CommercialControlPlaneEvents } from './types.js';
 export type {
   ActionExecutionStatus,

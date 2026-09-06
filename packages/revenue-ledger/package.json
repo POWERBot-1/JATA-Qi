@@ -12,7 +12,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && node -e \"require('fs').copyFileSync('test/t06-ledger-worker.mjs','dist/test/t06-ledger-worker.mjs')\"",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && node -e \"require('fs').copyFileSync('test/t06-ledger-worker.mjs','dist/test/t06-ledger-worker.mjs');require('fs').copyFileSync('test/t07-finalize-worker.mjs','dist/test/t07-finalize-worker.mjs')\"",
     "clean": "rm -rf dist",
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
