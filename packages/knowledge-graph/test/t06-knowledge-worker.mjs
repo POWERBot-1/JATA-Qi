@@ -1,3 +1,4 @@
+process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK='1';
 // T-06 multi-process knowledge worker (real PostgreSQL).
 //
 // Modes (env WORKER_MODE):

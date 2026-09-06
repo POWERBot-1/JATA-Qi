@@ -10,6 +10,7 @@ import { VectorSearchModule } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule, MemoryTripleStore, createEntity, createTriple, GraphEvents } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
+process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK = '1';
 
 function boot() {
   const k = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });

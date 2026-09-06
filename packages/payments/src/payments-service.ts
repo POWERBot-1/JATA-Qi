@@ -48,6 +48,7 @@ export class PaymentsService {
   private readonly providers = new Map<string, PaymentProvider>();
   private readonly providerResults = new Map<string, PaymentProviderResult>();
   private readonly verificationResults = new Map<string, PaymentVerificationResult>();
+  private readonly recoveredReservationIds = new Set<string>();
 
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
     this.api = kernel;
@@ -173,13 +174,13 @@ export class PaymentsService {
           resourceRequirements: [{ resourceType: 'MONEY', amount: processing.amount.amount, unit: processing.amount.currency, currency: processing.amount.currency }],
         });
       } catch (error) {
-        await this.releaseReservation(processing, 'PROCESSING', { status: payment.status });
+        await this.releaseReservation(actor, processing, 'PROCESSING', { status: payment.status });
         throw error;
       }
       if (!action) {
         // Defensive: a falsy plan result leaves the payment exactly where it
         // was (DRAFT/FAILED/REQUIRES_ACTION) — same release path as a throw.
-        await this.releaseReservation(processing, 'PROCESSING', { status: payment.status });
+        await this.releaseReservation(actor, processing, 'PROCESSING', { status: payment.status });
         throw new PaymentError('Payment action could not be planned.');
       }
       reserved = await this.update(processing, { createActionId: action.id });
@@ -273,12 +274,12 @@ export class PaymentsService {
         resourceRequirements: [{ resourceType: 'MONEY', amount: amount.amount, unit: amount.currency, currency: amount.currency }],
       });
     } catch (error) {
-      await this.releaseReservation(queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
+      await this.releaseReservation(actor, queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
       throw error;
     }
     if (!action) {
       // Defensive: falsy plan result releases the reservation identically.
-      await this.releaseReservation(queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
+      await this.releaseReservation(actor, queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
       throw new PaymentError('Refund action could not be planned.');
     }
     const reserved = await this.update(queued, { refundActionId: action.id });
@@ -429,9 +430,120 @@ export class PaymentsService {
    * this returns without a write. Any failure is swallowed deliberately: the
    * caller is already unwinding an authoritative planning refusal and MUST
    * surface that original error rather than a secondary rollback error.
+   *
+   * T-08 F-1b: bounded retry (3 attempts, 50/100/200ms) with structured
+   * observability. On final infra failure, a warning is logged, a
+   * `payments.reservation.release.failed` event is emitted (with tenant,
+   * payment, reservation state, reason, correlation, attempts), and a
+   * `payment.reservation.release_failed` metaphoric metric is recorded via
+   * the same event. The original DENY is still preserved — secondary errors
+   * never mask it.
    */
-  private async releaseReservation(reserved: PaymentIntent, reservedStatus: string, restore: Partial<PaymentIntent>): Promise<void> {
-    await this.casTransition(reserved, [reservedStatus], restore).catch(() => undefined);
+  private async releaseReservation(actor: CommercialActor, reserved: PaymentIntent, reservedStatus: string, restore: Partial<PaymentIntent>): Promise<void> {
+    const delays = [50, 100, 200];
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await this.casTransition(reserved, [reservedStatus], restore);
+        return;
+      } catch (error) {
+        if (error instanceof PaymentError && String((error as Error).message).includes('cannot transition')) {
+          return;
+        }
+        lastError = error;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, delays[attempt] ?? 50));
+          continue;
+        }
+        const reason = error instanceof Error ? error.message : String(error);
+        this.api.logger.warn('payment reservation release failed after retries', {
+          paymentId: reserved.id,
+          tenantId: reserved.tenantId,
+          reservedStatus,
+          attempts: attempt + 1,
+          reason,
+          category: 'reservation_release_failed',
+          correlationId: reserved.id,
+        });
+        try {
+          await this.emit(actor, PaymentEvents.ReservationReleaseFailed, reserved, {
+            paymentId: reserved.id,
+            tenantId: reserved.tenantId,
+            reservedStatus,
+            restoreStatus: (restore as { status?: string }).status,
+            reason,
+            category: 'reservation_release_failed',
+            correlationId: reserved.id,
+            attempts: attempt + 1,
+          }, undefined, `reservation-release-failed:${reserved.id}:${reservedStatus}`);
+        } catch (emitError) {
+          this.api.logger.error('failed to emit reservation release failure event', emitError as Error);
+        }
+        return;
+      }
+    }
+    void lastError;
+  }
+
+  /**
+   * T-08 admin recovery for F-1b: recover a payment stuck in
+   * PROCESSING/REFUND_PROCESSING after an infra-failed releaseReservation.
+   * Idempotent, tenant-bound, admin-only, CAS-only.
+   */
+  async adminReleaseReservation(actor: CommercialActor, paymentId: string): Promise<PaymentIntent> {
+    assertAdministrator(actor);
+    const payment = await this.requirePayment(actor, paymentId);
+    // T-08.1 P1: fast-path for same-process idempotency, but persistent CAS is authoritative.
+    // A caller that already recovered this payment in this process and sees a recovered state may return immediately.
+    if (this.recoveredReservationIds.has(paymentId) && (payment.status === 'DRAFT' || payment.status === 'VERIFIED')) {
+      return copy(payment);
+    }
+    if (payment.status !== 'PROCESSING' && payment.status !== 'REFUND_PROCESSING') {
+      throw new PaymentError(`Payment ${payment.id} is not in a recoverable reservation state (${payment.status}).`);
+    }
+    const previousStatus = payment.status;
+    let recovered: PaymentIntent;
+    if (payment.status === 'PROCESSING') {
+      try {
+        recovered = await this.casTransition(payment, ['PROCESSING'], { status: 'DRAFT' });
+      } catch (error) {
+        if (error instanceof PaymentError && String((error as Error).message).includes('cannot transition')) {
+          const winner = await this.payments.get(paymentId);
+          // T-08.1 P1: cross-process idempotency — if another worker already recovered PROCESSING→DRAFT, return winner
+          if (winner && winner.status === 'DRAFT' && canRead(actor, winner.tenantId)) {
+            this.recoveredReservationIds.add(paymentId);
+            return copy(winner);
+          }
+          throw error;
+        }
+        throw error;
+      }
+    } else {
+      try {
+        recovered = await this.casTransition(payment, ['REFUND_PROCESSING'], { status: 'VERIFIED', refundAmount: undefined });
+      } catch (error) {
+        if (error instanceof PaymentError && String((error as Error).message).includes('cannot transition')) {
+          const winner = await this.payments.get(paymentId);
+          // T-08.1 P1: cross-process idempotency — REFUND_PROCESSING→VERIFIED winner
+          if (winner && winner.status === 'VERIFIED' && canRead(actor, winner.tenantId)) {
+            this.recoveredReservationIds.add(paymentId);
+            return copy(winner);
+          }
+          throw error;
+        }
+        throw error;
+      }
+    }
+    this.recoveredReservationIds.add(paymentId);
+    await this.emit(actor, PaymentEvents.ReservationReleased, recovered, {
+      paymentId: recovered.id,
+      tenantId: recovered.tenantId,
+      restoredStatus: recovered.status,
+      previousStatus,
+      reason: 'admin reservation recovery',
+      correlationId: recovered.id,
+    }, undefined, `reservation-released:${recovered.id}:${previousStatus}`);
+    return copy(recovered);
   }
 
   /** Standalone (non-composed) CAS transition for reservation entry points. */

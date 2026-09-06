@@ -55,6 +55,92 @@ export default tseslint.config(
     },
   },
   {
+    // T-08.1 D-4 tenant guardrail: unscoped driver/legacy opens bypass tenant isolation.
+    // Preferred: openTenantNamespace(name, tenantId) / openTenantBlobStore(name, tenantId).
+    // Rejected outside storage drivers and tests. Covers direct, computed, and destructuring bypasses.
+    files: ['**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.property.name='openNamespace']",
+          message:
+            'T-08.1 D-4: Use openTenantNamespace(name, tenantId) — unscoped openNamespace bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+        },
+        {
+          selector: "CallExpression[callee.property.value='openNamespace']",
+          message:
+            'T-08.1 D-4: Use openTenantNamespace(name, tenantId) — computed unscoped openNamespace bypasses guardrail.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='openBlobStore']",
+          message:
+            'T-08.1 D-4: Use openTenantBlobStore(name, tenantId) — unscoped openBlobStore bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+        },
+        {
+          selector: "CallExpression[callee.property.value='openBlobStore']",
+          message:
+            'T-08.1 D-4: computed unscoped openBlobStore bypasses guardrail.',
+        },
+        {
+          selector: "Property[key.name='openNamespace']",
+          message:
+            'T-08.1 D-4: destructuring openNamespace bypasses tenant guardrail — use openTenantNamespace.',
+        },
+        {
+          selector: "Property[key.value='openNamespace']",
+          message:
+            'T-08.1 D-4: computed destructuring openNamespace bypasses guardrail.',
+        },
+        {
+          selector: "Property[key.name='openBlobStore']",
+          message:
+            'T-08.1 D-4: destructuring openBlobStore bypasses tenant guardrail — use openTenantBlobStore.',
+        },
+        {
+          selector: "Property[key.value='openBlobStore']",
+          message:
+            'T-08.1 D-4: computed destructuring openBlobStore bypasses guardrail.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='namespace']",
+          message:
+            'T-08.1 D-4: legacy storage.namespace bypasses tenant guardrail — use openTenantNamespace(name, tenantId) or explicit collection-level tenantId with eslint-disable for T-08.1.',
+        },
+        {
+          selector: "CallExpression[callee.property.value='namespace']",
+          message:
+            'T-08.1 D-4: computed legacy storage.namespace bypasses guardrail.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='blobStore']",
+          message:
+            'T-08.1 D-4: legacy storage.blobStore bypasses tenant guardrail — use openTenantBlobStore(name, tenantId).',
+        },
+        {
+          selector: "CallExpression[callee.property.value='blobStore']",
+          message:
+            'T-08.1 D-4: computed legacy storage.blobStore bypasses guardrail.',
+        },
+      ],
+    },
+  },
+  {
+    // Driver internals and tests are the only allowed call sites for the
+    // deprecated unscoped driver opens (thin wrapper over the deprecated API).
+    files: [
+      'packages/storage/src/drivers/**/*.ts',
+      'packages/storage/src/storage-module.ts',
+      'packages/storage-postgres/src/**/*.ts',
+      '**/test/**/*.ts',
+      '**/*.test.ts',
+      'packages/cli/src/storage-driver.ts',
+    ],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+  {
     // Test files may use looser typing for fixtures and fakes.
     files: ['**/test/**/*.ts'],
     rules: {

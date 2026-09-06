@@ -3,6 +3,7 @@ import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { moneyEquals } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvidence, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentIntent, PaymentsService } from '@jataqi/payments';
@@ -160,15 +161,23 @@ function providerDiscrepancies(payments: readonly PaymentIntent[], observations:
     }
     const expectedStatus = payment.status === 'REFUNDED' ? 'REFUNDED' : 'SUCCEEDED';
     if (observation.status !== expectedStatus) discrepancies.push(discrepancy('PROVIDER_STATUS_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: `Provider status ${observation.status} does not match internal status ${expectedStatus}.` }));
-    if (observation.amount.currency !== payment.amount.currency) discrepancies.push(discrepancy('CURRENCY_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: 'Provider currency does not match internal currency.', expected: payment.amount, observed: observation.amount }));
-    else if (observation.amount.amount !== (payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount).amount) discrepancies.push(discrepancy('AMOUNT_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: 'Provider amount does not match internal amount.', expected: payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount, observed: observation.amount }));
+    const expectedAmount = payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount;
+    // T-08 R-MONEY-02: use canonical quantized money comparison, never raw float equality.
+    if (!moneyEquals(observation.amount, expectedAmount)) {
+      if (observation.amount.currency !== expectedAmount.currency) {
+        discrepancies.push(discrepancy('CURRENCY_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: 'Provider currency does not match internal currency.', expected: expectedAmount, observed: observation.amount }));
+      } else {
+        discrepancies.push(discrepancy('AMOUNT_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: 'Provider amount does not match internal amount.', expected: expectedAmount, observed: observation.amount }));
+      }
+    }
   }
   return discrepancies;
 }
 
 function discrepancy(kind: ReconciliationDiscrepancy['kind'], input: Omit<ReconciliationDiscrepancy, 'id' | 'kind'>): ReconciliationDiscrepancy { return { id: randomUUID(), kind, ...input }; }
 function systemEvidence(summary: string): CommercialEvidence { const now = Date.now(); return { id: `reconciliation:${randomUUID()}`, status: 'OBSERVED', source: 'reconciliation', observedAt: now, confidence: 100, summary, provenance: { source: 'reconciliation', collectedAt: now }, privacyClassification: 'INTERNAL' }; }
-function moneyEquals(a: MonetaryValue, b: MonetaryValue): boolean { return a.currency === b.currency && a.amount === b.amount; }
+// T-09 follow-up (R-MONEY-03): per-currency scale migration (JPY 0dp, KWD 3dp) will extend moneyEquals.
+// Current single-scale (2dp for all currencies) is preserved for T-08; see commercial-control-plane/money.ts.
 function assertAdministrator(actor: CommercialActor): void { if (!actor.roles.includes('admin') && !actor.roles.includes('global_admin')) throw new ReconciliationError('Commercial administrator role is required.'); }
 function assertManager(actor: CommercialActor): void { if (!actor.roles.some((role) => ['operator', 'admin', 'global_admin', 'system'].includes(role))) throw new ReconciliationError('Commercial operator role is required.'); }
 function canRead(actor: CommercialActor, tenantId: string): boolean { return actor.tenantId === tenantId || actor.roles.includes('global_admin'); }

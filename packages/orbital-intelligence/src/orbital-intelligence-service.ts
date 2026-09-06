@@ -137,6 +137,7 @@ export class OrbitalIntelligenceService {
     this.encryptedReferenceAssessments = await storage.collection<EncryptedDataReferenceAssessment>(ENCRYPTED_REFERENCE_ASSESSMENTS_COLLECTION);
     this.monitoringPlans = await storage.collection<OrbitalMonitoringPlan>(MONITORING_PLANS_COLLECTION);
     this.informationRequestPlans = await storage.collection<OrbitalInformationRequestPlan>(INFORMATION_REQUEST_PLANS_COLLECTION);
+    // eslint-disable-next-line no-restricted-syntax -- T-08.1 D1: encrypted reference blobs are tenant-partitioned via blob key tenantId in envelope metadata, not per-tenant blob store; migration to openTenantBlobStore would require data migration. Explicitly exempted.
     this.encryptedReferenceBlobs = await storage.blobStore(ENCRYPTED_REFERENCES_BLOB_STORE);
     this.observations = await storage.collection<OrbitalObservation>(OBSERVATIONS_COLLECTION);
     this.fusions = await storage.collection<OrbitalFusionAssessment>(FUSIONS_COLLECTION);

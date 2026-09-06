@@ -137,4 +137,6 @@ export const PaymentEvents = Object.freeze({
   PaymentVerified: 'payment.verified',
   PaymentFailed: 'payment.failed',
   RefundVerified: 'payment.refund.verified',
+  ReservationReleaseFailed: 'payments.reservation.release.failed',
+  ReservationReleased: 'payments.reservation.released',
 } as const);

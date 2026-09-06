@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { HeuristicExtractor } from '../src/index.js';
+process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK = '1';
 
 describe('HeuristicExtractor', () => {
   it('extracts capitalized entities from text', () => {

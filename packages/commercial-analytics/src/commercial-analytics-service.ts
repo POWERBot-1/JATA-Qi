@@ -160,18 +160,31 @@ function calculateCurrencies(activeSubscriptions: readonly Subscription[], plans
     }
     const measuredCosts = minorCostMapToNumber(categoryCosts);
     const estimated = minorCostMapToNumber(estimatedCosts);
-    let mrr = 0;
-    let arr = 0;
+    // T-08 R-MONEY-01: MRR/ARR use exact minor-unit arithmetic.
+    // Annual→monthly allocation uses half-up rounding: (minor + d/2)/d with d=12 (half=6),
+    // i.e. ties round away from zero, matching T-07 money policy `MONEY_ROUNDING_RULE=half-up`.
+    // This preserves currency metadata and avoids any binary floating-point arithmetic.
+    // T-09 follow-up: per-currency scale migration (JPY 0dp, KWD 3dp) will extend this.
+    let mrrMinor = 0n;
+    let arrMinor = 0n;
     for (const subscription of activeSubscriptions) {
       const plan = plans.find((candidate) => candidate.id === subscription.planId && candidate.price.currency === currency);
       if (!plan) continue;
-      const monthly = plan.cycle === 'MONTHLY' ? plan.price.amount : plan.cycle === 'ANNUAL' ? plan.price.amount / 12 : 0;
-      mrr += monthly;
-      // MRR/ARR month-count scaling multiplies exact minor units (integer 12),
-      // never a float product of the price.
-      const annualMinor = plan.cycle === 'ANNUAL' ? minorUnitsOf(plan.price.amount) : minorUnitsOf(plan.price.amount) * 12n;
-      arr += fromMinorUnits(annualMinor);
+      const minor = minorUnitsOf(plan.price.amount);
+      if (plan.cycle === 'MONTHLY') {
+        mrrMinor += minor;
+        arrMinor += minor * 12n;
+      } else if (plan.cycle === 'ANNUAL') {
+        const monthlyMinor = (minor + 6n) / 12n;
+        mrrMinor += monthlyMinor;
+        arrMinor += minor;
+      } else if (plan.cycle === 'ONE_TIME') {
+        // ONE_TIME: no recurring MRR; preserve legacy ARR as minor*12 for backward compat (until product defines ONE_TIME ARR).
+        arrMinor += minor * 12n;
+      }
     }
+    const mrr = fromMinorUnits(mrrMinor);
+    const arr = fromMinorUnits(arrMinor);
     const netRevenue = fromMinorUnits(recognizedRevenue - reversedRevenue);
     const directCosts = measuredCosts.PAYMENT + measuredCosts.AI + measuredCosts.INFRASTRUCTURE + measuredCosts.THIRD_PARTY;
     const allCosts = Object.values(measuredCosts).reduce((total, cost) => total + cost, 0);

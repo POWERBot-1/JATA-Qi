@@ -72,18 +72,40 @@ export class KnowledgeGraphModule implements IModule {
     this.cfg = { autoIndexDocuments: true, ...cfg };
   }
 
-  /** Backwards-compatible handle to the DEFAULT tenant's store. */
+  /**
+   * T-08.1 D: tenant fallback guard. When tenantId is missing we warn via
+   * observability and, outside explicit test-compat mode, fail closed. Only
+   * `JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1` or
+   * `JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK=1` authorizes the isolated
+   * DEFAULT_TENANT_ID store; no NODE_ENV value may authorize it.
+   */
+  private resolveTenantId(tenantId: string | undefined, op = 'storeFor'): string {
+    if (tenantId !== undefined && tenantId !== null && String(tenantId).trim()) return tenantId;
+    const allow = process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK === '1' || process.env.JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK === '1';
+    const message = `KnowledgeGraphModule: ${op} tenantId missing — falling back to DEFAULT_TENANT_ID="${DEFAULT_TENANT_ID}" (test-only fail-safe)`;
+    try {
+      this.api?.logger?.warn?.(message, { fallbackTenantId: DEFAULT_TENANT_ID, op } as any);
+    } catch {
+      console.warn(message);
+    }
+    if (!allow) throw new Error(`${message}. Provide tenantId or set JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1 for test-only compat. Failing closed.`);
+    return DEFAULT_TENANT_ID;
+  }
+
+  /** @deprecated T-08 D — unscoped store handle. Use storeFor(tenantId). */
   get store(): MemoryTripleStore {
-    return this.storeFor(DEFAULT_TENANT_ID);
+    // Accessing the unscoped store is itself a fallback; surface the warning.
+    const tenant = this.resolveTenantId(undefined, 'store getter');
+    return this.storeFor(tenant);
   }
 
   /** Resolve (creating when needed) the in-memory store for a tenant. */
   storeFor(tenantId?: string): MemoryTripleStore {
-    const key = tenantId ?? DEFAULT_TENANT_ID;
-    let store = this.stores.get(key);
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'storeFor');
+    let store = this.stores.get(resolved);
     if (!store) {
       store = new MemoryTripleStore();
-      this.stores.set(key, store);
+      this.stores.set(resolved, store);
     }
     return store;
   }
@@ -115,7 +137,7 @@ export class KnowledgeGraphModule implements IModule {
       // envelope (bridge-synthesized while the knowledge producer migrates).
       kernel.bus.onEnveloped(KnowledgeEvents.DocumentIngested, async (_topic, envelope) => {
         const p = payloadOf<{ docId: string; tenantId?: string }>(envelope);
-        const tenantId = p.tenantId ?? DEFAULT_TENANT_ID;
+        const tenantId = p.tenantId !== undefined ? p.tenantId : this.resolveTenantId(undefined, 'autoIndexDocument');
         const svc = kernel.getModule<KnowledgeService>('knowledge');
         const doc = await svc.getDocument(p.docId);
         if (!doc) return;
@@ -142,31 +164,34 @@ export class KnowledgeGraphModule implements IModule {
   // ---- Public API (every operation is tenant-partitioned) ----
 
   addEntity(input: Omit<Entity, 'createdAt' | 'updatedAt'> & { createdAt?: number }, tenantId?: string): Entity {
-    const store = this.storeFor(tenantId);
-    const tenant = tenantId ?? DEFAULT_TENANT_ID;
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'addEntity');
+    const store = this.storeFor(resolved);
     const existing = store.getEntity(input.id);
     const ent = store.upsertEntity(createEntity(input));
-    void this.api.bus.emit(existing ? GraphEvents.EntityUpdated : GraphEvents.EntityAdded, { id: ent.id, type: ent.type, tenantId: tenant });
+    void this.api.bus.emit(existing ? GraphEvents.EntityUpdated : GraphEvents.EntityAdded, { id: ent.id, type: ent.type, tenantId: resolved });
     return ent;
   }
 
   /** Convenience: add entity only if it doesn't exist. Returns existing or new. */
   addOrGetEntity(input: Omit<Entity, 'createdAt' | 'updatedAt'>, tenantId?: string): Entity {
-    const store = this.storeFor(tenantId);
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'addOrGetEntity');
+    const store = this.storeFor(resolved);
     const existing = store.getEntity(input.id);
     if (existing) return existing;
-    return this.addEntity(input, tenantId);
+    return this.addEntity(input, resolved);
   }
 
   getEntity(id: EntityId, tenantId?: string): Entity | undefined {
+    // getEntity delegates to storeFor which already warns on missing tenant
     return this.storeFor(tenantId).getEntity(id);
   }
 
   removeEntity(id: EntityId, tenantId?: string): boolean {
-    const store = this.storeFor(tenantId);
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'removeEntity');
+    const store = this.storeFor(resolved);
     const removed = store.removeEntity(id);
     if (removed) {
-      void this.api.bus.emit(GraphEvents.EntityRemoved, { id, tenantId: tenantId ?? DEFAULT_TENANT_ID });
+      void this.api.bus.emit(GraphEvents.EntityRemoved, { id, tenantId: resolved });
     }
     return removed;
   }
@@ -179,25 +204,28 @@ export class KnowledgeGraphModule implements IModule {
     confidence?: number;
     source?: { chunkId?: string; documentId?: string };
   }, tenantId?: string): Triple {
-    const store = this.storeFor(tenantId);
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'addTriple');
+    const store = this.storeFor(resolved);
     const t = store.addTriple(createTriple(input));
-    void this.api.bus.emit(GraphEvents.TripleAdded, { id: t.id, subject: t.subject, predicate: t.predicate, object: t.object, tenantId: tenantId ?? DEFAULT_TENANT_ID });
+    void this.api.bus.emit(GraphEvents.TripleAdded, { id: t.id, subject: t.subject, predicate: t.predicate, object: t.object, tenantId: resolved });
     return t;
   }
 
   removeTriple(id: TripleId, tenantId?: string): boolean {
-    const store = this.storeFor(tenantId);
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'removeTriple');
+    const store = this.storeFor(resolved);
     const removed = store.removeTriple(id);
     if (removed) {
-      void this.api.bus.emit(GraphEvents.TripleRemoved, { id, tenantId: tenantId ?? DEFAULT_TENANT_ID });
+      void this.api.bus.emit(GraphEvents.TripleRemoved, { id, tenantId: resolved });
     }
     return removed;
   }
 
   traverse(start: EntityId, opts?: TraversalOptions, tenantId?: string): Path[] {
-    const store = this.storeFor(tenantId);
+    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'traverse');
+    const store = this.storeFor(resolved);
     const paths = store.traverse(start, opts);
-    void this.api.bus.emit(GraphEvents.Traversed, { start, returned: paths.length, tenantId: tenantId ?? DEFAULT_TENANT_ID });
+    void this.api.bus.emit(GraphEvents.Traversed, { start, returned: paths.length, tenantId: resolved });
     return paths;
   }
 
@@ -220,7 +248,7 @@ export class KnowledgeGraphModule implements IModule {
   /** Embed an entity's name+properties and index it for semantic entity search
    *  (index rows are tenant-partitioned: id and metadata carry the tenant). */
   async embedEntity(id: EntityId, tenantId?: string): Promise<void> {
-    const tenant = tenantId ?? DEFAULT_TENANT_ID;
+    const tenant = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'embedEntity');
     const e = this.storeFor(tenant).getEntity(id);
     if (!e) throw new Error(`KnowledgeGraph: entity "${id}" not found`);
     const text = `${e.name}${e.properties ? ' ' + JSON.stringify(e.properties) : ''}`;
@@ -232,7 +260,7 @@ export class KnowledgeGraphModule implements IModule {
   /** Extract entities/relations from text and add them to the graph
    *  (into the tenant's store). Returns the extraction result with ids populated. */
   extractFromText(text: string, source?: { chunkId?: string; documentId?: string }, tenantId?: string): ExtractionResult {
-    const tenant = tenantId ?? DEFAULT_TENANT_ID;
+    const tenant = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'extractFromText');
     const store = this.storeFor(tenant);
     const { entities, triples } = this.extractor.extract(text, { source });
     const out: ExtractionResult = { entities: [], triples: [] };
@@ -270,7 +298,7 @@ export class KnowledgeGraphModule implements IModule {
 
   /** Link a chunk id to an entity via 'mentions' triple (tenant-partitioned). */
   linkMention(chunkId: string, entityId: EntityId, confidence?: number, docId?: string, tenantId?: string): Triple {
-    const tenant = tenantId ?? DEFAULT_TENANT_ID;
+    const tenant = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'linkMention');
     const chunkEntId = `chunk:${chunkId}`;
     this.addOrGetEntity({ id: chunkEntId, type: 'Chunk', name: chunkId, properties: { chunkId } }, tenant);
     return this.addTriple({
@@ -284,7 +312,7 @@ export class KnowledgeGraphModule implements IModule {
 
   /** Find entities semantically similar to a query (scoped to one tenant). */
   async findEntities(query: string, opts: { topK?: number; type?: string } = {}, tenantId?: string): Promise<Array<{ entity: Entity; score: number }>> {
-    const tenant = tenantId ?? DEFAULT_TENANT_ID;
+    const tenant = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'findEntities');
     const hits = await this.vectors.embedAndSearch(this.entityIndexName, query, {
       topK: opts.topK ?? 10,
       tenantId: tenant,

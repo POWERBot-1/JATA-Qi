@@ -185,8 +185,27 @@ export interface IBlobStore {
 /** Factory that knows how to open namespaces/collections/blobs. */
 export interface IStorageDriver {
   readonly id: string;
+  /**
+   * T-08 D-4: preferred tenant-scoped namespace open. Requires a tenant
+   * identity/context; the driver binds the handle to that tenant.
+   */
+  openTenantNamespace(name: string, tenantId: string): Promise<INamespace>;
+  /**
+   * T-08 D-4: preferred tenant-scoped blob store open. Requires tenantId.
+   */
+  openTenantBlobStore(name: string, tenantId: string): Promise<IBlobStore>;
+  /**
+   * @deprecated T-08 D-4 — unscoped namespace opens bypass tenant guardrails.
+   * Use `openTenantNamespace(name, tenantId)` with a tenant identity/context.
+   * Remains only for driver internals and isolated tests. Lint guard rejects
+   * unscoped use outside `packages/storage` drivers and tests.
+   */
   openNamespace(name: string): Promise<INamespace>;
   openCollection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
+  /**
+   * @deprecated T-08 D-4 — unscoped blob store opens bypass tenant guardrails.
+   * Use `openTenantBlobStore(name, tenantId)`.
+   */
   openBlobStore(name: string): Promise<IBlobStore>;
   /** Close the driver and release resources (file handles, db connections). */
   close(): Promise<void>;

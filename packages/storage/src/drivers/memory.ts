@@ -187,6 +187,18 @@ export class MemoryDriver implements IStorageDriver {
   private collections = new Map<string, MemoryCollection<any>>();
   private blobs = new Map<string, MemoryBlobStore>();
 
+  async openTenantNamespace(name: string, tenantId: string): Promise<INamespace> {
+    if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('openTenantNamespace requires a non-empty tenantId (fail-closed).');
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw new Error(`tenantId "${tenantId}" contains characters that are not safe.`);
+    const key = `${name}::${tenantId}`;
+    let ns = this.namespaces.get(key);
+    if (!ns) {
+      ns = new MemoryNamespace(key);
+      this.namespaces.set(key, ns);
+    }
+    return ns;
+  }
+
   async openNamespace(name: string): Promise<INamespace> {
     let ns = this.namespaces.get(name);
     if (!ns) {
@@ -203,6 +215,18 @@ export class MemoryDriver implements IStorageDriver {
     }
     return c;
   }
+  async openTenantBlobStore(name: string, tenantId: string): Promise<IBlobStore> {
+    if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) throw new Error('openTenantBlobStore requires a non-empty tenantId (fail-closed).');
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) throw new Error(`tenantId "${tenantId}" contains characters that are not safe.`);
+    const key = `${name}::${tenantId}`;
+    let b = this.blobs.get(key);
+    if (!b) {
+      b = new MemoryBlobStore(key);
+      this.blobs.set(key, b);
+    }
+    return b;
+  }
+
   async openBlobStore(name: string): Promise<IBlobStore> {
     let b = this.blobs.get(name);
     if (!b) {
