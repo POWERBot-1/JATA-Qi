@@ -109,11 +109,22 @@ await qi.shutdown();
 Run the CLI:
 
 ```bash
+# Knowledge-facing commands (ask, ingest, search, stats, entities, repl) operate
+# as exactly ONE tenant, taken from the deployment configuration. Without it the
+# command fails closed BEFORE the kernel boots — nothing is read, written, or
+# searched — and no default tenant is ever substituted. The reserved test-only
+# tenant id `default` is refused as an operator tenant.
+export JATAQI_OPERATOR_TENANT=tenant-acme
+
 node packages/cli/dist/src/index.js ask "what is JATA Qi?"
 node packages/cli/dist/src/index.js ingest ./README.md
 node packages/cli/dist/src/index.js search "vector search"
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
+
+# --tenant is a CONSISTENCY CHECK ONLY: it must equal JATAQI_OPERATOR_TENANT or
+# the command is refused. It can never override, widen, or establish a tenant.
+node packages/cli/dist/src/index.js search --tenant tenant-acme "vector search"
 ```
 
 ## Local development configuration
