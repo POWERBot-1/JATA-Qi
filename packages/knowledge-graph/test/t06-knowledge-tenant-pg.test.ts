@@ -192,7 +192,15 @@ describe('T-06 knowledge cross-tenant isolation over real PostgreSQL', async () 
       const vecB = await vectors.embedAndSearch('knowledge.chunks', TEXT_A, { tenantId: TENANT_B, topK: 10 });
       assert.ok(vecB.every((h) => h.metadata?.tenantId === TENANT_B), 'vector search scoped to B only returns B vectors');
       // The single shared index holds BOTH tenants (single PG database, both tenants)…
-      const all = await vectors.embedAndSearch('knowledge.chunks', TEXT_A, { topK: 100 });
+      // S-1: there is no unscoped vector search any more — the tenantless call is
+      // refused, so "the index holds both tenants" is proven by the union of the
+      // two tenant-scoped searches plus the refusal itself.
+      await assert.rejects(
+        () => vectors.embedAndSearch('knowledge.chunks', TEXT_A, { topK: 100 }),
+        /Failing closed/,
+        'an unscoped vector search must be refused (S-1)',
+      );
+      const all = [...vecA, ...vecB];
       const seenTenants = new Set(all.map((h) => h.metadata?.tenantId as string));
       assert.ok(seenTenants.has(TENANT_A) && seenTenants.has(TENANT_B), 'single database contains both tenants vectors');
 
@@ -382,7 +390,14 @@ describe('T-06 knowledge cross-tenant isolation over real PostgreSQL', async () 
       assert.ok(vecA.length > 0 && vecA.every((h) => h.metadata?.tenantId === TENANT_A), 'A vectors only, despite identical content');
       const vecB = await vectors.embedAndSearch('knowledge.chunks', TEXT, { tenantId: TENANT_B, topK: 20 });
       assert.ok(vecB.length > 0 && vecB.every((h) => h.metadata?.tenantId === TENANT_B), 'B vectors only, despite identical content');
-      const allV = await vectors.embedAndSearch('knowledge.chunks', TEXT, { topK: 200 });
+      // S-1: unscoped vector search is refused; the union of tenant-scoped
+      // searches is the only way to observe that both tenants share the index.
+      await assert.rejects(
+        () => vectors.embedAndSearch('knowledge.chunks', TEXT, { topK: 200 }),
+        /Failing closed/,
+        'an unscoped vector search must be refused (S-1)',
+      );
+      const allV = [...vecA, ...vecB];
       const seen = new Set(allV.map((h) => h.metadata?.tenantId as string));
       assert.ok(seen.has(TENANT_A) && seen.has(TENANT_B), 'single shared index holds both tenants');
 
@@ -487,7 +502,17 @@ describe('T-06 knowledge cross-tenant isolation over real PostgreSQL', async () 
         assert.equal(graph.getEntity(`doc:${repA.docId}`, TENANT_B), undefined, 'A doc entity invisible to B store');
         assert.equal(graph.getEntity(`doc:${repB.docId}`, TENANT_A), undefined, 'B doc entity invisible to A store');
         // Vector index (single shared collection) holds both tenants' rows.
-        const allV = await vectors.embedAndSearch('knowledge.chunks', TEXT, { topK: 200 });
+        // S-1: an unscoped vector search is refused, so "both tenants persisted
+        // in the shared index" is proven by the union of the two tenant-scoped
+        // searches plus the refusal itself.
+        await assert.rejects(
+          () => vectors.embedAndSearch('knowledge.chunks', TEXT, { topK: 200 }),
+          /Failing closed/,
+          'an unscoped vector search must be refused (S-1)',
+        );
+        const vecRowsA = await vectors.embedAndSearch('knowledge.chunks', TEXT, { tenantId: TENANT_A, topK: 100 });
+        const vecRowsB = await vectors.embedAndSearch('knowledge.chunks', TEXT, { tenantId: TENANT_B, topK: 100 });
+        const allV = [...vecRowsA, ...vecRowsB];
         const seen = new Set(allV.map((h) => h.metadata?.tenantId as string));
         assert.ok(seen.has(TENANT_A) && seen.has(TENANT_B), 'both tenants vectors persisted in the shared index');
 

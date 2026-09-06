@@ -1,4 +1,5 @@
-export { KnowledgeGraphModule } from './graph-module.js';
+export { KnowledgeGraphModule, authorizeDocumentIngestedEvent } from './graph-module.js';
+export type { DocumentIngestedAuthorization } from './graph-module.js';
 export type { KnowledgeGraphConfig } from './graph-module.js';
 export { MemoryTripleStore } from './graph-store.js';
 export type { ITripleStore } from './graph-store.js';

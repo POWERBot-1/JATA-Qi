@@ -247,11 +247,17 @@ describe('R-4 CLI tenant boundary — command execution is tenant-scoped', () =>
     const scoped = JSON.parse(res.out.join('\n')) as { tenantId: string; knowledge: { documents: number; chunks: number } };
     assert.equal(scoped.tenantId, TENANT_A);
     assert.equal(scoped.knowledge.documents, 1, 'tenant A owns exactly one document');
-    // The unscoped service call would report both tenants — proof that the CLI
-    // path is genuinely narrowed rather than accidentally equal.
-    const global = await harness.knowledge.stats();
-    assert.equal(global.documents, 2, 'the store holds both tenants');
-    assert.ok(scoped.knowledge.documents < global.documents);
+    // S-1: there is no unscoped service call any more. A tenantless stats() is
+    // REFUSED (fail-closed) rather than returning cross-tenant global totals, so
+    // the CLI's narrow count cannot be an accident of an empty store: tenant B's
+    // own scoped stats still see B's document.
+    await assert.rejects(() => harness.knowledge.stats(), /Failing closed/);
+    await assert.rejects(() => harness.knowledge.stats({ tenantId: '   ' }), /Failing closed/);
+    const forB = await harness.knowledge.stats({ tenantId: TENANT_B });
+    assert.equal(forB.documents, 1, 'tenant B still owns its own document (the store is not empty)');
+    const storeTotal = scoped.knowledge.documents + forB.documents;
+    assert.equal(storeTotal, 2, 'the store still holds both tenants (A-scoped + B-scoped)');
+    assert.ok(scoped.knowledge.documents < storeTotal, 'the CLI report is genuinely narrower than the store');
   });
 
   it('entities lists only the operator tenant graph', async () => {

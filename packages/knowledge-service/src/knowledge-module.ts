@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
+import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { ICollection, INamespace } from '@jataqi/storage';
 import type { VectorSearchModule } from '@jataqi/vector-search';
 import { chunkText } from './chunker.js';
-import { DEFAULT_TENANT_ID, KnowledgeEvents } from './types.js';
+import { KnowledgeEvents } from './types.js';
+import { resolveTenantContext } from './tenant-context.js';
 import type {
   Chunk,
   Document,
@@ -11,6 +13,9 @@ import type {
   RetrievalHit,
   RetrievalOptions,
 } from './types.js';
+
+/** Attested producer identity recorded on every knowledge event envelope (S-1/V-1). */
+export const KNOWLEDGE_EVENT_SOURCE = 'knowledge';
 
 const NS_DOCS = 'knowledge.docs';
 const COL_CHUNKS = 'knowledge.chunks';
@@ -52,31 +57,30 @@ export class KnowledgeService implements IModule {
   }
 
   /**
-   * T-08.1 D: tenant fallback guard — DEFAULT_TENANT_ID is test-only.
-   * When `opts.tenantId` is missing we warn via observability and, outside
-   * explicit test-compat mode, fail closed. Only an explicit
-   * `JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1` or
-   * `JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK=1` authorizes the fallback;
-   * no `NODE_ENV` value (including unset/development/staging) may authorize it.
+   * S-1: the authoritative tenant guard for EVERY tenant-bound knowledge
+   * operation — ingest, read, and delete alike.
+   *
+   * T-08.1 D/K1 semantics are preserved exactly (same warning, same message
+   * shape, same two explicit test-compat flags, no NODE_ENV authorization), but
+   * the guard is no longer ingest-only: before S-1 the read/delete paths gated
+   * on `tenantId !== undefined`, so a tenant-less `retrieve`/`stats`/`getChunk`/
+   * `getDocument` returned EVERY tenant's data and a tenant-less
+   * `deleteDocument` destroyed a foreign tenant's document.
+   *
+   * Contract now enforced for all of them:
+   *   - non-blank tenant  → exactly that tenant (never widened);
+   *   - missing/blank     → REFUSED (`TenantContextError`) with no data-plane work;
+   *   - test-compat flags → the isolated reserved DEFAULT_TENANT_ID bucket only,
+   *                         which is still ONE tenant, never all tenants.
    */
-  private resolveTenantIdForIngest(requested?: string): string {
-    if (requested !== undefined && requested !== null && String(requested).trim()) return requested;
-    const allow = process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK === '1' || process.env.JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK === '1';
-    const message = `KnowledgeService: ingestText tenantId missing — falling back to DEFAULT_TENANT_ID="${DEFAULT_TENANT_ID}" (test-only fail-safe)`;
-    try {
-      this.api?.logger?.warn?.(message, { fallbackTenantId: DEFAULT_TENANT_ID, op: 'ingestText' } as any);
-    } catch {
-      // logger unavailable during early boot — still surface via console
-      console.warn(message);
-    }
-    if (!allow) throw new Error(`${message}. Provide opts.tenantId or set JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1 for test-only compat. Failing closed.`);
-    return DEFAULT_TENANT_ID;
+  private requireTenant(requested: string | undefined, op: string): string {
+    return resolveTenantContext(requested, op, { logger: this.api?.logger });
   }
 
   /** Ingest text as a new document, chunk, embed, and index. Returns the Document. */
   async ingestText(text: string, opts: IngestOptions = {}): Promise<Document> {
     if (!text || !text.trim()) throw new Error('ingestText: text is empty');
-    const tenantId = this.resolveTenantIdForIngest(opts.tenantId);
+    const tenantId = this.requireTenant(opts.tenantId, 'ingestText');
     const docId = randomUUID();
     const now = Date.now();
     const doc: Document = {
@@ -127,41 +131,72 @@ export class KnowledgeService implements IModule {
     await this.vectors.persist(VEC_INDEX);
 
     this.api.logger.debug(`ingested doc ${docId} for tenant ${tenantId} (${storedChunks.length} chunks)`);
-    await this.api.bus.emit(KnowledgeEvents.DocumentIngested, { docId, tenantId, chunks: storedChunks.length });
-    await this.api.bus.emit(KnowledgeEvents.ChunksCreated, { docId, tenantId, chunkIds: doc.chunkIds });
+    // S-1/V-1: knowledge events are produced as first-class envelopes with the
+    // owning tenant bound IN THE ENVELOPE (not only in the payload) and the
+    // producing subsystem attested in `source`/`provenance`. Legacy subscribers
+    // still receive the byte-identical plain payload via `legacyPayload`, so
+    // F-01a compatibility is preserved while consumers can now distinguish an
+    // attested producer from an arbitrary in-process emit.
+    await emitPlainEnveloped(
+      this.api.bus,
+      KnowledgeEvents.DocumentIngested,
+      { docId, tenantId, chunks: storedChunks.length },
+      { source: KNOWLEDGE_EVENT_SOURCE, tenantId, entityId: docId, correlationId: `knowledge:ingest:${docId}` },
+    );
+    await emitPlainEnveloped(
+      this.api.bus,
+      KnowledgeEvents.ChunksCreated,
+      { docId, tenantId, chunkIds: doc.chunkIds },
+      { source: KNOWLEDGE_EVENT_SOURCE, tenantId, entityId: docId, correlationId: `knowledge:ingest:${docId}` },
+    );
     return doc;
   }
 
   /**
-   * Retrieve a document by id.
+   * Retrieve a document by id — tenant-bound (S-1).
    *
-   * T-06 tenant scoping: when `opts.tenantId` is given the document is only
-   * returned when it belongs to that tenant (cross-tenant and untagged reads
-   * fail closed — undefined). Without it this is a system-level read and
-   * returns the raw document regardless of tenant.
+   * `opts.tenantId` is REQUIRED. A missing/blank tenant is refused
+   * (`TenantContextError`) instead of performing a system-level read: before
+   * S-1 this method returned the raw document regardless of tenant, which let a
+   * tenantless caller read (and, via `deleteDocument`, destroy) another
+   * tenant's data.
+   *
+   * Denials: a document owned by a different tenant — or an untagged/legacy
+   * document — yields `undefined` (fail-closed), never the record.
    */
   async getDocument(id: string, opts: { tenantId?: string } = {}): Promise<Document | undefined> {
+    const tenantId = this.requireTenant(opts.tenantId, 'getDocument');
     const doc = await this.docs.get<Document>(id);
     if (!doc) return undefined;
-    if (opts.tenantId !== undefined && doc.tenantId !== opts.tenantId) return undefined;
+    if (doc.tenantId !== tenantId) return undefined;
     return doc;
   }
 
   /**
-   * Retrieve a chunk by id (same tenant scoping contract as getDocument).
+   * Retrieve a chunk by id — tenant-bound (S-1), same contract as
+   * `getDocument`: tenant required, cross-tenant and untagged ids denied.
    */
   async getChunk(id: string, opts: { tenantId?: string } = {}): Promise<Chunk | undefined> {
+    const tenantId = this.requireTenant(opts.tenantId, 'getChunk');
     const chunk = await this.chunks.get(id);
     if (!chunk) return undefined;
-    if (opts.tenantId !== undefined && chunk.tenantId !== opts.tenantId) return undefined;
+    if (chunk.tenantId !== tenantId) return undefined;
     return chunk;
   }
 
-  /** Delete a document, its chunks, and vectors.
-   *  When `opts.tenantId` is given, only that tenant's document is deleted
-   *  (a cross-tenant delete request is refused and returns false). */
+  /**
+   * Delete a document, its chunks, and its vectors — tenant-bound (S-1).
+   *
+   * This is the highest-severity operation in the service: before S-1 a call
+   * with no tenant deleted ANY tenant's document (independent verification
+   * proved a foreign document destroyed). The tenant is now resolved first and
+   * the deletion only proceeds when the document is owned by that exact tenant;
+   * a cross-tenant or untagged id is refused (`false`) and nothing is mutated —
+   * no chunk, no vector, no document row, and no `DocumentDeleted` event.
+   */
   async deleteDocument(id: string, opts: { tenantId?: string } = {}): Promise<boolean> {
-    const doc = await this.getDocument(id, { tenantId: opts.tenantId });
+    const tenantId = this.requireTenant(opts.tenantId, 'deleteDocument');
+    const doc = await this.getDocument(id, { tenantId });
     if (!doc) return false;
     const index = await this.vectors.index(VEC_INDEX);
     for (const chunkId of doc.chunkIds) {
@@ -170,29 +205,38 @@ export class KnowledgeService implements IModule {
     }
     await this.vectors.persist(VEC_INDEX);
     await this.docs.delete(id);
-    await this.api.bus.emit(KnowledgeEvents.DocumentDeleted, { docId: id, tenantId: doc.tenantId });
+    await emitPlainEnveloped(
+      this.api.bus,
+      KnowledgeEvents.DocumentDeleted,
+      { docId: id, tenantId },
+      { source: KNOWLEDGE_EVENT_SOURCE, tenantId, entityId: id, correlationId: `knowledge:delete:${id}` },
+    );
     return true;
   }
 
   /** Semantic retrieval — embeds query and pulls top-K chunks with docs.
    *
-   * T-06 tenant scoping: with `opts.tenantId` the vector search filters
-   * candidates by tenant BEFORE ranking and every returned chunk/document is
-   * re-verified to belong to that tenant (fail-closed: a row that is missing,
-   * or carries a different/missing tenant id, is never returned). Without a
-   * tenant id the call is unscoped (system-level) and keeps legacy behavior.
+   * T-06 tenant scoping, made unconditional by S-1: `opts.tenantId` is
+   * REQUIRED and is resolved (or refused) BEFORE any embedding, vector search,
+   * or storage read happens. Candidates are filtered by tenant BEFORE ranking
+   * and every returned chunk/document is re-verified to belong to that tenant
+   * (fail-closed: a row that is missing, or carries a different/missing tenant
+   * id, is never returned). The legacy "no tenant id ⇒ unscoped system-level
+   * retrieval" mode is removed: there is no all-tenant retrieval any more.
    */
   async retrieve(query: string, opts: RetrievalOptions = {}): Promise<RetrievalHit[]> {
+    const tenantId = this.requireTenant(opts.tenantId, 'retrieve');
     const topK = opts.topK ?? 5;
-    const tenantId = opts.tenantId;
-    const tenantFilter = tenantId !== undefined ? (m: Record<string, unknown> | undefined) => m?.tenantId === tenantId : undefined;
     const hits = await this.vectors.embedAndSearch(VEC_INDEX, query, {
       topK,
       minScore: opts.minScore,
-      filter:
-        tenantFilter || opts.filter
-          ? (m) => (tenantFilter ? tenantFilter(m) : true) && (opts.filter ? matchesFilter(m, opts.filter!) : true)
-          : undefined,
+      // S-1: the tenant is now enforced IN the vector layer (candidates are
+      // restricted before ranking, and untagged vectors are never returned) in
+      // addition to the caller-side metadata filter and the chunk/document
+      // re-verification below — three independent gates, none of which can be
+      // skipped by a tenantless call.
+      tenantId,
+      filter: opts.filter ? (m) => matchesFilter(m, opts.filter!) : undefined,
     });
 
     const results: RetrievalHit[] = [];
@@ -207,8 +251,9 @@ export class KnowledgeService implements IModule {
       if (!chunk || !doc) continue;
       // Fail closed: a tenant-scoped retrieval must never surface another
       // tenant's (or untagged, legacy) knowledge, even if the vector index
-      // somehow contained it.
-      if (tenantId !== undefined && (chunk.tenantId !== tenantId || doc.tenantId !== tenantId)) continue;
+      // somehow contained it. Unconditional since S-1: every retrieval has a
+      // resolved tenant.
+      if (chunk.tenantId !== tenantId || doc.tenantId !== tenantId) continue;
       let finalChunks = [chunk];
       if (opts.expandContext) {
         const window = opts.contextWindow ?? 1;
@@ -229,18 +274,28 @@ export class KnowledgeService implements IModule {
       }
     }
 
-    await this.api.bus.emit(KnowledgeEvents.Retrieved, { query, returned: results.length });
+    // The retrieval audit event is tenant-attributed: an unattributed audit
+    // record cannot be reasoned about per tenant (S-1 auditability).
+    await emitPlainEnveloped(
+      this.api.bus,
+      KnowledgeEvents.Retrieved,
+      { query, returned: results.length, tenantId },
+      { source: KNOWLEDGE_EVENT_SOURCE, tenantId, correlationId: `knowledge:retrieve:${tenantId}` },
+    );
     return results;
   }
 
-  /** Count documents and chunks (optionally scoped to one tenant). */
+  /**
+   * Count documents and chunks for ONE tenant (S-1: tenant required).
+   *
+   * The legacy tenantless mode returned cross-tenant global totals; it is
+   * removed. A missing/blank tenant is refused before any storage read.
+   */
   async stats(opts: { tenantId?: string } = {}): Promise<{ documents: number; chunks: number }> {
-    if (opts.tenantId === undefined) {
-      return { documents: await this.docs.size(), chunks: await this.chunks.count() };
-    }
+    const tenantId = this.requireTenant(opts.tenantId, 'stats');
     const list = await this.docs.list();
-    const docs = list.items.filter((e) => (e.value as Document | undefined)?.tenantId === opts.tenantId).length;
-    const chunkRows = await this.chunks.query({ where: (c) => c.tenantId === opts.tenantId });
+    const docs = list.items.filter((e) => (e.value as Document | undefined)?.tenantId === tenantId).length;
+    const chunkRows = await this.chunks.query({ where: (c) => c.tenantId === tenantId });
     return { documents: docs, chunks: chunkRows.length };
   }
 }

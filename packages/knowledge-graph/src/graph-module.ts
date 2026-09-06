@@ -1,7 +1,8 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
-import { payloadOf } from '@jataqi/core-kernel';
+import { payloadOf, SYSTEM_TENANT } from '@jataqi/core-kernel';
+import type { EventEnvelope } from '@jataqi/core-kernel';
 import type { ICollection } from '@jataqi/storage';
-import { DEFAULT_TENANT_ID, KnowledgeEvents, KnowledgeService } from '@jataqi/knowledge-service';
+import { DEFAULT_TENANT_ID, KNOWLEDGE_EVENT_SOURCE, KnowledgeEvents, KnowledgeService } from '@jataqi/knowledge-service';
 import type { VectorSearchModule } from '@jataqi/vector-search';
 import { MemoryTripleStore } from './graph-store.js';
 import { createEntity, createTriple } from './factories.js';
@@ -25,6 +26,21 @@ export interface KnowledgeGraphConfig {
   autoIndexDocuments?: boolean;
   /** Name of vector index used for entity embeddings. */
   entityIndex?: string;
+  /**
+   * S-1/B-3 — EXPLICIT migration attribution for durable graph rows that carry
+   * no tenant tag.
+   *
+   * Untagged tenant-sensitive rows are never silently turned into
+   * `DEFAULT_TENANT_ID` data. Without this option they are QUARANTINED: not
+   * loaded into any tenant store, reported through `quarantineReport()` and a
+   * structured WARN, and written back verbatim (still untagged) by `persist()`
+   * so quarantine is non-destructive.
+   *
+   * Setting a real tenant id here is an operator's explicit, auditable
+   * attribution decision for a legacy snapshot. The reserved
+   * `DEFAULT_TENANT_ID` and blank values are rejected at construction.
+   */
+  untaggedRowTenant?: string;
 }
 
 interface PersistedEntity extends Entity { id: string; tenantId?: string; }
@@ -62,6 +78,11 @@ export class KnowledgeGraphModule implements IModule {
   private entityIndexName = 'knowledge-graph.entities';
   private extractor: Extractor = new HeuristicExtractor();
   private retriever!: GraphRAGRetriever;
+  /** S-1/B-3: durable rows with no tenant tag. Never loaded into a tenant store. */
+  private readonly quarantinedEntities: PersistedEntity[] = [];
+  private readonly quarantinedTriples: PersistedTriple[] = [];
+  /** S-1/B-3: rows attributed by the explicit `untaggedRowTenant` migration option. */
+  private attributedUntaggedRows = 0;
 
   /** Swap the extractor (e.g. for an LLM-based one). */
   setExtractor(extractor: Extractor): void {
@@ -70,6 +91,22 @@ export class KnowledgeGraphModule implements IModule {
 
   constructor(cfg: KnowledgeGraphConfig = {}) {
     this.cfg = { autoIndexDocuments: true, ...cfg };
+    const attribution = this.cfg.untaggedRowTenant;
+    if (attribution !== undefined) {
+      if (typeof attribution !== 'string' || attribution.trim().length === 0) {
+        throw new Error(
+          'KnowledgeGraphModule: untaggedRowTenant must be a non-blank tenant id. Untagged durable rows are ' +
+            'quarantined, never attributed to a blank tenant. Failing closed.',
+        );
+      }
+      if (attribution === DEFAULT_TENANT_ID) {
+        throw new Error(
+          `KnowledgeGraphModule: untaggedRowTenant may not be the reserved DEFAULT_TENANT_ID ("${DEFAULT_TENANT_ID}"). ` +
+            'Attributing untagged rows to the shared default bucket is exactly the silent ownership assignment S-1 ' +
+            'removes. Failing closed.',
+        );
+      }
+    }
   }
 
   /**
@@ -92,16 +129,23 @@ export class KnowledgeGraphModule implements IModule {
     return DEFAULT_TENANT_ID;
   }
 
-  /** @deprecated T-08 D — unscoped store handle. Use storeFor(tenantId). */
-  get store(): MemoryTripleStore {
-    // Accessing the unscoped store is itself a fallback; surface the warning.
-    const tenant = this.resolveTenantId(undefined, 'store getter');
-    return this.storeFor(tenant);
+  /**
+   * S-1: resolve a tenant for a graph read, or refuse (K1 semantics, exported
+   * for the graph-RAG retriever so it can fail closed BEFORE any lookup).
+   */
+  requireTenant(tenantId: string | undefined, op = 'requireTenant'): string {
+    return this.resolveTenantId(tenantId, op);
   }
 
   /** Resolve (creating when needed) the in-memory store for a tenant. */
   storeFor(tenantId?: string): MemoryTripleStore {
-    const resolved = tenantId !== undefined ? tenantId : this.resolveTenantId(undefined, 'storeFor');
+    // S-1: a blank/whitespace tenant is AMBIGUOUS, not a distinct tenant. It is
+    // routed through the same fail-closed guard as a missing one, so no caller
+    // can mint an '' store beside the real per-tenant stores (which would be an
+    // unowned bucket able to persist rows with a blank tenant tag).
+    const resolved = typeof tenantId === 'string' && tenantId.trim().length > 0
+      ? tenantId
+      : this.resolveTenantId(tenantId, 'storeFor');
     let store = this.stores.get(resolved);
     if (!store) {
       store = new MemoryTripleStore();
@@ -125,7 +169,12 @@ export class KnowledgeGraphModule implements IModule {
     this.vectors = kernel.getModule<VectorSearchModule>('vector-search');
     // Restore the known graph entity index when a development snapshot exists.
     await this.vectors.load(this.entityIndexName);
-    kernel.container.registerValue('graph.store', this.storeFor(DEFAULT_TENANT_ID));
+    // S-1/B-2: the ambient `graph.store` container value (a live, writable
+    // DEFAULT_TENANT_ID store handed to any resolver, bypassing the fail-closed
+    // guard) is REMOVED. There is no unscoped store handle any more: a store is
+    // only reachable through `storeFor(tenantId)`, which fails closed without an
+    // unambiguous tenant, so a tenantless caller cannot obtain a privileged
+    // default-tenant handle to write (and persist) another tenant's graph.
     kernel.container.registerValue('graph.module', this);
     await this.loadFromStorage();
 
@@ -133,20 +182,50 @@ export class KnowledgeGraphModule implements IModule {
       // When documents are ingested into knowledge service, automatically create
       // a Document entity (in the DOCUMENT'S tenant store — never the caller's
       // or a shared store) and link it to its chunks.
-      // F-01f enveloped cutover: read the ingested-document payload from the
-      // envelope (bridge-synthesized while the knowledge producer migrates).
+      //
+      // S-1/V-1: the event is treated as UNTRUSTED input. Independent
+      // verification showed that a forged `knowledge.document.ingested` emit
+      // carrying another tenant's docId and the attacker's tenantId used the
+      // then-unscoped `getDocument()` read to plant the foreign document's
+      // title and metadata in the attacker's graph. Three controls now apply,
+      // in order, each fail-closed and audited:
+      //   1. producer attestation — the envelope must be produced by the
+      //      knowledge service (a plain `bus.emit` is bridged as
+      //      `legacy-bridge` and is refused);
+      //   2. tenant binding — the envelope must carry a non-blank, non-system
+      //      tenant and the payload must not contradict it (ambiguity refuses);
+      //   3. authoritative corroboration — the document is re-read SCOPED to
+      //      that tenant, so a foreign document id resolves to nothing and no
+      //      metadata can be disclosed. This is the control that actually
+      //      prevents cross-tenant disclosure: an in-process caller holding the
+      //      bus can forge `source`, but it cannot make another tenant's
+      //      document resolve inside its own tenant.
       kernel.bus.onEnveloped(KnowledgeEvents.DocumentIngested, async (_topic, envelope) => {
-        const p = payloadOf<{ docId: string; tenantId?: string }>(envelope);
-        const tenantId = p.tenantId !== undefined ? p.tenantId : this.resolveTenantId(undefined, 'autoIndexDocument');
+        const decision = authorizeDocumentIngestedEvent(envelope);
+        if (!decision.ok) {
+          kernel.logger.warn(
+            `knowledge graph: refused knowledge.document.ingested (${decision.reason}); no entity was created and no document was read`,
+            { reason: decision.reason, topic: KnowledgeEvents.DocumentIngested, envelopeId: envelope.id, source: envelope.source } as any,
+          );
+          return;
+        }
         const svc = kernel.getModule<KnowledgeService>('knowledge');
-        const doc = await svc.getDocument(p.docId);
-        if (!doc) return;
+        // Scoped read: undefined unless the attested tenant OWNS the document.
+        const doc = await svc.getDocument(decision.docId, { tenantId: decision.tenantId });
+        if (!doc || doc.tenantId !== decision.tenantId) {
+          kernel.logger.warn(
+            'knowledge graph: refused knowledge.document.ingested (document is not owned by the attested tenant); ' +
+              'no cross-tenant read or metadata disclosure was performed',
+            { reason: 'foreign-or-missing-document', docId: decision.docId, tenantId: decision.tenantId } as any,
+          );
+          return;
+        }
         this.addOrGetEntity({
           id: `doc:${doc.id}`,
           type: 'Document',
           name: doc.title ?? doc.id,
           properties: { docId: doc.id, ...(doc.metadata ?? {}) },
-        }, tenantId);
+        }, decision.tenantId);
       });
     }
     kernel.logger.info('knowledge graph initialized');
@@ -343,8 +422,35 @@ export class KnowledgeGraphModule implements IModule {
         tripRows.push({ ...t, id: compositeId(tenant, t.id), tenantId: tenant });
       }
     }
-    await this.entitiesCol.replaceAll(entRows);
-    await this.triplesCol.replaceAll(tripRows);
+    // S-1/B-3: quarantined (untagged) rows are written back VERBATIM — still
+    // untagged — so quarantine never loses data and never canonizes an
+    // unauthorized owner. Only rows held in a tenant store are tenant-tagged.
+    await this.entitiesCol.replaceAll([...entRows, ...this.quarantinedEntities]);
+    await this.triplesCol.replaceAll([...tripRows, ...this.quarantinedTriples]);
+  }
+
+  /**
+   * S-1/B-3: read-only audit report of durable graph rows that carry no tenant
+   * tag. They are quarantined — invisible to every tenant, including the
+   * reserved default bucket — until an operator attributes them explicitly
+   * through `KnowledgeGraphConfig.untaggedRowTenant`.
+   */
+  quarantineReport(): {
+    entities: number;
+    triples: number;
+    entityRowIds: string[];
+    tripleRowIds: string[];
+    attributedToTenant?: string;
+    attributedRows: number;
+  } {
+    return {
+      entities: this.quarantinedEntities.length,
+      triples: this.quarantinedTriples.length,
+      entityRowIds: this.quarantinedEntities.map((r) => r.id).slice(0, 50),
+      tripleRowIds: this.quarantinedTriples.map((r) => r.id).slice(0, 50),
+      ...(this.cfg.untaggedRowTenant ? { attributedToTenant: this.cfg.untaggedRowTenant } : {}),
+      attributedRows: this.attributedUntaggedRows,
+    };
   }
 
   /** Iterate all triples in the given tenant's store. */
@@ -360,15 +466,24 @@ export class KnowledgeGraphModule implements IModule {
   }
 
   private async loadFromStorage(): Promise<void> {
+    const attribution = this.cfg.untaggedRowTenant;
     for (const row of await this.entitiesCol.all()) {
-      const tenant = row.tenantId ?? DEFAULT_TENANT_ID;
+      const tenant = this.resolveRowTenant(row.tenantId, '__kg__.entities', row.id, attribution);
+      if (tenant === undefined) {
+        this.quarantinedEntities.push(row);
+        continue;
+      }
       const id = tenantIdFromComposite(row.tenantId, row.id);
       const { tenantId: _t, id: _id, ...rest } = row;
       const entity: Entity = { ...rest, id };
       this.storeFor(tenant).upsertEntity(entity);
     }
     for (const row of await this.triplesCol.all()) {
-      const tenant = row.tenantId ?? DEFAULT_TENANT_ID;
+      const tenant = this.resolveRowTenant(row.tenantId, '__kg__.triples', row.id, attribution);
+      if (tenant === undefined) {
+        this.quarantinedTriples.push(row);
+        continue;
+      }
       const store = this.storeFor(tenant);
       if (store.getEntity(row.subject) && store.getEntity(row.object)) {
         store.addTriple({
@@ -381,6 +496,49 @@ export class KnowledgeGraphModule implements IModule {
         });
       }
     }
+    const quarantined = this.quarantinedEntities.length + this.quarantinedTriples.length;
+    if (quarantined > 0) {
+      // Auditable refusal: untagged tenant-sensitive rows never become
+      // authoritative default-tenant data (S-1/B-3).
+      this.api?.logger?.warn?.(
+        `knowledge graph: quarantined ${quarantined} durable row(s) with no tenant tag — they are invisible to every ` +
+          'tenant (including the reserved default bucket) until explicitly attributed via untaggedRowTenant',
+        {
+          quarantinedEntities: this.quarantinedEntities.length,
+          quarantinedTriples: this.quarantinedTriples.length,
+          entityRowIds: this.quarantinedEntities.map((r) => r.id).slice(0, 20),
+          tripleRowIds: this.quarantinedTriples.map((r) => r.id).slice(0, 20),
+        } as any,
+      );
+    }
+    if (this.attributedUntaggedRows > 0) {
+      this.api?.logger?.warn?.(
+        `knowledge graph: attributed ${this.attributedUntaggedRows} untagged durable row(s) to tenant ` +
+          `"${attribution}" because untaggedRowTenant was explicitly configured (migration attribution)`,
+        { attributedToTenant: attribution, rows: this.attributedUntaggedRows } as any,
+      );
+    }
+  }
+
+  /**
+   * S-1/B-3: tenant for one durable row. A tagged row keeps its tag; an
+   * untagged row is attributed ONLY through the explicit operator migration
+   * option, otherwise it is quarantined (undefined) instead of silently
+   * becoming `DEFAULT_TENANT_ID` data.
+   */
+  private resolveRowTenant(
+    rowTenantId: string | undefined,
+    collection: string,
+    rowId: string,
+    attribution: string | undefined,
+  ): string | undefined {
+    if (typeof rowTenantId === 'string' && rowTenantId.trim().length > 0) return rowTenantId;
+    if (attribution !== undefined) {
+      this.attributedUntaggedRows += 1;
+      return attribution;
+    }
+    this.api?.logger?.debug?.(`knowledge graph: untagged row quarantined (${collection} ${rowId})` as any);
+    return undefined;
   }
 }
 
@@ -389,4 +547,42 @@ function tenantIdFromComposite(rowTenantId: string | undefined, rowId: string): 
   if (rowTenantId === undefined) return rowId;
   if (rowId.startsWith(rowTenantId + TENANT_KEY_SEP)) return rowId.slice(rowTenantId.length + 1);
   return rowId;
+}
+
+/** Outcome of authorizing an untrusted `knowledge.document.ingested` envelope (S-1/V-1). */
+export type DocumentIngestedAuthorization =
+  | { ok: true; docId: string; tenantId: string }
+  | { ok: false; reason: 'unattested-source' | 'missing-tenant' | 'system-tenant' | 'tenant-mismatch' | 'missing-doc-id' };
+
+/**
+ * Authorize an untrusted ingest event BEFORE any privileged lookup.
+ *
+ * The event payload is attacker-controllable by anything that can reach the
+ * bus, so nothing in it is trusted on its own: the producer must be attested in
+ * the envelope, the tenant must be bound to the envelope (a payload tenant may
+ * only AGREE with it), and the tenant may not be the kernel `system` tenant.
+ * The caller must then corroborate ownership with a tenant-scoped document read.
+ */
+export function authorizeDocumentIngestedEvent(envelope: EventEnvelope): DocumentIngestedAuthorization {
+  if (envelope.source !== KNOWLEDGE_EVENT_SOURCE || envelope.provenance?.source !== KNOWLEDGE_EVENT_SOURCE) {
+    return { ok: false, reason: 'unattested-source' };
+  }
+  const envelopeTenant = envelope.tenantId;
+  if (typeof envelopeTenant !== 'string' || envelopeTenant.trim().length === 0) {
+    return { ok: false, reason: 'missing-tenant' };
+  }
+  if (envelopeTenant === SYSTEM_TENANT) {
+    return { ok: false, reason: 'system-tenant' };
+  }
+  const payload = payloadOf<{ docId?: unknown; tenantId?: unknown }>(envelope);
+  const payloadTenant = payload?.tenantId;
+  if (typeof payloadTenant === 'string' && payloadTenant.trim().length > 0 && payloadTenant !== envelopeTenant) {
+    // Ambiguous tenant context: the envelope and its payload disagree.
+    return { ok: false, reason: 'tenant-mismatch' };
+  }
+  const docId = payload?.docId;
+  if (typeof docId !== 'string' || docId.trim().length === 0) {
+    return { ok: false, reason: 'missing-doc-id' };
+  }
+  return { ok: true, docId, tenantId: envelopeTenant };
 }

@@ -15,3 +15,6 @@ export type {
   VectorMetric,
   VectorRecord,
 } from './types.js';
+
+// S-1: tenant-context refusal type for the vector layer (strict: no default-tenant fallback).
+export { TenantContextError, TENANT_CONTEXT_REQUIRED, isTenantId } from './tenant-context.js';

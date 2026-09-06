@@ -1,4 +1,5 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
+import { TenantContextError } from './tenant-context.js';
 import type { ICollection } from '@jataqi/storage';
 import { FlatIndex } from './flat-index.js';
 import { HashEmbeddingModel, OpenAIEmbeddingModel } from './embeddings.js';
@@ -98,30 +99,55 @@ export class VectorSearchModule implements IModule {
     await this.api.bus.emit(VectorEvents.VectorAdded, { index: indexName, count: records.length });
   }
 
+  /**
+   * Embed `text` and search one index — tenant-bound (S-1).
+   *
+   * `opts.tenantId` is REQUIRED: a missing or blank tenant is refused with
+   * `TenantContextError` BEFORE the embedding or the search runs. There is no
+   * default-tenant concept at the vector layer, so no fallback flag is honoured
+   * here: an unscoped vector search would span every tenant whose vectors live
+   * in the index.
+   */
   async embedAndSearch(indexName: string, text: string, opts?: SearchOptions): Promise<SearchHit[]> {
+    const scoped = this.scopeOptions(indexName, 'embedAndSearch', opts);
     const idx = await this.index(indexName);
     const q = await this.model.embed(text);
-    const hits = await idx.search(q, this.scopeOptions(opts));
+    const hits = await idx.search(q, scoped);
     await this.api.bus.emit(VectorEvents.Searched, { index: indexName, topK: opts?.topK ?? 10, returned: hits.length });
     return hits;
   }
 
+  /** Search one index with a pre-computed vector — tenant-bound (S-1), same contract as `embedAndSearch`. */
   async search(indexName: string, vec: Vector, opts?: SearchOptions): Promise<SearchHit[]> {
+    const scoped = this.scopeOptions(indexName, 'search', opts);
     const idx = await this.index(indexName);
-    return idx.search(vec, this.scopeOptions(opts));
+    return idx.search(vec, scoped);
   }
 
   /**
-   * T-06 tenant scoping: when the caller supplies a `tenantId`, candidate
-   * records are restricted to vectors whose metadata carries exactly that
-   * tenant id — enforced HERE in the vector layer so every search path (raw
-   * `search`, `embedAndSearch`) fails closed at the module boundary, not only
-   * when callers remember to filter.
+   * T-06 tenant scoping, made unconditional by S-1: candidate records are
+   * restricted to vectors whose metadata carries exactly the caller's tenant id
+   * — enforced HERE in the vector layer so every search path (raw `search`,
+   * `embedAndSearch`) fails closed at the module boundary, not only when
+   * callers remember to filter.
+   *
+   * Before S-1 an absent `tenantId` returned the options unchanged, i.e. an
+   * unscoped search over every tenant's vectors, which contradicted the
+   * fail-closed claim in this method's own contract. A missing/blank tenant is
+   * now refused; records without a tenant marker are never returned.
    */
-  private scopeOptions(opts?: SearchOptions): SearchOptions | undefined {
-    if (!opts || opts.tenantId === undefined) return opts;
-    const { tenantId, filter } = opts;
-    const scoped = { ...opts, tenantId: undefined };
+  private scopeOptions(indexName: string, op: string, opts?: SearchOptions): SearchOptions {
+    const tenantId = opts?.tenantId;
+    if (typeof tenantId !== 'string' || tenantId.trim().length === 0) {
+      throw new TenantContextError(
+        `VectorSearchModule.${op}`,
+        `VectorSearchModule: ${op} on index "${indexName}" requires opts.tenantId — a tenant-bound vector search ` +
+          'without an unambiguous tenant is refused (no default tenant exists at the vector layer, and an unscoped ' +
+          'search would span every tenant in the index). Failing closed.',
+      );
+    }
+    const { filter } = opts!;
+    const scoped: SearchOptions = { ...opts, tenantId: undefined };
     scoped.filter = (metadata: Record<string, unknown> | undefined): boolean => {
       if (metadata?.tenantId !== tenantId) return false;
       return filter ? filter(metadata) : true;

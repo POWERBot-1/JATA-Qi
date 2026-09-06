@@ -188,7 +188,10 @@ export type AgentRunner = (
 
 export interface KnowledgeCommandDeps {
   knowledge: Pick<KnowledgeService, 'ingestText' | 'getChunk' | 'stats' | 'retrieve'>;
-  graph: Pick<KnowledgeGraphModule, 'extractFromText' | 'linkMention' | 'stats' | 'allEntities' | 'entitiesByType'>;
+  graph: Pick<
+    KnowledgeGraphModule,
+    'extractFromText' | 'linkMention' | 'stats' | 'allEntities' | 'entitiesByType' | 'getEntity'
+  >;
   /** Agent entry point; the resolved tenant is always supplied as `metadata.tenantId`. */
   runAgent: AgentRunner;
   /** Injectable so tests never touch the filesystem. Defaults to `node:fs/promises`. */
@@ -287,7 +290,32 @@ export async function runKnowledgeCommand(
       }
       case 'entities': {
         const type = parsed.positional[0];
-        const ents = type ? graph.entitiesByType(type, tenantId) : graph.allEntities(tenantId);
+        const listed = type ? graph.entitiesByType(type, tenantId) : graph.allEntities(tenantId);
+        // S-1/V-2 defense-in-depth: the authoritative protection is the graph
+        // module's tenant partitioning (a tenantless call fails closed there),
+        // but the `search` path already re-filters at this boundary and
+        // `entities` did not — independent verification showed a poisoned graph
+        // dependency printing a foreign entity under the operator's tenant
+        // label. Every listed entity is therefore attributed back through the
+        // authoritative tenant-scoped lookup, and anything not attributable to
+        // the operator tenant (including a row carrying a foreign tenant marker,
+        // or any row when the lookup itself is unavailable) is dropped with an
+        // auditable count instead of being printed.
+        const attributable = typeof graph.getEntity === 'function';
+        const ents = listed.filter((e) => {
+          const marker = (e as { tenantId?: unknown }).tenantId;
+          if (typeof marker === 'string' && marker !== tenantId) return false;
+          if (!attributable) return false;
+          const authoritative = graph.getEntity(e.id, tenantId);
+          return authoritative !== undefined && authoritative.id === e.id;
+        });
+        const dropped = listed.length - ents.length;
+        if (dropped > 0) {
+          err(
+            `entities: dropped ${dropped} row(s) not attributable to tenant ${tenantId} ` +
+              `(defense-in-depth re-filter${attributable ? '' : '; no authoritative entity lookup available'})`,
+          );
+        }
         for (const e of ents.slice(0, 50)) log(`[${e.type}] ${e.id}\t${e.name}`);
         log(`\n${ents.length} entities shown [tenant ${tenantId}]`);
         return 0;

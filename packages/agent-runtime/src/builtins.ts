@@ -1,19 +1,37 @@
 // Built-in tools wired to knowledge service, knowledge graph, and storage.
 
 import type { Tool, ToolContext } from './tools.js';
+import { TenantContextError } from '@jataqi/knowledge-service';
 import type { KnowledgeService } from '@jataqi/knowledge-service';
 import type { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import type { VectorSearchModule } from '@jataqi/vector-search';
 
 /**
- * T-06: tenant of the current tool execution, when the runner supplies one.
- * Tools are tenant-scoped only when the context says so (production loop
- * flows seed `metadata.tenantId` with the actor's tenant); without it the
- * tools keep their legacy unscoped behavior.
+ * S-1: tenant of the current tool execution — REQUIRED.
+ *
+ * T-06 seeded `metadata.tenantId` from the actor's tenant but let a runner that
+ * forgot it fall back to "legacy unscoped behavior", which independent
+ * verification showed discloses other tenants' chunks through
+ * `knowledge.search`. That mode is removed: every built-in tool below resolves
+ * its execution tenant BEFORE touching any data plane and refuses with
+ * `TenantContextError` when the context carries no unambiguous tenant.
+ *
+ * Tool authorization therefore never depends on the model, on the tool input,
+ * or on a caller remembering to scope: an agent run without a tenant can call
+ * these tools and gets a refusal, not data. A tool input can never name a
+ * tenant — none of the input schemas accepts one.
  */
-function ctxTenantId(ctx: ToolContext): string | undefined {
+function ctxTenantId(ctx: ToolContext, tool: string): string {
   const t = ctx.metadata?.tenantId;
-  return typeof t === 'string' && t.length > 0 ? t : undefined;
+  if (typeof t !== 'string' || t.trim().length === 0) {
+    throw new TenantContextError(
+      tool,
+      `${tool}: the tool execution context carries no tenant (metadata.tenantId). Built-in knowledge/graph/vector ` +
+        'tools are tenant-bound and refuse to run unscoped: no cross-tenant read is performed and no default tenant ' +
+        'is substituted. Seed the run metadata with the actor tenant. Failing closed.',
+    );
+  }
+  return t;
 }
 
 /** knowledge.search — semantic retrieval over documents. */
@@ -32,7 +50,7 @@ export function knowledgeSearchTool(getService: () => KnowledgeService): Tool {
     },
     async execute(input: any, ctx: ToolContext) {
       const svc = getService();
-      const tenantId = ctxTenantId(ctx);
+      const tenantId = ctxTenantId(ctx, 'knowledge.search');
       const hits = await svc.retrieve(String(input.query ?? ''), {
         tenantId,
         topK: Number(input.topK ?? 5),
@@ -73,7 +91,7 @@ export function graphTraverseTool(getGraph: () => KnowledgeGraphModule): Tool {
       const predicates = input.followPredicates
         ? String(input.followPredicates).split(',').map((s: string) => s.trim()).filter(Boolean)
         : undefined;
-      const tenantId = ctxTenantId(ctx);
+      const tenantId = ctxTenantId(ctx, 'graph.traverse');
       const paths = g.traverse(String(input.entityId), {
         maxDepth: Number(input.maxDepth ?? 2),
         followPredicates: predicates,
@@ -104,7 +122,7 @@ export function graphFindEntityTool(getGraph: () => KnowledgeGraphModule): Tool 
     },
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
-      const tenantId = ctxTenantId(ctx);
+      const tenantId = ctxTenantId(ctx, 'graph.findEntity');
       const hits = await g.findEntities(String(input.query), {
         topK: Number(input.topK ?? 5),
         type: input.type != null ? String(input.type) : undefined,
@@ -132,7 +150,7 @@ export function graphRetrieveTool(getGraph: () => KnowledgeGraphModule): Tool {
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
       const hits = await g.graphRetrieve(String(input.query), {
-        tenantId: ctxTenantId(ctx),
+        tenantId: ctxTenantId(ctx, 'graph.retrieve'),
         topK: Number(input.topK ?? 5),
         graphDepth: Number(input.graphDepth ?? 1),
       });
@@ -164,8 +182,10 @@ export function vectorSearchTool(getVectors: () => VectorSearchModule): Tool {
     },
     async execute(input: any, ctx: ToolContext) {
       const v = getVectors();
+      // Resolved before the index name is even read: no data-plane work without a tenant.
+      const tenantId = ctxTenantId(ctx, 'vector.search');
       const idx = String(input.index ?? 'knowledge.chunks');
-      return v.embedAndSearch(idx, String(input.query), { tenantId: ctxTenantId(ctx), topK: Number(input.topK ?? 5) });
+      return v.embedAndSearch(idx, String(input.query), { tenantId, topK: Number(input.topK ?? 5) });
     },
   };
 }
