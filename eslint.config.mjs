@@ -55,9 +55,9 @@ export default tseslint.config(
     },
   },
   {
-    // T-08 D-4 tenant guardrail: unscoped driver opens bypass tenant isolation.
+    // T-08.1 D-4 tenant guardrail: unscoped driver/legacy opens bypass tenant isolation.
     // Preferred: openTenantNamespace(name, tenantId) / openTenantBlobStore(name, tenantId).
-    // Rejected outside storage drivers and tests.
+    // Rejected outside storage drivers and tests. Covers direct, computed, and destructuring bypasses.
     files: ['**/*.ts'],
     rules: {
       'no-restricted-syntax': [
@@ -65,12 +65,62 @@ export default tseslint.config(
         {
           selector: "CallExpression[callee.property.name='openNamespace']",
           message:
-            'T-08 D-4: Use openTenantNamespace(name, tenantId) — unscoped openNamespace bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+            'T-08.1 D-4: Use openTenantNamespace(name, tenantId) — unscoped openNamespace bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+        },
+        {
+          selector: "CallExpression[callee.property.value='openNamespace']",
+          message:
+            'T-08.1 D-4: Use openTenantNamespace(name, tenantId) — computed unscoped openNamespace bypasses guardrail.',
         },
         {
           selector: "CallExpression[callee.property.name='openBlobStore']",
           message:
-            'T-08 D-4: Use openTenantBlobStore(name, tenantId) — unscoped openBlobStore bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+            'T-08.1 D-4: Use openTenantBlobStore(name, tenantId) — unscoped openBlobStore bypasses tenant guardrails and is forbidden outside packages/storage drivers and tests.',
+        },
+        {
+          selector: "CallExpression[callee.property.value='openBlobStore']",
+          message:
+            'T-08.1 D-4: computed unscoped openBlobStore bypasses guardrail.',
+        },
+        {
+          selector: "Property[key.name='openNamespace']",
+          message:
+            'T-08.1 D-4: destructuring openNamespace bypasses tenant guardrail — use openTenantNamespace.',
+        },
+        {
+          selector: "Property[key.value='openNamespace']",
+          message:
+            'T-08.1 D-4: computed destructuring openNamespace bypasses guardrail.',
+        },
+        {
+          selector: "Property[key.name='openBlobStore']",
+          message:
+            'T-08.1 D-4: destructuring openBlobStore bypasses tenant guardrail — use openTenantBlobStore.',
+        },
+        {
+          selector: "Property[key.value='openBlobStore']",
+          message:
+            'T-08.1 D-4: computed destructuring openBlobStore bypasses guardrail.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='namespace']",
+          message:
+            'T-08.1 D-4: legacy storage.namespace bypasses tenant guardrail — use openTenantNamespace(name, tenantId) or explicit collection-level tenantId with eslint-disable for T-08.1.',
+        },
+        {
+          selector: "CallExpression[callee.property.value='namespace']",
+          message:
+            'T-08.1 D-4: computed legacy storage.namespace bypasses guardrail.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='blobStore']",
+          message:
+            'T-08.1 D-4: legacy storage.blobStore bypasses tenant guardrail — use openTenantBlobStore(name, tenantId).',
+        },
+        {
+          selector: "CallExpression[callee.property.value='blobStore']",
+          message:
+            'T-08.1 D-4: computed legacy storage.blobStore bypasses guardrail.',
         },
       ],
     },

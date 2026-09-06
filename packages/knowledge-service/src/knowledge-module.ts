@@ -32,6 +32,7 @@ export class KnowledgeService implements IModule {
       namespace: (n: string) => Promise<INamespace>;
       collection: <T extends { id: string }>(n: string) => Promise<ICollection<T>>;
     };
+    // eslint-disable-next-line no-restricted-syntax -- T-08.1 D1: knowledge docs use collection-level tenantId (doc.tenantId) with a single system namespace; per-tenant namespace would be a breaking storage migration. Explicitly exempted.
     this.docs = await storage.namespace(NS_DOCS);
     this.chunks = await storage.collection<Chunk>(COL_CHUNKS);
     this.vectors = kernel.getModule<VectorSearchModule>('vector-search');
@@ -51,15 +52,16 @@ export class KnowledgeService implements IModule {
   }
 
   /**
-   * T-08 D: tenant fallback guard — DEFAULT_TENANT_ID is test-only.
+   * T-08.1 D: tenant fallback guard — DEFAULT_TENANT_ID is test-only.
    * When `opts.tenantId` is missing we warn via observability and, outside
-   * test/compat mode, fail closed. Tests set `NODE_ENV=test` or
-   * `JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1` and remain isolated per-tenant
-   * by the per-tenant store map.
+   * explicit test-compat mode, fail closed. Only an explicit
+   * `JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1` or
+   * `JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK=1` authorizes the fallback;
+   * no `NODE_ENV` value (including unset/development/staging) may authorize it.
    */
   private resolveTenantIdForIngest(requested?: string): string {
     if (requested !== undefined && requested !== null && String(requested).trim()) return requested;
-    const allow = process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK === '1' || process.env.NODE_ENV !== 'production' || Boolean(process.env.VITEST);
+    const allow = process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK === '1' || process.env.JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK === '1';
     const message = `KnowledgeService: ingestText tenantId missing — falling back to DEFAULT_TENANT_ID="${DEFAULT_TENANT_ID}" (test-only fail-safe)`;
     try {
       this.api?.logger?.warn?.(message, { fallbackTenantId: DEFAULT_TENANT_ID, op: 'ingestText' } as any);

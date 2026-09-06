@@ -9,6 +9,7 @@ import { StorageModule } from '@jataqi/storage';
 import { VectorSearchModule } from '@jataqi/vector-search';
 import type { Kernel } from '@jataqi/core-kernel';
 import { chunkText, KnowledgeService, KnowledgeEvents } from '../src/index.js';
+process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK = '1';
 
 function bootKernel() {
   const k = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });

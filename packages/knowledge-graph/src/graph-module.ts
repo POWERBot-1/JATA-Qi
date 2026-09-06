@@ -73,14 +73,15 @@ export class KnowledgeGraphModule implements IModule {
   }
 
   /**
-   * T-08 D: tenant fallback guard. When tenantId is missing we warn via
-   * observability and, outside test/compat mode, fail closed. Tests may use
-   * the isolated DEFAULT_TENANT_ID store by setting NODE_ENV=test or
-   * JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1 (still isolated per-tenant map).
+   * T-08.1 D: tenant fallback guard. When tenantId is missing we warn via
+   * observability and, outside explicit test-compat mode, fail closed. Only
+   * `JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1` or
+   * `JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK=1` authorizes the isolated
+   * DEFAULT_TENANT_ID store; no NODE_ENV value may authorize it.
    */
   private resolveTenantId(tenantId: string | undefined, op = 'storeFor'): string {
     if (tenantId !== undefined && tenantId !== null && String(tenantId).trim()) return tenantId;
-    const allow = process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK === '1' || process.env.NODE_ENV !== 'production' || Boolean(process.env.VITEST);
+    const allow = process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK === '1' || process.env.JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK === '1';
     const message = `KnowledgeGraphModule: ${op} tenantId missing — falling back to DEFAULT_TENANT_ID="${DEFAULT_TENANT_ID}" (test-only fail-safe)`;
     try {
       this.api?.logger?.warn?.(message, { fallbackTenantId: DEFAULT_TENANT_ID, op } as any);

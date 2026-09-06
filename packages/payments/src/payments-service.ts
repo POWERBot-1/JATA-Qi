@@ -493,12 +493,15 @@ export class PaymentsService {
   async adminReleaseReservation(actor: CommercialActor, paymentId: string): Promise<PaymentIntent> {
     assertAdministrator(actor);
     const payment = await this.requirePayment(actor, paymentId);
+    // T-08.1 P1: fast-path for same-process idempotency, but persistent CAS is authoritative.
+    // A caller that already recovered this payment in this process and sees a recovered state may return immediately.
     if (this.recoveredReservationIds.has(paymentId) && (payment.status === 'DRAFT' || payment.status === 'VERIFIED')) {
       return copy(payment);
     }
     if (payment.status !== 'PROCESSING' && payment.status !== 'REFUND_PROCESSING') {
       throw new PaymentError(`Payment ${payment.id} is not in a recoverable reservation state (${payment.status}).`);
     }
+    const previousStatus = payment.status;
     let recovered: PaymentIntent;
     if (payment.status === 'PROCESSING') {
       try {
@@ -506,9 +509,10 @@ export class PaymentsService {
       } catch (error) {
         if (error instanceof PaymentError && String((error as Error).message).includes('cannot transition')) {
           const winner = await this.payments.get(paymentId);
-          if (winner && (winner.status === 'DRAFT' || winner.status === 'FAILED' || winner.status === 'REQUIRES_ACTION') && canRead(actor, winner.tenantId)) {
-            if (this.recoveredReservationIds.has(paymentId)) return copy(winner);
-            throw new PaymentError(`Payment ${payment.id} is not in a recoverable reservation state (${winner.status}).`);
+          // T-08.1 P1: cross-process idempotency — if another worker already recovered PROCESSING→DRAFT, return winner
+          if (winner && winner.status === 'DRAFT' && canRead(actor, winner.tenantId)) {
+            this.recoveredReservationIds.add(paymentId);
+            return copy(winner);
           }
           throw error;
         }
@@ -520,9 +524,10 @@ export class PaymentsService {
       } catch (error) {
         if (error instanceof PaymentError && String((error as Error).message).includes('cannot transition')) {
           const winner = await this.payments.get(paymentId);
+          // T-08.1 P1: cross-process idempotency — REFUND_PROCESSING→VERIFIED winner
           if (winner && winner.status === 'VERIFIED' && canRead(actor, winner.tenantId)) {
-            if (this.recoveredReservationIds.has(paymentId)) return copy(winner);
-            throw new PaymentError(`Payment ${payment.id} is not in a recoverable reservation state (${winner.status}).`);
+            this.recoveredReservationIds.add(paymentId);
+            return copy(winner);
           }
           throw error;
         }
@@ -534,10 +539,10 @@ export class PaymentsService {
       paymentId: recovered.id,
       tenantId: recovered.tenantId,
       restoredStatus: recovered.status,
-      previousStatus: payment.status,
+      previousStatus,
       reason: 'admin reservation recovery',
       correlationId: recovered.id,
-    }, undefined, `reservation-released:${recovered.id}`);
+    }, undefined, `reservation-released:${recovered.id}:${previousStatus}`);
     return copy(recovered);
   }
 

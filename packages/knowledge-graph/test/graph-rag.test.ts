@@ -6,6 +6,7 @@ import { StorageModule } from '@jataqi/storage';
 import { VectorSearchModule } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '../src/index.js';
+process.env.JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK = '1';
 
 function boot() {
   const k = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
