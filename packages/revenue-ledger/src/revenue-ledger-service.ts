@@ -16,6 +16,23 @@ import {
 } from './types.js';
 
 const LEDGER_COLLECTION = 'revenue-ledger.entries';
+/**
+ * Per-tenant atomic sequence counters for ledger entries (T-06). The counter
+ * is advanced with the CAS-counter pattern (control-plane/unified-outbox
+ * precedent) INSIDE the same composed write as the entry itself, so a
+ * rollback of the entry also rolls back the allocation: sequences stay
+ * contiguous per tenant and concurrent writers can never observe the same
+ * pre-state. Cross-process safety rests on the database row-lock CAS.
+ */
+const LEDGER_SEQ_COLLECTION = 'revenue-ledger.entries-seq';
+
+/** Per-tenant atomic sequence counter document (T-06). */
+interface LedgerSequenceCounter {
+  id: string;
+  tenantId: string;
+  sequence: number;
+}
+
 /** T-05 durable inbox handler id — stable across restarts/deploys (keys the inbox). */
 export const REVENUE_LEDGER_DURABLE_HANDLER_ID = 'revenue-ledger.invoice-settlement';
 
@@ -35,6 +52,7 @@ export class RevenueLedgerError extends Error {
 export class RevenueLedgerService {
   private storage!: StorageModule;
   private entries!: ICollection<RevenueLedgerEntry>;
+  private seqCounters!: ICollection<LedgerSequenceCounter>;
   private billing!: BillingService;
   private payments!: PaymentsService;
   private controlPlane!: CommercialControlPlaneService;
@@ -43,6 +61,7 @@ export class RevenueLedgerService {
   async init(kernel: KernelApi): Promise<void> {
     this.storage = kernel.getModule<StorageModule>('storage');
     this.entries = await this.storage.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+    this.seqCounters = await this.storage.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
     this.billing = kernel.getModule<BillingModule>('billing').getService();
     this.payments = kernel.getModule<PaymentsModule>('payments').getService();
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
@@ -70,19 +89,26 @@ export class RevenueLedgerService {
     assertManager(actor);
     if (!input.evidence.length || !input.category || !input.notes?.trim() && input.notes !== undefined) throw new RevenueLedgerError('Cost category, evidence, and any supplied notes must be valid.');
     assertMoney(input.amount);
-    const entry = await this.append({
-      tenantId: actor.tenantId,
-      entryType: 'COST',
-      recognitionStatus: input.measured === false ? 'ESTIMATED' : 'RECOGNIZED',
-      productId: input.productId,
-      ventureId: input.ventureId,
-      amount: copy(input.amount),
-      costCategory: input.category,
-      evidence: copy(input.evidence),
-      notes: input.notes,
-    });
-    await this.emit(actor, RevenueLedgerEvents.CostRecorded, entry, { entryId: entry.id, category: entry.costCategory, amount: entry.amount, recognitionStatus: entry.recognitionStatus });
-    return copy(entry);
+    // T-06: entry + sequence allocation commit as ONE composed write (on
+    // transactional drivers) under the actor's tenant; the CAS counter row
+    // serializes same-tenant concurrent writers.
+    return this.storage.atomically(async (scope) => {
+      const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+      const counters = await scope.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
+      const entry = await this.append({
+        tenantId: actor.tenantId,
+        entryType: 'COST',
+        recognitionStatus: input.measured === false ? 'ESTIMATED' : 'RECOGNIZED',
+        productId: input.productId,
+        ventureId: input.ventureId,
+        amount: copy(input.amount),
+        costCategory: input.category,
+        evidence: copy(input.evidence),
+        notes: input.notes,
+      }, entries, counters);
+      await this.emit(actor, RevenueLedgerEvents.CostRecorded, entry, { entryId: entry.id, category: entry.costCategory, amount: entry.amount, recognitionStatus: entry.recognitionStatus }, scope);
+      return copy(entry);
+    }, { tenantId: actor.tenantId });
   }
 
   async getEntry(actor: CommercialActor, id: string): Promise<RevenueLedgerEntry | undefined> {
@@ -140,8 +166,11 @@ export class RevenueLedgerService {
     const actor = systemActor(event.tenantId);
     const [invoice, payment] = await Promise.all([this.billing.getInvoice(actor, invoiceId), this.payments.getPayment(actor, paymentId)]);
     if (!invoice || !payment || !isVerifiedPaymentForInvoice(invoice, payment, event.tenantId) || payment.tenantId !== event.tenantId) return;
+    // T-06: the composed write runs under the EVENT's tenant (RLS context set
+    // inside the transaction) and allocates the sequence via the CAS counter.
     await this.storage.atomically(async (scope) => {
       const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+      const counters = await scope.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
       if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // idempotent redelivery
       const entry = await this.append({
         tenantId: event.tenantId,
@@ -156,9 +185,9 @@ export class RevenueLedgerService {
         sourceEventId: event.id,
         evidence: copy(payment.verificationEvidence),
         notes: `Recognized from verified payment ${payment.id}.`,
-      }, entries);
+      }, entries, counters);
       await this.emit(actor, RevenueLedgerEvents.RevenueRecorded, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount }, scope);
-    });
+    }, { tenantId: event.tenantId });
   }
 
   private async handleRefundedInvoice(event: CommercialEvent): Promise<void> {
@@ -171,6 +200,7 @@ export class RevenueLedgerService {
     const amount = payment.refundAmount ?? payment.amount;
     await this.storage.atomically(async (scope) => {
       const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
+      const counters = await scope.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
       if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // idempotent redelivery
       const entry = await this.append({
         tenantId: event.tenantId,
@@ -185,23 +215,62 @@ export class RevenueLedgerService {
         sourceEventId: event.id,
         evidence: copy(payment.verificationEvidence),
         notes: `Revenue reversal from verified refund ${payment.id}.`,
-      }, entries);
+      }, entries, counters);
       await this.emit(actor, RevenueLedgerEvents.RevenueReversed, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount }, scope);
-    });
+    }, { tenantId: event.tenantId });
   }
 
-  private async append(input: Omit<RevenueLedgerEntry, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'>, entries: ICollection<RevenueLedgerEntry> = this.entries): Promise<RevenueLedgerEntry> {
-    const previous = (await entries.query({ where: (entry) => entry.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
+  /**
+   * Append with T-06 CAS sequence allocation (control-plane CAS-counter
+   * pattern): the per-tenant counter is advanced atomically (row-lock CAS,
+   * 64-round convergence) in the SAME transaction/scope as the entry write.
+   * The previous hash is read from the highest committed entry AFTER the
+   * counter advance, so the row lock guarantees the writer is the newest:
+   * two concurrent same-tenant writers serialize and can never allocate the
+   * same sequence or link the wrong predecessor. The caller must pass the
+   * scope-bound ledger and counter collections inside one composed write.
+   */
+  private async append(
+    input: Omit<RevenueLedgerEntry, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'>,
+    entries: ICollection<RevenueLedgerEntry>,
+    counters: ICollection<LedgerSequenceCounter>,
+  ): Promise<RevenueLedgerEntry> {
+    const sequence = await this.nextSequence(input.tenantId, counters);
+    // Chain link: the highest entry below our reserved sequence. Under the
+    // same composed write the row-lock counter advance ordered us AFTER every
+    // concurrently committed writer, so this entry IS the true predecessor
+    // (no gap) and the hash chain stays continuous.
+    const previous = (await entries.query({ where: (entry) => entry.tenantId === input.tenantId && entry.sequence < sequence, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
     const draft: Omit<RevenueLedgerEntry, 'hash'> = {
       ...input,
       id: randomUUID(),
-      sequence: (previous?.sequence ?? 0) + 1,
+      sequence,
       previousHash: previous?.hash ?? 'GENESIS',
       createdAt: Date.now(),
     };
     const entry: RevenueLedgerEntry = { ...draft, hash: hashEntry({ ...draft, hash: '' }) };
     await entries.put(entry);
     return entry;
+  }
+
+  /** CAS-advance the per-tenant atomic sequence counter (bounded 64 rounds). */
+  private async nextSequence(tenantId: string, counters: ICollection<LedgerSequenceCounter>): Promise<number> {
+    const counterId = `seq:${tenantId}`;
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const current = await counters.get(counterId);
+      const observed = current ?? { id: counterId, tenantId, sequence: 0 };
+      const next: LedgerSequenceCounter = { id: counterId, tenantId, sequence: observed.sequence + 1 };
+      const res = await counters.cas(
+        counterId,
+        (candidate) => (candidate?.sequence ?? 0) === observed.sequence,
+        () => next,
+      );
+      if (res.ok) return next.sequence;
+      // Lost a create/advance race (first-create election or another writer):
+      // re-read and retry. On PostgreSQL the loser's INSERT was refused
+      // (ON CONFLICT DO NOTHING) rather than overwriting the winner.
+    }
+    throw new RevenueLedgerError('Revenue ledger sequence counter CAS exhausted retries.');
   }
 
   private async emit(actor: CommercialActor, eventType: string, entry: RevenueLedgerEntry, payload: Record<string, unknown>, scope?: StorageWriteScope): Promise<void> {

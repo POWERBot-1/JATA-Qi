@@ -3,7 +3,7 @@ import type { KernelApi, IModule } from '@jataqi/core-kernel';
 import type { ICollection, INamespace } from '@jataqi/storage';
 import type { VectorSearchModule } from '@jataqi/vector-search';
 import { chunkText } from './chunker.js';
-import { KnowledgeEvents } from './types.js';
+import { DEFAULT_TENANT_ID, KnowledgeEvents } from './types.js';
 import type {
   Chunk,
   Document,
@@ -53,10 +53,12 @@ export class KnowledgeService implements IModule {
   /** Ingest text as a new document, chunk, embed, and index. Returns the Document. */
   async ingestText(text: string, opts: IngestOptions = {}): Promise<Document> {
     if (!text || !text.trim()) throw new Error('ingestText: text is empty');
+    const tenantId = opts.tenantId ?? DEFAULT_TENANT_ID;
     const docId = randomUUID();
     const now = Date.now();
     const doc: Document = {
       id: docId,
+      tenantId,
       contentType: opts.contentType ?? 'text/plain',
       text,
       title: opts.title,
@@ -75,13 +77,14 @@ export class KnowledgeService implements IModule {
     const vecItems: Array<{ id: string; text: string; metadata?: Record<string, unknown> }> = [];
     for (const c of protoChunks) {
       const id = `${docId}:${c.index}`;
-      const full: Chunk = { ...c, id, documentId: docId };
+      const full: Chunk = { ...c, id, tenantId, documentId: docId };
       storedChunks.push(full);
       doc.chunkIds.push(id);
       vecItems.push({
         id,
         text: c.text,
         metadata: {
+          tenantId,
           docId,
           chunkIndex: c.index,
           ...(doc.metadata ?? {}),
@@ -100,25 +103,42 @@ export class KnowledgeService implements IModule {
     // restart. This is a local snapshot, not a cross-resource transaction.
     await this.vectors.persist(VEC_INDEX);
 
-    this.api.logger.debug(`ingested doc ${docId} (${storedChunks.length} chunks)`);
-    await this.api.bus.emit(KnowledgeEvents.DocumentIngested, { docId, chunks: storedChunks.length });
-    await this.api.bus.emit(KnowledgeEvents.ChunksCreated, { docId, chunkIds: doc.chunkIds });
+    this.api.logger.debug(`ingested doc ${docId} for tenant ${tenantId} (${storedChunks.length} chunks)`);
+    await this.api.bus.emit(KnowledgeEvents.DocumentIngested, { docId, tenantId, chunks: storedChunks.length });
+    await this.api.bus.emit(KnowledgeEvents.ChunksCreated, { docId, tenantId, chunkIds: doc.chunkIds });
     return doc;
   }
 
-  /** Retrieve a document by id. */
-  async getDocument(id: string): Promise<Document | undefined> {
-    return this.docs.get<Document>(id);
-  }
-
-  /** Retrieve a chunk by id. */
-  async getChunk(id: string): Promise<Chunk | undefined> {
-    return this.chunks.get(id);
-  }
-
-  /** Delete a document, its chunks, and vectors. */
-  async deleteDocument(id: string): Promise<boolean> {
+  /**
+   * Retrieve a document by id.
+   *
+   * T-06 tenant scoping: when `opts.tenantId` is given the document is only
+   * returned when it belongs to that tenant (cross-tenant and untagged reads
+   * fail closed — undefined). Without it this is a system-level read and
+   * returns the raw document regardless of tenant.
+   */
+  async getDocument(id: string, opts: { tenantId?: string } = {}): Promise<Document | undefined> {
     const doc = await this.docs.get<Document>(id);
+    if (!doc) return undefined;
+    if (opts.tenantId !== undefined && doc.tenantId !== opts.tenantId) return undefined;
+    return doc;
+  }
+
+  /**
+   * Retrieve a chunk by id (same tenant scoping contract as getDocument).
+   */
+  async getChunk(id: string, opts: { tenantId?: string } = {}): Promise<Chunk | undefined> {
+    const chunk = await this.chunks.get(id);
+    if (!chunk) return undefined;
+    if (opts.tenantId !== undefined && chunk.tenantId !== opts.tenantId) return undefined;
+    return chunk;
+  }
+
+  /** Delete a document, its chunks, and vectors.
+   *  When `opts.tenantId` is given, only that tenant's document is deleted
+   *  (a cross-tenant delete request is refused and returns false). */
+  async deleteDocument(id: string, opts: { tenantId?: string } = {}): Promise<boolean> {
+    const doc = await this.getDocument(id, { tenantId: opts.tenantId });
     if (!doc) return false;
     const index = await this.vectors.index(VEC_INDEX);
     for (const chunkId of doc.chunkIds) {
@@ -127,17 +147,29 @@ export class KnowledgeService implements IModule {
     }
     await this.vectors.persist(VEC_INDEX);
     await this.docs.delete(id);
-    await this.api.bus.emit(KnowledgeEvents.DocumentDeleted, { docId: id });
+    await this.api.bus.emit(KnowledgeEvents.DocumentDeleted, { docId: id, tenantId: doc.tenantId });
     return true;
   }
 
-  /** Semantic retrieval — embeds query and pulls top-K chunks with docs. */
+  /** Semantic retrieval — embeds query and pulls top-K chunks with docs.
+   *
+   * T-06 tenant scoping: with `opts.tenantId` the vector search filters
+   * candidates by tenant BEFORE ranking and every returned chunk/document is
+   * re-verified to belong to that tenant (fail-closed: a row that is missing,
+   * or carries a different/missing tenant id, is never returned). Without a
+   * tenant id the call is unscoped (system-level) and keeps legacy behavior.
+   */
   async retrieve(query: string, opts: RetrievalOptions = {}): Promise<RetrievalHit[]> {
     const topK = opts.topK ?? 5;
+    const tenantId = opts.tenantId;
+    const tenantFilter = tenantId !== undefined ? (m: Record<string, unknown> | undefined) => m?.tenantId === tenantId : undefined;
     const hits = await this.vectors.embedAndSearch(VEC_INDEX, query, {
       topK,
       minScore: opts.minScore,
-      filter: opts.filter ? (m) => matchesFilter(m, opts.filter!) : undefined,
+      filter:
+        tenantFilter || opts.filter
+          ? (m) => (tenantFilter ? tenantFilter(m) : true) && (opts.filter ? matchesFilter(m, opts.filter!) : true)
+          : undefined,
     });
 
     const results: RetrievalHit[] = [];
@@ -145,8 +177,15 @@ export class KnowledgeService implements IModule {
     for (const h of hits) {
       const docId = (h.metadata?.docId as string) ?? h.id.split(':')[0]!;
       if (opts.documentIds && !opts.documentIds.includes(docId)) continue;
-      const [chunk, doc] = await Promise.all([this.chunks.get(h.id), this.docs.get<Document>(docId)]);
+      const [chunk, doc] = await Promise.all([
+        this.chunks.get(h.id),
+        this.docs.get<Document>(docId),
+      ]);
       if (!chunk || !doc) continue;
+      // Fail closed: a tenant-scoped retrieval must never surface another
+      // tenant's (or untagged, legacy) knowledge, even if the vector index
+      // somehow contained it.
+      if (tenantId !== undefined && (chunk.tenantId !== tenantId || doc.tenantId !== tenantId)) continue;
       let finalChunks = [chunk];
       if (opts.expandContext) {
         const window = opts.contextWindow ?? 1;
@@ -171,9 +210,15 @@ export class KnowledgeService implements IModule {
     return results;
   }
 
-  /** Count documents and chunks. */
-  async stats(): Promise<{ documents: number; chunks: number }> {
-    return { documents: await this.docs.size(), chunks: await this.chunks.count() };
+  /** Count documents and chunks (optionally scoped to one tenant). */
+  async stats(opts: { tenantId?: string } = {}): Promise<{ documents: number; chunks: number }> {
+    if (opts.tenantId === undefined) {
+      return { documents: await this.docs.size(), chunks: await this.chunks.count() };
+    }
+    const list = await this.docs.list();
+    const docs = list.items.filter((e) => (e.value as Document | undefined)?.tenantId === opts.tenantId).length;
+    const chunkRows = await this.chunks.query({ where: (c) => c.tenantId === opts.tenantId });
+    return { documents: docs, chunks: chunkRows.length };
   }
 }
 

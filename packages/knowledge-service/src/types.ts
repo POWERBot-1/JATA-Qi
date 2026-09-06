@@ -1,8 +1,20 @@
 // Knowledge service domain types.
 
+/**
+ * Tenant used when a knowledge operation does not name one. Knowledge is
+ * tenant-owned: every ingest/retrieve call resolves to a tenant id, and
+ * cross-tenant retrieval fails closed at the service boundary (and at the
+ * storage/vector layer underneath). System-level callers that legitimately
+ * span tenants must NOT use this module unscoped for retrieval of tenant
+ * knowledge; tenant knowledge access requires an explicit tenant id.
+ */
+export const DEFAULT_TENANT_ID = 'default';
+
 /** Metadata about an ingested source document. */
 export interface Document {
   id: string;
+  /** Tenant that owns this document (stamped at ingest; part of the row). */
+  tenantId?: string;
   /** Stable URI / source reference (URL, path, user-supplied id). */
   uri?: string;
   title?: string;
@@ -24,6 +36,8 @@ export interface Document {
 /** A chunk is an atomic retrievable unit — embedded and searched. */
 export interface Chunk {
   id: string;
+  /** Tenant that owns this chunk (stamped at ingest; part of the row). */
+  tenantId?: string;
   documentId: string;
   /** 0-based ordinal within the document. */
   index: number;
@@ -47,6 +61,13 @@ export interface RetrievalHit {
 }
 
 export interface RetrievalOptions {
+  /**
+   * Tenant to retrieve within (default: the service default tenant when the
+   * caller is tenant-aware — pass the actor's tenant id explicitly for any
+   * tenant-scoped flow). When undefined, legacy unscoped behavior is used.
+   * Results from other tenants are never returned (fail-closed).
+   */
+  tenantId?: string;
   /** Number of chunks to retrieve (default 5). */
   topK?: number;
   /** Minimum similarity score (0..1) for vector hits. */
@@ -62,6 +83,8 @@ export interface RetrievalOptions {
 }
 
 export interface IngestOptions {
+  /** Tenant that owns the ingested document (defaults to the service default tenant). */
+  tenantId?: string;
   chunkSize?: number;
   chunkOverlap?: number;
   /** Split strategy: 'paragraph' (default), 'sentence', 'fixed'. */

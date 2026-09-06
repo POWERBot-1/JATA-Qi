@@ -22,6 +22,14 @@ import type {
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriverConfig, resolvePoolConfig, STORAGE_POSTGRES_SCHEMA_VERSION } from './config.js';
 import { IncompatibleStorageSchemaError } from './errors.js';
+import {
+  ensureTenantIsolation,
+  setSystemTenantContext,
+  setTenantContext,
+  TENANT_ID_COLUMN,
+  TENANT_RLS_SETTING,
+  TENANT_SYSTEM_SCOPE,
+} from './tenant-isolation.js';
 import { deriveTableName } from './naming.js';
 import { PostgresCollection } from './postgres-collection.js';
 
@@ -263,16 +271,48 @@ export class PostgresDriver implements IStorageDriver {
   private async doInit(): Promise<void> {
     if (this.closed) throw new Error('Postgres storage driver is closed.');
     this._pool = this.opts.pool ?? new Pool(resolvePoolConfig(this.opts));
+    // T-06: every pooled session starts in the explicit SYSTEM scope ('*') so
+    // unscoped (system) reads/writes behave exactly like the pre-RLS driver.
+    // Tenant-scoped transactions override the GUC per-transaction with
+    // `SET LOCAL` (see beginTransaction), so the two scopes never bleed into
+    // each other. Sessions without ANY scope (unset GUC) fail closed — they
+    // can see and write no tenant-scoped rows.
+    this._pool.on('connect', (client: pg.PoolClient) => {
+      client
+        .query(`SET ${TENANT_RLS_SETTING} = '${TENANT_SYSTEM_SCOPE}'`)
+        .catch(() => undefined);
+    });
     const schema = escapeId(SCHEMA_TABLE);
-    await this._pool.query(
-      `CREATE TABLE IF NOT EXISTS ${schema} (
-        resource_key text PRIMARY KEY,
-        kind text NOT NULL,
-        logical text NOT NULL,
-        version integer NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now()
-      )`,
-    );
+    try {
+      await this._pool.query(
+        `CREATE TABLE IF NOT EXISTS ${schema} (
+          resource_key text PRIMARY KEY,
+          kind text NOT NULL,
+          logical text NOT NULL,
+          version integer NOT NULL,
+          created_at timestamptz NOT NULL DEFAULT now()
+        )`,
+      );
+    } catch (error) {
+      // Multi-process first boot (T-06 evidence): simultaneous driver init in
+      // several fresh processes can lose the catalog race creating the shared
+      // schema-registry table (23505 / 42P07 / 42710). One retry is exact.
+      const code = (error as { code?: string })?.code;
+      if (code !== '23505' && code !== '42P07' && code !== '42710') throw error;
+      try {
+        await this._pool.query(
+          `CREATE TABLE IF NOT EXISTS ${schema} (
+            resource_key text PRIMARY KEY,
+            kind text NOT NULL,
+            logical text NOT NULL,
+            version integer NOT NULL,
+            created_at timestamptz NOT NULL DEFAULT now()
+          )`,
+        );
+      } catch {
+        throw error;
+      }
+    }
   }
 
   private async ensureReady(): Promise<void> {
@@ -292,6 +332,7 @@ export class PostgresDriver implements IStorageDriver {
         ? `CREATE TABLE IF NOT EXISTS ${t} (
              id text PRIMARY KEY,
              body jsonb NOT NULL,
+             ${TENANT_ID_COLUMN} text,
              updated_at timestamptz NOT NULL DEFAULT now()
            )`
         : kind === 'namespace'
@@ -310,14 +351,16 @@ export class PostgresDriver implements IStorageDriver {
     try {
       await exec.query(ddl);
     } catch (error) {
-      // Concurrent first boot (T-05 multi-process evidence): two sessions
+      // Concurrent first boot (T-05/T-06 multi-process evidence): two sessions
       // racing `CREATE TABLE IF NOT EXISTS` for the same new table can lose
-      // the catalog race with a unique violation (23505 on pg_type) or a
-      // duplicate-table error (42P07). The table now exists, so one retry is
-      // exact; any other failure (or a failure of the retry) surfaces the
-      // ORIGINAL error unchanged (fail-closed, no silent fallback).
+      // the catalog race with a unique violation (23505 on pg_type), a
+      // duplicate-table error (42P07), or a duplicate-object error (42710 —
+      // the implicit array type of the concurrently-created table). The table
+      // now exists, so one retry is exact; any other failure (or a failure of
+      // the retry) surfaces the ORIGINAL error unchanged (fail-closed, no
+      // silent fallback).
       const code = (error as { code?: string })?.code;
-      if (code !== '23505' && code !== '42P07') throw error;
+      if (code !== '23505' && code !== '42P07' && code !== '42710') throw error;
       try {
         await exec.query(ddl);
       } catch {
@@ -336,6 +379,26 @@ export class PostgresDriver implements IStorageDriver {
       throw new IncompatibleStorageSchemaError(
         `Postgres resource "${logical}" (${table}) has schema version ${version}, expected ${STORAGE_POSTGRES_SCHEMA_VERSION}. Failing closed.`,
       );
+    }
+    if (kind === 'collection') {
+      // T-06 production wiring: every collection table carries the tenant_id
+      // column and an RLS policy BEFORE any handle is handed out. The
+      // operation is idempotent and cheap when already applied (single
+      // catalog probe). Both the column and the policy are DDL persisted in
+      // the database, so enforcement survives driver/process restarts.
+      const guard = await exec.query(
+        `SELECT c.relrowsecurity,
+                EXISTS(SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attname = $2) AS has_col,
+                EXISTS(SELECT 1 FROM pg_policy p
+                        WHERE p.polrelid = c.oid AND p.polname = $3) AS has_pol
+         FROM pg_class c WHERE c.relname = $1`,
+        [table, TENANT_ID_COLUMN, `${table}_tenant_isolation`],
+      );
+      const g = guard.rows[0] as { relrowsecurity?: boolean; has_col?: boolean; has_pol?: boolean } | undefined;
+      if (!g || !g.relrowsecurity || !g.has_col || !g.has_pol) {
+        await ensureTenantIsolation(exec, table);
+      }
     }
     return table;
   }
@@ -366,25 +429,42 @@ export class PostgresDriver implements IStorageDriver {
     return new PostgresBlobStore(name, table, this.pool);
   }
 
-  /** Open a collection bound to an active transaction client. */
-  private async collectionOnClient<T extends { id: string }>(client: pg.PoolClient, name: string): Promise<ICollection<T>> {
+  /** Open a collection bound to an active transaction client (optionally tenant-bound). */
+  private async collectionOnClient<T extends { id: string }>(client: pg.PoolClient, name: string, tenantId?: string): Promise<ICollection<T>> {
     const table = this.tables.get(`collection:${name}`) ?? (await this.table('collection', name, client));
-    return new PostgresCollection<T>(name, table, this.pool, client);
+    return new PostgresCollection<T>(name, table, this.pool, client, tenantId);
   }
 
-  /** Real multi-operation transaction across collections on one connection. */
-  async beginTransaction(): Promise<IStorageTransaction> {
+  /**
+   * Real multi-operation transaction across collections on one connection.
+   *
+   * T-06 tenant binding: pass `{ tenantId }` to run the transaction under
+   * that tenant's RLS context (`SET LOCAL app.tenant_id`, which reverts on
+   * commit/rollback). Every collection handle opened through the transaction
+   * is then tenant-bound: the database policy restricts rows to the tenant
+   * AND the driver adds explicit tenant predicates/stamping (fail-closed at
+   * both layers). Without `tenantId` the transaction runs in the explicit
+   * SYSTEM scope ('*') and behaves exactly like the pre-RLS driver.
+   */
+  async beginTransaction(options: { tenantId?: string } = {}): Promise<IStorageTransaction> {
     await this.ensureReady();
+    const tenantId = options.tenantId;
     const client = await this.pool.connect();
     let settled = false;
     try {
       await client.query('BEGIN');
+      if (tenantId !== undefined) {
+        await setTenantContext(client, tenantId);
+      } else {
+        await setSystemTenantContext(client);
+      }
     } catch (error) {
       client.release();
       throw error;
     }
     const tx: IStorageTransaction = {
-      collection: <T extends { id: string }>(name: string) => this.collectionOnClient<T>(client, name),
+      tenantId,
+      collection: <T extends { id: string }>(name: string) => this.collectionOnClient<T>(client, name, tenantId),
       commit: async () => {
         if (settled) throw new Error('Transaction already settled.');
         await client.query('COMMIT');

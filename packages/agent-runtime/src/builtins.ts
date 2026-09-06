@@ -5,6 +5,17 @@ import type { KnowledgeService } from '@jataqi/knowledge-service';
 import type { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import type { VectorSearchModule } from '@jataqi/vector-search';
 
+/**
+ * T-06: tenant of the current tool execution, when the runner supplies one.
+ * Tools are tenant-scoped only when the context says so (production loop
+ * flows seed `metadata.tenantId` with the actor's tenant); without it the
+ * tools keep their legacy unscoped behavior.
+ */
+function ctxTenantId(ctx: ToolContext): string | undefined {
+  const t = ctx.metadata?.tenantId;
+  return typeof t === 'string' && t.length > 0 ? t : undefined;
+}
+
 /** knowledge.search — semantic retrieval over documents. */
 export function knowledgeSearchTool(getService: () => KnowledgeService): Tool {
   return {
@@ -21,7 +32,9 @@ export function knowledgeSearchTool(getService: () => KnowledgeService): Tool {
     },
     async execute(input: any, ctx: ToolContext) {
       const svc = getService();
+      const tenantId = ctxTenantId(ctx);
       const hits = await svc.retrieve(String(input.query ?? ''), {
+        tenantId,
         topK: Number(input.topK ?? 5),
         minScore: input.minScore != null ? Number(input.minScore) : undefined,
         expandContext: true,
@@ -60,10 +73,11 @@ export function graphTraverseTool(getGraph: () => KnowledgeGraphModule): Tool {
       const predicates = input.followPredicates
         ? String(input.followPredicates).split(',').map((s: string) => s.trim()).filter(Boolean)
         : undefined;
+      const tenantId = ctxTenantId(ctx);
       const paths = g.traverse(String(input.entityId), {
         maxDepth: Number(input.maxDepth ?? 2),
         followPredicates: predicates,
-      });
+      }, tenantId);
       ctx.logger.info(`graph.traverse from ${input.entityId}: ${paths.length} paths`);
       return paths.map((p) => ({
         entities: p.entities.map((e) => ({ id: e.id, name: e.name, type: e.type })),
@@ -90,10 +104,11 @@ export function graphFindEntityTool(getGraph: () => KnowledgeGraphModule): Tool 
     },
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
+      const tenantId = ctxTenantId(ctx);
       const hits = await g.findEntities(String(input.query), {
         topK: Number(input.topK ?? 5),
         type: input.type != null ? String(input.type) : undefined,
-      });
+      }, tenantId);
       ctx.logger.info(`graph.findEntity returned ${hits.length} for "${input.query}"`);
       return hits.map((h) => ({ id: h.entity.id, name: h.entity.name, type: h.entity.type, score: h.score }));
     },
@@ -117,6 +132,7 @@ export function graphRetrieveTool(getGraph: () => KnowledgeGraphModule): Tool {
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
       const hits = await g.graphRetrieve(String(input.query), {
+        tenantId: ctxTenantId(ctx),
         topK: Number(input.topK ?? 5),
         graphDepth: Number(input.graphDepth ?? 1),
       });
@@ -146,10 +162,10 @@ export function vectorSearchTool(getVectors: () => VectorSearchModule): Tool {
       },
       required: ['query'],
     },
-    async execute(input: any) {
+    async execute(input: any, ctx: ToolContext) {
       const v = getVectors();
       const idx = String(input.index ?? 'knowledge.chunks');
-      return v.embedAndSearch(idx, String(input.query), { topK: Number(input.topK ?? 5) });
+      return v.embedAndSearch(idx, String(input.query), { tenantId: ctxTenantId(ctx), topK: Number(input.topK ?? 5) });
     },
   };
 }

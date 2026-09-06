@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/revenue-ledger",
   "version": "0.1.0",
-  "description": "JATA Qi Revenue Ledger — append-oriented verified revenue, refund reversal, and cost records",
+  "description": "JATA Qi Revenue Ledger \u2014 append-oriented verified revenue, refund reversal, and cost records",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -12,12 +12,15 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.test.json && node -e \"require('fs').copyFileSync('test/t06-ledger-worker.mjs','dist/test/t06-ledger-worker.mjs')\"",
     "clean": "rm -rf dist",
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
     "@jataqi/billing": "0.1.0",

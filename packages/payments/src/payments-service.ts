@@ -154,6 +154,10 @@ export class PaymentsService {
     const verified = action.executionStatus === 'COMPLETED' && (result ? result.providerStatus === 'SUCCEEDED' : action.verificationStatus === 'VERIFIED');
     // T-05: the payment state and its `payment.verified` / `payment.failed`
     // event (+ unified-outbox record) commit as ONE composed write.
+    // T-06: when the payment belongs to the actor's tenant the transaction
+    // runs under that tenant's RLS context (cross-tenant global-admin flows
+    // stay on the system scope — application authorization is unchanged).
+    const tenantBinding = payment.tenantId === actor.tenantId ? { tenantId: actor.tenantId } : {};
     return this.storage.atomically(async (scope) => {
       const updated = await this.update(payment, {
         status: verified ? 'VERIFIED' : 'FAILED',
@@ -166,7 +170,7 @@ export class PaymentsService {
         paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.amount, providerReference: updated.providerReference,
       }, scope);
       return updated;
-    });
+    }, tenantBinding);
   }
 
   /** Refunds require a separate financial decision and independently verified provider state. */
@@ -202,6 +206,7 @@ export class PaymentsService {
     if (payment.status !== 'REFUND_UNVERIFIED' || !payment.refundActionId) throw new PaymentError('Refund is not awaiting verification.');
     const { action, result } = await this.verifiedAction(actor, payment.refundActionId);
     const verified = action.executionStatus === 'COMPLETED' && (result ? result.providerStatus === 'REFUNDED' : action.verificationStatus === 'VERIFIED');
+    const tenantBinding = payment.tenantId === actor.tenantId ? { tenantId: actor.tenantId } : {};
     return this.storage.atomically(async (scope) => {
       const updated = await this.update(payment, {
         status: verified ? 'REFUNDED' : 'FAILED', providerReference: result?.providerReference ?? payment.providerReference,
@@ -209,7 +214,7 @@ export class PaymentsService {
       }, scope);
       await this.emit(actor, verified ? PaymentEvents.RefundVerified : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.refundAmount ?? updated.amount, providerReference: updated.providerReference }, scope);
       return updated;
-    });
+    }, tenantBinding);
   }
 
   async getPayment(actor: CommercialActor, paymentId: string): Promise<PaymentIntent | undefined> {

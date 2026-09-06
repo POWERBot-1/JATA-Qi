@@ -120,7 +120,22 @@ export class StorageModule implements IModule {
   }
 
   /**
-   * T-05: run `fn` as ONE composed write.
+   * T-06 tenant-safe tenant-id shape: tenant ids in durable rows and RLS
+   * contexts are restricted to a safe, portable alphabet (mirrors the
+   * PostgreSQL GUC validation in @jataqi/storage-postgres). Anything else
+   * fails closed before any write is attempted.
+   */
+  static validateTenantId(tenantId: string): void {
+    if (!tenantId || typeof tenantId !== 'string' || tenantId.trim().length === 0) {
+      throw new Error('A tenant-scoped write requires a non-empty tenantId (fail-closed).');
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(tenantId)) {
+      throw new Error(`tenantId "${tenantId}" contains characters that are not safe to use as a tenant context; reject and refuse.`);
+    }
+  }
+
+  /**
+   * T-05/T-06: run `fn` as ONE composed write.
    *
    * Transactional drivers: a real backend transaction is opened, every
    * `scope.collection()` handle is bound to it, `fn` resolving commits and
@@ -129,6 +144,14 @@ export class StorageModule implements IModule {
    * and a `cas()` on a scoped handle participates in the same transaction
    * (T-04: caller-owned client, no nested BEGIN, no premature COMMIT).
    *
+   * T-06 tenant binding: pass `{ tenantId }` when the body reads or writes
+   * tenant-owned documents. On a transactional driver with row-level
+   * security the transaction then runs under that tenant's RLS context:
+   * cross-tenant rows are invisible and cross-tenant writes are refused by
+   * the database (and by the driver's own ownership check) — see
+   * @jataqi/storage-postgres. On drivers without transactions this is a
+   * documentation-level hint (`scope.tenantId`); no RLS exists there.
+   *
    * Non-transactional drivers (development only): `fn` runs against the
    * plain collections with `scope.atomic === false`; there is no rollback.
    *
@@ -136,7 +159,9 @@ export class StorageModule implements IModule {
    * the inner scope would be a second connection and could self-block on the
    * outer scope's row locks. Compose by passing the outer scope down instead.
    */
-  async atomically<T>(fn: (scope: StorageWriteScope) => Promise<T>): Promise<T> {
+  async atomically<T>(fn: (scope: StorageWriteScope) => Promise<T>, options: { tenantId?: string } = {}): Promise<T> {
+    const tenantId = options.tenantId;
+    if (tenantId !== undefined) StorageModule.validateTenantId(tenantId);
     const commitHooks: Array<() => void | Promise<void>> = [];
     const settleHooks: Array<() => void | Promise<void>> = [];
     const runHooks = async (hooks: Array<() => void | Promise<void>>): Promise<void> => {
@@ -146,6 +171,7 @@ export class StorageModule implements IModule {
     if (!begin) {
       const scope: StorageWriteScope = {
         atomic: false,
+        tenantId,
         collection: (name) => this.collection(name),
         onCommit: (callback) => { commitHooks.push(callback); },
         onSettle: (callback) => { settleHooks.push(callback); },
@@ -160,10 +186,11 @@ export class StorageModule implements IModule {
       return result;
     }
 
-    const tx: IStorageTransaction = await begin();
+    const tx: IStorageTransaction = await begin({ tenantId });
     const scoped = new Map<string, Promise<ICollection<any>>>();
     const scope: StorageWriteScope = {
       atomic: true,
+      tenantId: tx.tenantId ?? tenantId,
       collection: <D extends { id: string }>(name: string): Promise<ICollection<D>> => {
         let handle = scoped.get(name);
         if (!handle) {

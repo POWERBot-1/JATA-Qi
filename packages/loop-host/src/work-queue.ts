@@ -215,11 +215,16 @@ export class WorkQueue {
       availableAt: input.availableAt ?? at,
       checkpointSequence: 0,
     };
-    const res = await this.items.cas(id, (cur) => cur === undefined, () => item);
-    if (res.ok) return copy(res.doc as HostedWorkItem);
-    // A concurrent enqueue won with the same deterministic id — return its
-    // record (idempotent) rather than creating a duplicate.
-    return copy(res.doc as HostedWorkItem);
+    // Insert-if-absent election. The loser (first-create race or a concurrent
+    // enqueue of the same deterministic id) re-reads the winner's committed
+    // record — the CAS result alone cannot see the winner's row.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const res = await this.items.cas(id, (cur) => cur === undefined, () => item);
+      if (res.ok) return copy(res.doc as HostedWorkItem);
+      const winner = await this.items.get(id);
+      if (winner) return copy(winner);
+    }
+    throw new LoopHostError(`Work item "${id}" lost a concurrent create election and no winner is visible (fail-closed).`);
   }
 
   /**

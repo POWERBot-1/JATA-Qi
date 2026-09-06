@@ -25,6 +25,21 @@ import {
 const RECORDS_COLLECTION = 'commercial-memory.records';
 const NODES_COLLECTION = 'commercial-memory.attribution-nodes';
 const LINKS_COLLECTION = 'commercial-memory.attribution-links';
+/**
+ * Per-tenant atomic sequence counters for memory records (T-06): CAS-advanced
+ * INSIDE the same composed write as the record (control-plane CAS-counter
+ * pattern). A rollback of the record rolls back the allocation too, so
+ * per-tenant sequences stay contiguous and concurrent writers can never
+ * observe the same pre-state; cross-process safety rests on the row-lock CAS.
+ */
+const RECORDS_SEQ_COLLECTION = 'commercial-memory.records-seq';
+
+/** Per-tenant atomic sequence counter document (T-06). */
+interface MemorySequenceCounter {
+  id: string;
+  tenantId: string;
+  sequence: number;
+}
 /** T-05 durable inbox handler id — stable across restarts/deploys (keys the inbox). */
 export const COMMERCIAL_MEMORY_DURABLE_HANDLER_ID = 'commercial-memory.raw-event-capture';
 const CAUSAL_EVIDENCE_STATUSES = new Set<EvidenceStatus>(['MEASURED', 'DEMONSTRATED', 'REPEATED', 'VERIFIED']);
@@ -44,6 +59,7 @@ export class CommercialMemoryError extends Error {
  */
 export class CommercialMemoryService {
   private records!: ICollection<CommercialMemoryRecord>;
+  private seqCounters!: ICollection<MemorySequenceCounter>;
   private nodes!: ICollection<AttributionNode>;
   private links!: ICollection<AttributionLink>;
   private controlPlane!: CommercialControlPlaneService;
@@ -54,6 +70,7 @@ export class CommercialMemoryService {
     const storage = kernel.getModule<StorageModule>('storage');
     this.storage = storage;
     this.records = await storage.collection<CommercialMemoryRecord>(RECORDS_COLLECTION);
+    this.seqCounters = await storage.collection<MemorySequenceCounter>(RECORDS_SEQ_COLLECTION);
     this.nodes = await storage.collection<AttributionNode>(NODES_COLLECTION);
     this.links = await storage.collection<AttributionLink>(LINKS_COLLECTION);
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
@@ -76,15 +93,21 @@ export class CommercialMemoryService {
   async record(actor: CommercialActor, input: RecordCommercialMemoryInput): Promise<CommercialMemoryRecord> {
     assertManager(actor);
     validateMemoryInput(input);
-    const record = await this.append({
-      tenantId: actor.tenantId,
-      ...copy(input),
-      tags: [...(input.tags ?? [])],
-      privacyClassification: input.privacyClassification ?? 'INTERNAL',
-      reusable: input.reusable ?? false,
-    });
-    await this.emit(actor, CommercialMemoryEvents.Recorded, record, { recordId: record.id, kind: record.kind, productId: record.productId, decisionId: record.decisionId, actionId: record.actionId });
-    return copy(record);
+    // T-06: memory record + sequence allocation + event commit as ONE
+    // composed write under the actor's tenant.
+    return this.storage.atomically(async (scope) => {
+      const records = await scope.collection<CommercialMemoryRecord>(RECORDS_COLLECTION);
+      const counters = await scope.collection<MemorySequenceCounter>(RECORDS_SEQ_COLLECTION);
+      const record = await this.append({
+        tenantId: actor.tenantId,
+        ...copy(input),
+        tags: [...(input.tags ?? [])],
+        privacyClassification: input.privacyClassification ?? 'INTERNAL',
+        reusable: input.reusable ?? false,
+      }, records, counters);
+      await this.emit(actor, CommercialMemoryEvents.Recorded, record, { recordId: record.id, kind: record.kind, productId: record.productId, decisionId: record.decisionId, actionId: record.actionId }, scope);
+      return copy(record);
+    }, { tenantId: actor.tenantId });
   }
 
   /** Store the expectation/actual discrepancy and a reusable learning record. */
@@ -200,6 +223,7 @@ export class CommercialMemoryService {
     const id = `event:${event.id}`;
     await this.storage.atomically(async (scope) => {
       const records = await scope.collection<CommercialMemoryRecord>(RECORDS_COLLECTION);
+      const counters = await scope.collection<MemorySequenceCounter>(RECORDS_SEQ_COLLECTION);
       if (await records.get(id)) return; // idempotent redelivery
       const evidence: CommercialEvidence = {
         id: `event-evidence:${event.id}`, status: 'OBSERVED', source: event.source, observedAt: event.timestamp, confidence: 100,
@@ -208,10 +232,10 @@ export class CommercialMemoryService {
       const record = await this.append({
         id, tenantId: event.tenantId, kind: 'RAW_EVENT', title: event.eventType, summary: JSON.stringify(event.payload), tags: ['event', event.eventType],
         evidence: [evidence], confidence: 100, provenance: copy(event.provenance), privacyClassification: event.privacyClassification, reusable: false,
-      }, records);
+      }, records, counters);
       const actor: CommercialActor = { id: 'commercial-memory-system', tenantId: event.tenantId, roles: ['system'] };
       await this.emit(actor, CommercialMemoryEvents.Recorded, record, { recordId: record.id, kind: record.kind, sourceEventId: event.id }, scope);
-    });
+    }, { tenantId: event.tenantId });
   }
 
   private async getOrCreateNode(actor: CommercialActor, input: RecordAttributionLinkInput['from']): Promise<AttributionNode> {
@@ -223,18 +247,52 @@ export class CommercialMemoryService {
     return node;
   }
 
-  private async append(input: Omit<CommercialMemoryRecord, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'> & { id?: string; createdAt?: number }, records: ICollection<CommercialMemoryRecord> = this.records): Promise<CommercialMemoryRecord> {
-    const previous = (await records.query({ where: (record) => record.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
+  /**
+   * Append with T-06 CAS sequence allocation (control-plane CAS-counter
+   * pattern): the per-tenant counter is advanced atomically (row-lock CAS,
+   * 64-round convergence) in the SAME transaction/scope as the record write,
+   * and the predecessor hash is read after the advance (the row lock orders
+   * this writer after every concurrently committed writer, keeping the hash
+   * chain continuous). Callers must pass the scope-bound collections inside
+   * one composed write.
+   */
+  private async append(
+    input: Omit<CommercialMemoryRecord, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'> & { id?: string; createdAt?: number },
+    records: ICollection<CommercialMemoryRecord>,
+    counters: ICollection<MemorySequenceCounter>,
+  ): Promise<CommercialMemoryRecord> {
+    const sequence = await this.nextSequence(input.tenantId, counters);
+    const previous = (await records.query({ where: (record) => record.tenantId === input.tenantId && record.sequence < sequence, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
     const draft: Omit<CommercialMemoryRecord, 'hash'> = {
       ...input,
       id: input.id ?? randomUUID(),
-      sequence: (previous?.sequence ?? 0) + 1,
+      sequence,
       previousHash: previous?.hash ?? 'GENESIS',
       createdAt: input.createdAt ?? Date.now(),
     };
     const record: CommercialMemoryRecord = { ...draft, hash: hashRecord({ ...draft, hash: '' }) };
     await records.put(record);
     return record;
+  }
+
+  /** CAS-advance the per-tenant atomic sequence counter (bounded 64 rounds). */
+  private async nextSequence(tenantId: string, counters: ICollection<MemorySequenceCounter>): Promise<number> {
+    const counterId = `seq:${tenantId}`;
+    for (let attempt = 0; attempt < 64; attempt += 1) {
+      const current = await counters.get(counterId);
+      const observed = current ?? { id: counterId, tenantId, sequence: 0 };
+      const next: MemorySequenceCounter = { id: counterId, tenantId, sequence: observed.sequence + 1 };
+      const res = await counters.cas(
+        counterId,
+        (candidate) => (candidate?.sequence ?? 0) === observed.sequence,
+        () => next,
+      );
+      if (res.ok) return next.sequence;
+      // Lost a create/advance race (first-create election or another writer):
+      // re-read and retry. On PostgreSQL the loser's INSERT was refused
+      // (ON CONFLICT DO NOTHING) rather than overwriting the winner.
+    }
+    throw new CommercialMemoryError('Commercial memory sequence counter CAS exhausted retries.');
   }
 
   private async emit(actor: CommercialActor, eventType: string, record: CommercialMemoryRecord, payload: Record<string, unknown>, scope?: StorageWriteScope): Promise<void> {

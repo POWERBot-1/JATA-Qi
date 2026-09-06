@@ -285,13 +285,16 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
   caps.push(cap('INGEST', 'ingest-knowledge-documents', async (svc, ctx) => {
     const docs = ctx.task.observations ?? [];
     const docIds: string[] = [];
+    // T-06: knowledge is tenant-scoped — documents are ingested under the
+    // ACTOR's tenant so graph/vector propagation can never cross tenants.
+    const tenantId = ctx.actor.tenantId;
     for (const text of docs) {
-      const doc = await svc.knowledge.ingestText(text, { chunkSize: 400 });
+      const doc = await svc.knowledge.ingestText(text, { chunkSize: 400, tenantId });
       docIds.push(doc.id);
     }
     return {
-      summary: `Ingested ${docIds.length} document(s) into knowledge service (graph auto-propagates via event).`,
-      outputs: { documentIds: docIds },
+      summary: `Ingested ${docIds.length} document(s) into knowledge service for tenant ${tenantId} (graph auto-propagates via event).`,
+      outputs: { documentIds: docIds, tenantId },
     };
   }));
 
@@ -305,11 +308,13 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
 
   caps.push(cap('IDENTIFY', 'identify-entities', async (svc, ctx) => {
     // Heuristic identification already happens in the knowledge graph on ingest
-    // (knowledge.document.ingested -> graph extraction). Surface graph stats.
-    const stats = svc.graph.stats();
+    // (knowledge.document.ingested -> graph extraction). Surface the tenant's
+    // graph stats (T-06: never another tenant's).
+    const tenantId = ctx.actor.tenantId;
+    const stats = svc.graph.stats(tenantId);
     return {
-      summary: `Knowledge graph holds ${stats.entities} entities / ${stats.triples} triples after identification.`,
-      outputs: { graphEntities: stats.entities, graphTriples: stats.triples },
+      summary: `Knowledge graph holds ${stats.entities} entities / ${stats.triples} triples for tenant ${tenantId} after identification.`,
+      outputs: { graphEntities: stats.entities, graphTriples: stats.triples, tenantId },
     };
   }));
 
@@ -329,11 +334,12 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
 
   caps.push(cap('RETRIEVE_KNOWLEDGE', 'retrieve-knowledge', async (svc, ctx) => {
     const query = ctx.task.knowledgeQuery ?? ctx.task.objective;
-    const hits = await svc.knowledge.retrieve(query, { topK: 3 });
+    // T-06: tenant-scoped retrieval — cross-tenant knowledge fails closed.
+    const hits = await svc.knowledge.retrieve(query, { topK: 3, tenantId: ctx.actor.tenantId });
     ctx.state.knowledgeHits = hits.length;
     return {
-      summary: `Knowledge retrieval for "${query.slice(0, 60)}" returned ${hits.length} hit(s).`,
-      outputs: { hitCount: hits.length, topScore: hits[0]?.score ?? 0 },
+      summary: `Knowledge retrieval for "${query.slice(0, 60)}" returned ${hits.length} hit(s) for tenant ${ctx.actor.tenantId}.`,
+      outputs: { hitCount: hits.length, topScore: hits[0]?.score ?? 0, tenantId: ctx.actor.tenantId },
     };
   }));
 
