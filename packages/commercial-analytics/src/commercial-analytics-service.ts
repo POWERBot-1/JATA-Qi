@@ -5,6 +5,7 @@ import type { ICollection } from '@jataqi/storage';
 import { BillingModule } from '@jataqi/billing';
 import type { BillingPlan, BillingService, Subscription } from '@jataqi/billing';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { fromMinorUnits, minorUnitsOf } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvidence, CommercialProvenance, EvidenceStatus } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentsService } from '@jataqi/payments';
@@ -141,18 +142,24 @@ function calculateCurrencies(activeSubscriptions: readonly Subscription[], plans
     if (plan) currencySet.add(plan.price.currency);
   }
   return [...currencySet].sort().map((currency) => {
-    const categoryCosts = emptyCostMap();
-    const estimatedCosts = emptyCostMap();
-    let recognizedRevenue = 0;
-    let reversedRevenue = 0;
+    // T-07 money policy: monetary accumulations are exact integer minor
+    // units; each bucket converts once at the end (deterministic sums, no
+    // float drift from many entries).
+    const categoryCosts = emptyMinorCostMap();
+    const estimatedCosts = emptyMinorCostMap();
+    let recognizedRevenue = 0n;
+    let reversedRevenue = 0n;
     for (const entry of entries.filter((candidate) => candidate.amount.currency === currency)) {
-      if (entry.entryType === 'REVENUE' && entry.recognitionStatus === 'RECOGNIZED') recognizedRevenue += entry.amount.amount;
-      else if (entry.entryType === 'REFUND_REVERSAL' && entry.recognitionStatus === 'REVERSED') reversedRevenue += entry.amount.amount;
+      const minor = minorUnitsOf(entry.amount.amount);
+      if (entry.entryType === 'REVENUE' && entry.recognitionStatus === 'RECOGNIZED') recognizedRevenue += minor;
+      else if (entry.entryType === 'REFUND_REVERSAL' && entry.recognitionStatus === 'REVERSED') reversedRevenue += minor;
       else if (entry.entryType === 'COST' && entry.costCategory) {
-        if (entry.recognitionStatus === 'ESTIMATED') estimatedCosts[entry.costCategory] += entry.amount.amount;
-        else categoryCosts[entry.costCategory] += entry.amount.amount;
+        if (entry.recognitionStatus === 'ESTIMATED') estimatedCosts[entry.costCategory] += minor;
+        else categoryCosts[entry.costCategory] += minor;
       }
     }
+    const measuredCosts = minorCostMapToNumber(categoryCosts);
+    const estimated = minorCostMapToNumber(estimatedCosts);
     let mrr = 0;
     let arr = 0;
     for (const subscription of activeSubscriptions) {
@@ -160,19 +167,22 @@ function calculateCurrencies(activeSubscriptions: readonly Subscription[], plans
       if (!plan) continue;
       const monthly = plan.cycle === 'MONTHLY' ? plan.price.amount : plan.cycle === 'ANNUAL' ? plan.price.amount / 12 : 0;
       mrr += monthly;
-      arr += plan.cycle === 'ANNUAL' ? plan.price.amount : plan.cycle === 'MONTHLY' ? plan.price.amount * 12 : 0;
+      // MRR/ARR month-count scaling multiplies exact minor units (integer 12),
+      // never a float product of the price.
+      const annualMinor = plan.cycle === 'ANNUAL' ? minorUnitsOf(plan.price.amount) : minorUnitsOf(plan.price.amount) * 12n;
+      arr += fromMinorUnits(annualMinor);
     }
-    const netRevenue = recognizedRevenue - reversedRevenue;
-    const directCosts = categoryCosts.PAYMENT + categoryCosts.AI + categoryCosts.INFRASTRUCTURE + categoryCosts.THIRD_PARTY;
-    const allCosts = Object.values(categoryCosts).reduce((total, cost) => total + cost, 0);
+    const netRevenue = fromMinorUnits(recognizedRevenue - reversedRevenue);
+    const directCosts = measuredCosts.PAYMENT + measuredCosts.AI + measuredCosts.INFRASTRUCTURE + measuredCosts.THIRD_PARTY;
+    const allCosts = Object.values(measuredCosts).reduce((total, cost) => total + cost, 0);
     const grossProfit = netRevenue - directCosts;
     const contributionMargin = netRevenue - allCosts;
     const arpu = paidCustomers > 0 ? round(netRevenue / paidCustomers) : undefined;
-    const marketingCost = categoryCosts.MARKETING;
+    const marketingCost = measuredCosts.MARKETING;
     const cac = paidCustomers > 0 && marketingCost > 0 ? round(marketingCost / paidCustomers) : undefined;
     const roas = marketingCost > 0 ? round(netRevenue / marketingCost) : undefined;
     const ltv = arpu !== undefined && churnRate !== undefined && churnRate > 0 ? round(arpu / churnRate) : undefined;
-    return { currency, recognizedRevenue: round(recognizedRevenue), reversedRevenue: round(reversedRevenue), measuredCosts: categoryCosts, estimatedCosts, grossProfit: round(grossProfit), contributionMargin: round(contributionMargin), mrr: round(mrr), arr: round(arr), arpu, cac, roas, ltv };
+    return { currency, recognizedRevenue: fromMinorUnits(recognizedRevenue), reversedRevenue: fromMinorUnits(reversedRevenue), measuredCosts, estimatedCosts: estimated, grossProfit: round(grossProfit), contributionMargin: round(contributionMargin), mrr: round(mrr), arr: round(arr), arpu, cac, roas, ltv };
   });
 }
 
@@ -205,7 +215,11 @@ function observation(tenantId: string, metric: EconomicMetricName | string, valu
 }
 
 function statusForCount(value: number): EvidenceStatus { return value > 0 ? 'MEASURED' : 'PARTIAL'; }
-function emptyCostMap(): Record<CostCategory, number> { return { PAYMENT: 0, AI: 0, MARKETING: 0, INFRASTRUCTURE: 0, SUPPORT: 0, THIRD_PARTY: 0, OTHER: 0 }; }
+type MinorCostMap = Record<CostCategory, bigint>;
+function emptyMinorCostMap(): MinorCostMap { return { PAYMENT: 0n, AI: 0n, MARKETING: 0n, INFRASTRUCTURE: 0n, SUPPORT: 0n, THIRD_PARTY: 0n, OTHER: 0n }; }
+function minorCostMapToNumber(map: MinorCostMap): Record<CostCategory, number> {
+  return { PAYMENT: fromMinorUnits(map.PAYMENT), AI: fromMinorUnits(map.AI), MARKETING: fromMinorUnits(map.MARKETING), INFRASTRUCTURE: fromMinorUnits(map.INFRASTRUCTURE), SUPPORT: fromMinorUnits(map.SUPPORT), THIRD_PARTY: fromMinorUnits(map.THIRD_PARTY), OTHER: fromMinorUnits(map.OTHER) };
+}
 function round(value: number): number { return Math.round(value * 10000) / 10000; }
 function assertManager(actor: CommercialActor): void { if (!actor.roles.some((role) => ['observer', 'agent', 'operator', 'admin', 'global_admin', 'system'].includes(role))) throw new CommercialAnalyticsError('A commercial actor role is required.'); }
 function copy<T>(value: T): T { return structuredClone(value); }

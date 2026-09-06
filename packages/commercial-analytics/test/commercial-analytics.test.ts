@@ -63,17 +63,23 @@ beforeEach(async () => {
 });
 
 async function createVerifiedRevenue() {
-  const plan = await billing.createPlan(admin, { productId: 'product-1', name: 'Monthly', price: { amount: 100, currency: 'KES' }, cycle: 'MONTHLY' });
-  const subscription = await billing.createSubscription(operator, { productId: 'product-1', planId: plan.id, customerReference: 'customer-hash-1' });
-  const invoice = await billing.createInvoice(operator, { subscriptionId: subscription.id, productId: 'product-1', customerReference: 'customer-hash-1', lines: [{ description: 'Monthly plan', quantity: 1, unitPrice: { amount: 100, currency: 'KES' }, total: { amount: 100, currency: 'KES' } }] });
-  const payable = await billing.createInvoicePayment(operator, invoice.id, { providerId: 'analytics-provider', idempotencyKey: 'analytics-intent' });
+  await createVerifiedRevenueWith('analytics-intent', 'product-1', 100, [{ description: 'Monthly plan', quantity: 1, unitPrice: { amount: 100, currency: 'KES' }, total: { amount: 100, currency: 'KES' } }]);
+}
+
+/** Verified revenue path with explicit float-trap lines and plan price. */
+async function createVerifiedRevenueWith(intentKey: string, productKey: string, planPrice: number, lines: Array<{ description: string; quantity: number; unitPrice: { amount: number; currency: string }; total: { amount: number; currency: string } }>): Promise<{ invoiceTotal: { amount: number; currency: string } }> {
+  const plan = await billing.createPlan(admin, { productId: productKey, name: `Monthly ${productKey}`, price: { amount: planPrice, currency: 'KES' }, cycle: 'MONTHLY' });
+  const subscription = await billing.createSubscription(operator, { productId: productKey, planId: plan.id, customerReference: `customer-hash-${productKey}` });
+  const invoice = await billing.createInvoice(operator, { subscriptionId: subscription.id, productId: productKey, customerReference: `customer-hash-${productKey}`, lines });
+  const payable = await billing.createInvoicePayment(operator, invoice.id, { providerId: 'analytics-provider', idempotencyKey: intentKey });
   const decision = await control.proposeDecision(operator, {
-    tenantId: 'acme', productId: 'product-1', objective: 'Collect verified subscription payment.', proposedAction: 'Collect payment.', actionType: PaymentCreateActionType,
-    estimatedCost: { amount: 100, currency: 'KES' }, evidence: [evidence()], evidenceStrength: 90, riskScore: 20, complianceScore: 95, confidence: 85, authorizationLevel: 2,
-    decisionReason: 'Subscription invoice amount is explicitly bounded.', provenance: { source: 'analytics-test', collectedAt: now, correlationId: 'analytics-correlation' },
+    tenantId: 'acme', productId: productKey, objective: `Collect ${productKey}.`, proposedAction: 'Collect payment.', actionType: PaymentCreateActionType,
+    estimatedCost: { amount: invoice.total.amount, currency: 'KES' }, evidence: [evidence(`${productKey}-evidence`)], evidenceStrength: 90, riskScore: 20, complianceScore: 95, confidence: 85, authorizationLevel: 2,
+    decisionReason: 'Subscription invoice amount is explicitly bounded.', provenance: { source: 'analytics-test', collectedAt: now, correlationId: `analytics-${productKey}` },
   });
-  await payments.executePayment(operator, payable.paymentId!, { decisionId: decision.id, idempotencyKey: 'analytics-payment-action', dryRun: false });
+  await payments.executePayment(operator, payable.paymentId!, { decisionId: decision.id, idempotencyKey: `${intentKey}-action`, dryRun: false });
   await payments.verifyPayment(operator, payable.paymentId!);
+  return { invoiceTotal: invoice.total };
 }
 
 describe('Commercial analytics', () => {
@@ -106,6 +112,33 @@ describe('Commercial analytics', () => {
     assert.equal(kes.ltv, undefined);
     assert.equal(snapshot.channels[0]?.channel, 'search');
     assert.equal(snapshot.observations.find((item) => item.metric === 'RECOGNIZED_REVENUE')?.evidenceStatus, 'VERIFIED');
+  });
+
+  it('T-07 AC-5: float-trap amounts produce exact deterministic ledger and analytics totals (0.1 + 0.2; 19.99 x 3)', async () => {
+    // 0.1 + 0.2 float-sums to 0.30000000000000004; 19.99 x 3 float-multiplies
+    // to 59.969999999999995. With quantized money math both chains settle and
+    // every aggregated total is the exact decimal value.
+    const a = await createVerifiedRevenueWith('float-intent-a', 'product-float-a', 0.3, [
+      { description: 'A1', quantity: 1, unitPrice: { amount: 0.1, currency: 'KES' }, total: { amount: 0.1, currency: 'KES' } },
+      { description: 'A2', quantity: 1, unitPrice: { amount: 0.2, currency: 'KES' }, total: { amount: 0.2, currency: 'KES' } },
+    ]);
+    assert.equal(a.invoiceTotal.amount, 0.3, 'invoice total is exactly 0.3');
+    const b = await createVerifiedRevenueWith('float-intent-b', 'product-float-b', 19.99, [
+      { description: 'B1', quantity: 3, unitPrice: { amount: 19.99, currency: 'KES' }, total: { amount: 59.97, currency: 'KES' } },
+    ]);
+    assert.equal(b.invoiceTotal.amount, 59.97, '19.99 x 3 product line is accepted exactly');
+
+    const summary = await ledger.summarize(operator);
+    assert.equal(summary.length, 1);
+    assert.equal(summary[0]?.recognizedRevenue, 60.27, 'ledger summary is the exact sum (0.3 + 59.97)');
+
+    const snapshot = await analytics.snapshot(operator);
+    const kes = snapshot.currencies.find((currency) => currency.currency === 'KES')!;
+    assert.equal(kes.recognizedRevenue, 60.27, 'analytics recognized revenue is exact');
+    assert.equal(kes.measuredCosts.PAYMENT, 0);
+    const recorded = snapshot.observations.find((item) => item.metric === 'RECOGNIZED_REVENUE')!;
+    assert.equal(recorded.value, 60.27);
+    assert.equal(recorded.evidenceStatus, 'VERIFIED');
   });
 
   it('marks ratio metrics unavailable rather than inventing a denominator', async () => {

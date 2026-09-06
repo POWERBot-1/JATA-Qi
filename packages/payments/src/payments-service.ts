@@ -5,6 +5,7 @@ import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
 import type { ActionExecutionAdapter } from '@jataqi/autonomous-action-runtime';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { moneyEquals, moneyWithin, quantizeMonetaryValue } from '@jataqi/commercial-control-plane';
 import type { CommercialAction, CommercialActor, CommercialDecision, CommercialEvidence, CommercialProvenance, CommercialControlPlaneService, MonetaryValue } from '@jataqi/commercial-control-plane';
 import {
   PaymentCreateActionType,
@@ -71,6 +72,26 @@ export class PaymentsService {
       defaultTimeoutMs: normalizedTimeout(provider.defaultTimeoutMs),
       execute: async (context) => {
         const { payment, operation } = await this.paymentForAction(context.action);
+        // T-07 I-2/AC-2/AC-3 (execution-time precondition): a queued action may
+        // execute long after it was planned. Re-check the CURRENT payment state
+        // before any provider call and fail closed without an external side
+        // effect when the state no longer authorizes the operation. A stale
+        // refund (payment already REFUNDED/REFUND_UNVERIFIED/FAILED) or a
+        // replayed create (already PROCESSING or beyond) never reaches the
+        // provider.
+        if (operation === 'REFUND_PAYMENT' && payment.status !== 'REFUND_PROCESSING') {
+          const stale: PaymentProviderResult = { reportedSuccess: false, providerStatus: 'FAILED', summary: `Refund refused: payment state ${payment.status} no longer authorizes provider execution (fail-closed precondition).` };
+          this.providerResults.set(context.action.id, copy(stale));
+          return stale;
+        }
+        // Create is refused only once the payment has left its pre-execution
+        // states (e.g. already SUCCEEDED_UNVERIFIED/VERIFIED/REFUNDED/…);
+        // DRAFT/FAILED retries keep provider-decline retry semantics intact.
+        if (operation === 'CREATE_PAYMENT' && !['PROCESSING', 'DRAFT', 'REQUIRES_ACTION', 'FAILED'].includes(payment.status)) {
+          const stale: PaymentProviderResult = { reportedSuccess: false, providerStatus: 'FAILED', summary: `Payment create refused: payment state ${payment.status} no longer authorizes provider execution (fail-closed precondition).` };
+          this.providerResults.set(context.action.id, copy(stale));
+          return stale;
+        }
         const result = operation === 'CREATE_PAYMENT'
           ? await provider.createPayment({ payment, operation, action: context.action, actor: context.actor, signal: context.signal })
           : provider.refundPayment
@@ -104,13 +125,17 @@ export class PaymentsService {
     if (!provider || (provider.tenantId && !canRead(actor, provider.tenantId))) throw new PaymentError('Payment provider is not registered for this tenant.');
     if (!provider.currencies.includes(input.amount.currency)) throw new PaymentError(`Provider does not support ${input.amount.currency}.`);
     const now = Date.now();
+    // T-07 money policy: amounts are quantized to the minor-unit scale at the
+    // boundary (documented default 2 dp), so every stored payment amount and
+    // every later comparison/sum is scale-exact.
+    const amount = quantizeMonetaryValue(input.amount);
     const intent: PaymentIntent = {
       id: randomUUID(), tenantId: actor.tenantId, ventureId: input.ventureId, productId: input.productId, campaignId: input.campaignId,
-      customerReference: input.customerReference, invoiceId: input.invoiceId, purpose: input.purpose, amount: copy(input.amount), providerId: input.providerId,
+      customerReference: input.customerReference, invoiceId: input.invoiceId, purpose: input.purpose, amount, providerId: input.providerId,
       providerCustomerReference: input.providerCustomerReference, idempotencyKey: input.idempotencyKey, status: 'DRAFT', verificationEvidence: [], createdAt: now, updatedAt: now,
     };
     await this.payments.put(intent);
-    await this.emit(actor, PaymentEvents.IntentCreated, intent, { paymentId: intent.id, amount: intent.amount, invoiceId: intent.invoiceId });
+    await this.emit(actor, PaymentEvents.IntentCreated, intent, { paymentId: intent.id, amount: intent.amount, invoiceId: intent.invoiceId }, undefined, `intent-created:${intent.id}`);
     return copy(intent);
   }
 
@@ -122,25 +147,58 @@ export class PaymentsService {
     const provider = this.requireProvider(actor, payment.providerId);
     if (provider.environment === 'production' && !provider.productionEnabled) return this.update(payment, { status: 'BLOCKED', failureReason: 'Production payment provider is not explicitly enabled.' });
     const decision = await this.requireFinancialDecision(actor, input.decisionId, PaymentCreateActionType, payment.amount);
-    const action = payment.createActionId
-      ? await this.runtime.getAction(actor, payment.createActionId)
-      : await this.runtime.plan(actor, decision.id, {
+    // T-07 I-3: reserve the execution state with a compare-and-set so two
+    // concurrent executions of the same payment cannot both plan a provider
+    // create. The loser fails closed with no write and no provider call.
+    // A retried execution (createActionId already set) re-uses its single
+    // action exactly as before — no second reservation is possible.
+    let action;
+    let reserved = payment;
+    if (!payment.createActionId) {
+      const processing = await this.casTransition(payment, ['DRAFT', 'FAILED', 'REQUIRES_ACTION'], { status: 'PROCESSING' });
+      // T-07 B-1: `runtime.plan` REJECTS on a plan-time refusal — a control-plane
+      // DENY (kill switch, policy, budget), a simulation-only policy under
+      // `dryRun:false`, a missing adapter. It does not return a falsy action, so
+      // a `!action` guard alone can never observe those paths. Without this
+      // try/catch the throw escapes past the reservation above and strands the
+      // payment in PROCESSING, which no entry point accepts as a start state:
+      // the payment deadlocks permanently. Release the reservation on EVERY
+      // planning failure and rethrow the original error unchanged, so the
+      // caller still sees the authoritative fail-closed refusal.
+      try {
+        action = await this.runtime.plan(actor, decision.id, {
           targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
           rollbackStrategy: provider.rollback ? 'provider-managed payment rollback' : undefined,
           parameters: { paymentId: payment.id, operation: 'CREATE_PAYMENT' as PaymentOperation },
-          resourceRequirements: [{ resourceType: 'MONEY', amount: payment.amount.amount, unit: payment.amount.currency, currency: payment.amount.currency }],
+          resourceRequirements: [{ resourceType: 'MONEY', amount: processing.amount.amount, unit: processing.amount.currency, currency: processing.amount.currency }],
         });
-    if (!action) throw new PaymentError('Payment action could not be planned.');
-    const processing = await this.update(payment, { createActionId: action.id, status: 'PROCESSING' });
+      } catch (error) {
+        await this.releaseReservation(processing, 'PROCESSING', { status: payment.status });
+        throw error;
+      }
+      if (!action) {
+        // Defensive: a falsy plan result leaves the payment exactly where it
+        // was (DRAFT/FAILED/REQUIRES_ACTION) — same release path as a throw.
+        await this.releaseReservation(processing, 'PROCESSING', { status: payment.status });
+        throw new PaymentError('Payment action could not be planned.');
+      }
+      reserved = await this.update(processing, { createActionId: action.id });
+    } else {
+      action = await this.runtime.getAction(actor, payment.createActionId);
+      if (!action) throw new PaymentError('Payment execution action is missing.');
+    }
     const execution = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(provider.maxAttempts), timeoutMs: provider.defaultTimeoutMs });
     const result = this.providerResults.get(action.id);
     const status = execution.action.dryRun ? 'SIMULATED' : execution.action.executionStatus === 'VERIFYING' ? 'SUCCEEDED_UNVERIFIED' : execution.action.executionStatus === 'FAILED' ? 'FAILED' : 'BLOCKED';
-    const updated = await this.update(processing, {
+    const updated = await this.update(reserved, {
       status,
-      providerReference: result?.providerReference ?? processing.providerReference,
+      providerReference: result?.providerReference ?? reserved.providerReference,
       failureReason: execution.action.error,
     });
-    await this.emit(actor, execution.action.executionStatus === 'VERIFYING' ? PaymentEvents.PaymentReported : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, status: updated.status, providerReference: updated.providerReference });
+    const executionKey = execution.action.executionStatus === 'VERIFYING'
+      ? `payment-reported:${updated.id}:${action.id}`
+      : `payment-failed:${updated.id}:create:${updated.createActionId ?? action.id}`;
+    await this.emit(actor, execution.action.executionStatus === 'VERIFYING' ? PaymentEvents.PaymentReported : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, status: updated.status, providerReference: updated.providerReference }, undefined, executionKey);
     return updated;
   }
 
@@ -148,6 +206,7 @@ export class PaymentsService {
   async verifyPayment(actor: CommercialActor, paymentId: string): Promise<PaymentIntent> {
     assertManager(actor);
     const payment = await this.requirePayment(actor, paymentId);
+    if (payment.status === 'VERIFIED') return copy(payment); // I-7/AC-1: repeat finalization observes the final state, no second event
     if (payment.status === 'SIMULATED') throw new PaymentError('A simulated payment cannot be verified as real revenue.');
     if (payment.status !== 'SUCCEEDED_UNVERIFIED' || !payment.createActionId) throw new PaymentError('Payment is not awaiting verification.');
     const { action, result } = await this.verifiedAction(actor, payment.createActionId);
@@ -157,19 +216,31 @@ export class PaymentsService {
     // T-06: when the payment belongs to the actor's tenant the transaction
     // runs under that tenant's RLS context (cross-tenant global-admin flows
     // stay on the system scope — application authorization is unchanged).
+    // T-07 I-1/I-3: the transition itself is a compare-and-set on the current
+    // status inside the composed write: exactly one of N concurrent verifiers
+    // can move SUCCEEDED_UNVERIFIED -> VERIFIED/FAILED and publish the single
+    // `PaymentVerified` event (stable per-(payment, transition) anchor key,
+    // no longer updatedAt-dependent). Losers read and return the winner's
+    // final state without emitting anything.
     const tenantBinding = payment.tenantId === actor.tenantId ? { tenantId: actor.tenantId } : {};
     return this.storage.atomically(async (scope) => {
-      const updated = await this.update(payment, {
+      const updated = await this.casTransitionWithinScope(scope, payment.id, ['SUCCEEDED_UNVERIFIED'], {
         status: verified ? 'VERIFIED' : 'FAILED',
-        providerReference: result?.providerReference ?? payment.providerReference,
+        ...(result?.providerReference ? { providerReference: result.providerReference } : {}),
         verificationEvidence: copy(action.verificationEvidence),
         failureReason: verified ? undefined : action.error ?? 'Payment provider verification failed.',
         verifiedAt: verified ? Date.now() : undefined,
-      }, scope);
+      });
+      if (!updated) {
+        const winner = await (await scope.collection<PaymentIntent>(PAYMENTS_COLLECTION)).get(payment.id);
+        if (!winner) throw new PaymentError('Payment intent disappeared during verification.');
+        if (!['VERIFIED', 'FAILED'].includes(winner.status)) throw new PaymentError(`Payment ${payment.id} changed state concurrently (${winner.status}); verification aborted fail-closed.`);
+        return copy(winner);
+      }
       await this.emit(actor, verified ? PaymentEvents.PaymentVerified : PaymentEvents.PaymentFailed, updated, {
         paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.amount, providerReference: updated.providerReference,
-      }, scope);
-      return updated;
+      }, scope, verified ? `payment-verified:${updated.id}` : `payment-failed:${updated.id}:create:${updated.createActionId}`);
+      return copy(updated);
     }, tenantBinding);
   }
 
@@ -180,21 +251,42 @@ export class PaymentsService {
     if (payment.status !== 'VERIFIED') throw new PaymentError('Only a verified payment may be refunded.');
     const provider = this.requireProvider(actor, payment.providerId);
     if (!provider.supportsRefunds || !provider.refundPayment) throw new PaymentError('Payment provider does not support refunds.');
-    const amount = input.amount ?? payment.amount;
+    const amount = quantizeMonetaryValue(input.amount ?? payment.amount);
     if (!moneyWithin(amount, payment.amount)) throw new PaymentError('Refund amount must match currency and may not exceed the verified payment amount.');
     const decision = await this.requireFinancialDecision(actor, input.decisionId, PaymentRefundActionType, amount);
-    const action = await this.runtime.plan(actor, decision.id, {
-      targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
-      rollbackStrategy: provider.rollback ? 'provider-managed refund rollback' : undefined,
-      parameters: { paymentId: payment.id, operation: 'REFUND_PAYMENT' as PaymentOperation, reason: input.reason },
-      resourceRequirements: [{ resourceType: 'MONEY', amount: amount.amount, unit: amount.currency, currency: amount.currency }],
-    });
-    const queued = await this.update(payment, { refundActionId: action.id, refundAmount: copy(amount), status: 'REFUND_PROCESSING' });
+    // T-07 I-3/AC-2: reserve VERIFIED -> REFUND_PROCESSING with a CAS before
+    // planning. Two concurrent refund requests for one payment: exactly one
+    // reservation wins; the loser fails closed here — before any action is
+    // planned and before any provider call can happen.
+    const queued = await this.casTransition(payment, ['VERIFIED'], { refundAmount: copy(amount), status: 'REFUND_PROCESSING' });
+    // T-07 B-1: identical hazard on the refund path. A plan-time DENY here
+    // strands the payment in REFUND_PROCESSING — `requestRefund` requires
+    // VERIFIED and `verifyRefund` requires REFUND_UNVERIFIED, so neither can
+    // ever pick it up again and the refund deadlocks. Release the reservation
+    // back to VERIFIED (restoring the prior refundAmount) and rethrow.
+    let action;
+    try {
+      action = await this.runtime.plan(actor, decision.id, {
+        targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
+        rollbackStrategy: provider.rollback ? 'provider-managed refund rollback' : undefined,
+        parameters: { paymentId: payment.id, operation: 'REFUND_PAYMENT' as PaymentOperation, reason: input.reason },
+        resourceRequirements: [{ resourceType: 'MONEY', amount: amount.amount, unit: amount.currency, currency: amount.currency }],
+      });
+    } catch (error) {
+      await this.releaseReservation(queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
+      throw error;
+    }
+    if (!action) {
+      // Defensive: falsy plan result releases the reservation identically.
+      await this.releaseReservation(queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
+      throw new PaymentError('Refund action could not be planned.');
+    }
+    const reserved = await this.update(queued, { refundActionId: action.id });
     const execution = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(provider.maxAttempts), timeoutMs: provider.defaultTimeoutMs });
     const result = this.providerResults.get(action.id);
-    return this.update(queued, {
+    return this.update(reserved, {
       status: execution.action.dryRun ? 'SIMULATED' : execution.action.executionStatus === 'VERIFYING' ? 'REFUND_UNVERIFIED' : 'FAILED',
-      providerReference: result?.providerReference ?? queued.providerReference,
+      providerReference: result?.providerReference ?? reserved.providerReference,
       failureReason: execution.action.error,
     });
   }
@@ -202,18 +294,31 @@ export class PaymentsService {
   async verifyRefund(actor: CommercialActor, paymentId: string): Promise<PaymentIntent> {
     assertManager(actor);
     const payment = await this.requirePayment(actor, paymentId);
+    if (payment.status === 'REFUNDED') return copy(payment); // I-7/AC-1: repeat finalization observes the final state, no second event
     if (payment.status === 'SIMULATED') throw new PaymentError('A simulated refund cannot be verified as a real refund.');
     if (payment.status !== 'REFUND_UNVERIFIED' || !payment.refundActionId) throw new PaymentError('Refund is not awaiting verification.');
     const { action, result } = await this.verifiedAction(actor, payment.refundActionId);
     const verified = action.executionStatus === 'COMPLETED' && (result ? result.providerStatus === 'REFUNDED' : action.verificationStatus === 'VERIFIED');
+    // T-07 I-1/I-3: CAS finalization (see verifyPayment) — at most one
+    // REFUND_UNVERIFIED -> REFUNDED transition and one `RefundVerified`
+    // event per payment, keyed on the stable (payment, transition) anchor.
     const tenantBinding = payment.tenantId === actor.tenantId ? { tenantId: actor.tenantId } : {};
     return this.storage.atomically(async (scope) => {
-      const updated = await this.update(payment, {
-        status: verified ? 'REFUNDED' : 'FAILED', providerReference: result?.providerReference ?? payment.providerReference,
-        verificationEvidence: copy(action.verificationEvidence), failureReason: verified ? undefined : action.error ?? 'Refund verification failed.', refundedAt: verified ? Date.now() : undefined,
-      }, scope);
-      await this.emit(actor, verified ? PaymentEvents.RefundVerified : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.refundAmount ?? updated.amount, providerReference: updated.providerReference }, scope);
-      return updated;
+      const updated = await this.casTransitionWithinScope(scope, payment.id, ['REFUND_UNVERIFIED'], {
+        status: verified ? 'REFUNDED' : 'FAILED',
+        ...(result?.providerReference ? { providerReference: result.providerReference } : {}),
+        verificationEvidence: copy(action.verificationEvidence),
+        failureReason: verified ? undefined : action.error ?? 'Refund verification failed.',
+        refundedAt: verified ? Date.now() : undefined,
+      });
+      if (!updated) {
+        const winner = await (await scope.collection<PaymentIntent>(PAYMENTS_COLLECTION)).get(payment.id);
+        if (!winner) throw new PaymentError('Payment intent disappeared during refund verification.');
+        if (!['REFUNDED', 'FAILED'].includes(winner.status)) throw new PaymentError(`Payment ${payment.id} changed state concurrently (${winner.status}); refund verification aborted fail-closed.`);
+        return copy(winner);
+      }
+      await this.emit(actor, verified ? PaymentEvents.RefundVerified : PaymentEvents.PaymentFailed, updated, { paymentId: updated.id, invoiceId: updated.invoiceId, status: updated.status, amount: updated.refundAmount ?? updated.amount, providerReference: updated.providerReference }, scope, verified ? `refund-verified:${updated.id}` : `payment-failed:${updated.id}:refund:${updated.refundActionId}`);
+      return copy(updated);
     }, tenantBinding);
   }
 
@@ -271,8 +376,22 @@ export class PaymentsService {
   private async verifiedAction(actor: CommercialActor, actionId: string): Promise<{ action: CommercialAction; result?: PaymentVerificationResult }> {
     const current = await this.runtime.getAction(actor, actionId);
     const alreadyJudged = current !== undefined && current.executionStatus !== 'VERIFYING' && (current.verificationStatus === 'VERIFIED' || current.verificationStatus === 'FAILED');
-    const action = alreadyJudged ? current : await this.runtime.verify(actor, actionId);
-    return { action, result: this.verificationResults.get(actionId) };
+    if (alreadyJudged) return { action: current, result: this.verificationResults.get(actionId) };
+    try {
+      const action = await this.runtime.verify(actor, actionId);
+      return { action, result: this.verificationResults.get(actionId) };
+    } catch (error) {
+      // T-07 I-3/I-7: two OS processes may verify the SAME action
+      // concurrently (AC-1). The winner's durable verdict (VERIFIED/FAILED)
+      // is the authoritative result; a loser whose verify raced into a
+      // settled state resumes from the winner's recorded judgment instead of
+      // failing the whole finalization.
+      const reread = await this.runtime.getAction(actor, actionId);
+      if (reread && reread.executionStatus !== 'VERIFYING' && (reread.verificationStatus === 'VERIFIED' || reread.verificationStatus === 'FAILED')) {
+        return { action: reread, result: this.verificationResults.get(actionId) };
+      }
+      throw error;
+    }
   }
 
   private async update(payment: PaymentIntent, patch: Partial<PaymentIntent>, scope?: StorageWriteScope): Promise<PaymentIntent> {
@@ -282,12 +401,66 @@ export class PaymentsService {
     return copy(updated);
   }
 
-  private async emit(actor: CommercialActor, eventType: string, payment: PaymentIntent, payload: Record<string, unknown>, scope?: StorageWriteScope): Promise<void> {
+  /**
+   * T-07 I-3: compare-and-set a payment status transition inside one composed
+   * write. The guard runs under the storage row lock, so concurrent
+   * transitions of the same payment serialize to exactly one winner; the
+   * loser receives `undefined` and must read/return the winner's final state.
+   * Only the expected current status(es) may transition; anything else fails
+   * closed with no write.
+   */
+  private async casTransitionWithinScope(scope: StorageWriteScope, paymentId: string, expected: readonly string[], patch: Partial<PaymentIntent>): Promise<PaymentIntent | undefined> {
+    const collection = await scope.collection<PaymentIntent>(PAYMENTS_COLLECTION);
+    const result = await collection.cas(
+      paymentId,
+      (current) => current !== undefined && expected.includes(current.status),
+      (current) => ({ ...current, ...patch, updatedAt: Date.now() }),
+    );
+    if (!result.ok) return undefined;
+    return copy(result.doc);
+  }
+
+  /**
+   * T-07 B-1: release a planning reservation taken before `runtime.plan`.
+   *
+   * Best-effort by design. The reservation is released only while the payment
+   * is still in the reserved status, so a concurrent winner that has already
+   * advanced the row is never overwritten — the CAS simply finds no match and
+   * this returns without a write. Any failure is swallowed deliberately: the
+   * caller is already unwinding an authoritative planning refusal and MUST
+   * surface that original error rather than a secondary rollback error.
+   */
+  private async releaseReservation(reserved: PaymentIntent, reservedStatus: string, restore: Partial<PaymentIntent>): Promise<void> {
+    await this.casTransition(reserved, [reservedStatus], restore).catch(() => undefined);
+  }
+
+  /** Standalone (non-composed) CAS transition for reservation entry points. */
+  private async casTransition(payment: PaymentIntent, expected: readonly string[], patch: Partial<PaymentIntent>): Promise<PaymentIntent> {
+    const tenantBinding = { tenantId: payment.tenantId };
+    return this.storage.atomically(async (scope) => {
+      const updated = await this.casTransitionWithinScope(scope, payment.id, expected, patch);
+      if (!updated) {
+        const winner = await (await scope.collection<PaymentIntent>(PAYMENTS_COLLECTION)).get(payment.id);
+        const observed = winner?.status ?? '<missing>';
+        throw new PaymentError(`Payment ${payment.id} cannot transition from ${observed} (expected ${expected.join(' or ')}); concurrent transition won — operation aborted fail-closed.`);
+      }
+      return updated;
+    }, tenantBinding);
+  }
+
+  /**
+   * Publish a payments event. T-07: idempotency keys are STABLE per
+   * (payment, transition) — callers pass an explicit `key` for finalization
+   * events; the default is `${eventType}:${payment.id}`. Keys never embed
+   * `updatedAt`, so a redelivered or duplicated finalization can never
+   * masquerade as a second, distinct event.
+   */
+  private async emit(actor: CommercialActor, eventType: string, payment: PaymentIntent, payload: Record<string, unknown>, scope?: StorageWriteScope, key?: string): Promise<void> {
     const now = Date.now();
     const provenance: CommercialProvenance = { source: 'payments', collectedAt: now, correlationId: payment.id };
     await this.controlPlane.publishEvent(actor, {
       eventType, source: 'payments', entityId: payment.id, correlationId: payment.id, payload,
-      provenance, privacyClassification: 'RESTRICTED', idempotencyKey: `${eventType}:${payment.id}:${payment.status}:${payment.updatedAt}`,
+      provenance, privacyClassification: 'RESTRICTED', idempotencyKey: key ?? `${eventType}:${payment.id}`,
     }, scope ? { scope } : {});
   }
 }
@@ -324,12 +497,6 @@ function validateProvider(provider: PaymentProvider): void {
 function assertMoney(value: MonetaryValue): void {
   if (!Number.isFinite(value.amount) || value.amount < 0 || !value.currency.trim()) throw new PaymentError('Payment amount must be non-negative and include a currency.');
 }
-
-function moneyWithin(requested: MonetaryValue, ceiling: MonetaryValue): boolean {
-  return requested.currency === ceiling.currency && requested.amount <= ceiling.amount;
-}
-
-function moneyEquals(a: MonetaryValue, b: MonetaryValue): boolean { return a.currency === b.currency && a.amount === b.amount; }
 
 function normalizedAttempts(value: number | undefined): number {
   const attempts = value ?? 1;

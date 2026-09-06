@@ -5,6 +5,7 @@ import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { BillingModule, BillingEvents } from '@jataqi/billing';
 import type { BillingService, Invoice } from '@jataqi/billing';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { fromMinorUnits, minorUnitsOf, moneyEquals, quantizeMonetaryValue } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialEvidence, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentIntent, PaymentsService } from '@jataqi/payments';
@@ -33,6 +34,31 @@ interface LedgerSequenceCounter {
   sequence: number;
 }
 
+/**
+ * T-07 I-6: constraint-backed single-effect anchors. A ledger settlement
+ * (revenue recognition / refund reversal) may append at most one entry per
+ * (tenant, entryType, invoiceId, paymentId). The anchor row is created with a
+ * first-write-wins CAS inside the same composed write as the entry itself, so
+ * even two DIFFERENT duplicate events delivered concurrently (double
+ * finalization, replay, redelivery) can only produce one append. The row id
+ * IS the database uniqueness guard (primary-key conflict on transactional
+ * drivers).
+ */
+const LEDGER_ANCHOR_COLLECTION = 'revenue-ledger.settlement-anchors';
+
+/** T-07 single-effect anchor document. */
+interface SettlementAnchor {
+  id: string;
+  tenantId: string;
+  entryId?: string;
+  sourceEventId?: string;
+}
+
+/** Stable anchor id per (entryType, invoiceId, paymentId) — tenant-scoped by row tenant. */
+function anchorIdFor(entryType: string, invoiceId: string, paymentId: string): string {
+  return `effect:${entryType}:${invoiceId}:${paymentId}`;
+}
+
 /** T-05 durable inbox handler id — stable across restarts/deploys (keys the inbox). */
 export const REVENUE_LEDGER_DURABLE_HANDLER_ID = 'revenue-ledger.invoice-settlement';
 
@@ -53,6 +79,7 @@ export class RevenueLedgerService {
   private storage!: StorageModule;
   private entries!: ICollection<RevenueLedgerEntry>;
   private seqCounters!: ICollection<LedgerSequenceCounter>;
+  private anchors!: ICollection<SettlementAnchor>;
   private billing!: BillingService;
   private payments!: PaymentsService;
   private controlPlane!: CommercialControlPlaneService;
@@ -62,6 +89,7 @@ export class RevenueLedgerService {
     this.storage = kernel.getModule<StorageModule>('storage');
     this.entries = await this.storage.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
     this.seqCounters = await this.storage.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
+    this.anchors = await this.storage.collection<SettlementAnchor>(LEDGER_ANCHOR_COLLECTION);
     this.billing = kernel.getModule<BillingModule>('billing').getService();
     this.payments = kernel.getModule<PaymentsModule>('payments').getService();
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
@@ -88,7 +116,9 @@ export class RevenueLedgerService {
   async recordCost(actor: CommercialActor, input: RecordCostInput): Promise<RevenueLedgerEntry> {
     assertManager(actor);
     if (!input.evidence.length || !input.category || !input.notes?.trim() && input.notes !== undefined) throw new RevenueLedgerError('Cost category, evidence, and any supplied notes must be valid.');
-    assertMoney(input.amount);
+    // T-07 money policy: amounts quantize at the boundary (2 dp default).
+    const amount = quantizeMonetaryValue(input.amount);
+    assertMoney(amount);
     // T-06: entry + sequence allocation commit as ONE composed write (on
     // transactional drivers) under the actor's tenant; the CAS counter row
     // serializes same-tenant concurrent writers.
@@ -101,7 +131,7 @@ export class RevenueLedgerService {
         recognitionStatus: input.measured === false ? 'ESTIMATED' : 'RECOGNIZED',
         productId: input.productId,
         ventureId: input.ventureId,
-        amount: copy(input.amount),
+        amount,
         costCategory: input.category,
         evidence: copy(input.evidence),
         notes: input.notes,
@@ -122,21 +152,30 @@ export class RevenueLedgerService {
 
   async summarize(actor: CommercialActor): Promise<RevenueSummary[]> {
     const entries = await this.listEntries(actor);
-    const byCurrency = new Map<string, RevenueSummary>();
+    // T-07 money policy: summaries accumulate exact integer minor units per
+    // currency and convert once at the end (deterministic — no float drift).
+    const byCurrency = new Map<string, { recognized: bigint; reversed: bigint; measured: bigint; estimated: bigint }>();
     for (const entry of entries) {
-      const summary = byCurrency.get(entry.amount.currency) ?? {
-        currency: entry.amount.currency, recognizedRevenue: 0, reversedRevenue: 0, measuredCosts: 0, estimatedCosts: 0, contribution: 0,
-      };
-      if (entry.entryType === 'REVENUE' && entry.recognitionStatus === 'RECOGNIZED') summary.recognizedRevenue += entry.amount.amount;
-      if (entry.entryType === 'REFUND_REVERSAL' && entry.recognitionStatus === 'REVERSED') summary.reversedRevenue += entry.amount.amount;
+      const bucket = byCurrency.get(entry.amount.currency) ?? { recognized: 0n, reversed: 0n, measured: 0n, estimated: 0n };
+      const minor = minorUnitsOf(entry.amount.amount);
+      if (entry.entryType === 'REVENUE' && entry.recognitionStatus === 'RECOGNIZED') bucket.recognized += minor;
+      if (entry.entryType === 'REFUND_REVERSAL' && entry.recognitionStatus === 'REVERSED') bucket.reversed += minor;
       if (entry.entryType === 'COST') {
-        if (entry.recognitionStatus === 'ESTIMATED') summary.estimatedCosts += entry.amount.amount;
-        else summary.measuredCosts += entry.amount.amount;
+        if (entry.recognitionStatus === 'ESTIMATED') bucket.estimated += minor;
+        else bucket.measured += minor;
       }
-      summary.contribution = summary.recognizedRevenue - summary.reversedRevenue - summary.measuredCosts;
-      byCurrency.set(summary.currency, summary);
+      byCurrency.set(entry.amount.currency, bucket);
     }
-    return [...byCurrency.values()].sort((a, b) => a.currency.localeCompare(b.currency));
+    return [...byCurrency.entries()]
+      .map(([currency, bucket]) => ({
+        currency,
+        recognizedRevenue: fromMinorUnits(bucket.recognized),
+        reversedRevenue: fromMinorUnits(bucket.reversed),
+        measuredCosts: fromMinorUnits(bucket.measured),
+        estimatedCosts: fromMinorUnits(bucket.estimated),
+        contribution: fromMinorUnits(bucket.recognized - bucket.reversed - bucket.measured),
+      }))
+      .sort((a, b) => a.currency.localeCompare(b.currency));
   }
 
   async verifyIntegrity(actor: CommercialActor, tenantId = actor.tenantId): Promise<{ valid: boolean; entries: number; brokenAt?: number; reason?: string }> {
@@ -168,10 +207,18 @@ export class RevenueLedgerService {
     if (!invoice || !payment || !isVerifiedPaymentForInvoice(invoice, payment, event.tenantId) || payment.tenantId !== event.tenantId) return;
     // T-06: the composed write runs under the EVENT's tenant (RLS context set
     // inside the transaction) and allocates the sequence via the CAS counter.
+    // T-07 I-6: a first-write-wins anchor CAS (row id = database uniqueness
+    // guard) guarantees at most one REVENUE entry per (invoice, payment) even
+    // when two DIFFERENT duplicate events race concurrently.
     await this.storage.atomically(async (scope) => {
       const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
       const counters = await scope.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
-      if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // idempotent redelivery
+      const anchors = await scope.collection<SettlementAnchor>(LEDGER_ANCHOR_COLLECTION);
+      const anchorId = anchorIdFor('REVENUE', invoice.id, payment.id);
+      if (await anchors.get(anchorId)) return; // effect already anchored (replay or duplicate delivery)
+      if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // pre-anchor legacy rows (idempotent redelivery)
+      const anchorCas = await anchors.cas(anchorId, (current) => current === undefined, (current) => ({ ...(current as SettlementAnchor | undefined), id: anchorId, tenantId: event.tenantId }));
+      if (!anchorCas.ok) return; // a concurrent handler won the anchor
       const entry = await this.append({
         tenantId: event.tenantId,
         entryType: 'REVENUE',
@@ -186,6 +233,7 @@ export class RevenueLedgerService {
         evidence: copy(payment.verificationEvidence),
         notes: `Recognized from verified payment ${payment.id}.`,
       }, entries, counters);
+      await anchors.put({ ...anchorCas.doc!, id: anchorId, tenantId: event.tenantId, entryId: entry.id, sourceEventId: event.id });
       await this.emit(actor, RevenueLedgerEvents.RevenueRecorded, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount }, scope);
     }, { tenantId: event.tenantId });
   }
@@ -198,10 +246,16 @@ export class RevenueLedgerService {
     const [invoice, payment] = await Promise.all([this.billing.getInvoice(actor, invoiceId), this.payments.getPayment(actor, paymentId)]);
     if (!invoice || !payment || invoice.status !== 'REFUNDED' || payment.status !== 'REFUNDED' || invoice.tenantId !== event.tenantId || payment.tenantId !== event.tenantId) return;
     const amount = payment.refundAmount ?? payment.amount;
+    // T-07 I-6: single-effect anchor for the reversal (see handlePaidInvoice).
     await this.storage.atomically(async (scope) => {
       const entries = await scope.collection<RevenueLedgerEntry>(LEDGER_COLLECTION);
       const counters = await scope.collection<LedgerSequenceCounter>(LEDGER_SEQ_COLLECTION);
-      if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // idempotent redelivery
+      const anchors = await scope.collection<SettlementAnchor>(LEDGER_ANCHOR_COLLECTION);
+      const anchorId = anchorIdFor('REFUND_REVERSAL', invoice.id, payment.id);
+      if (await anchors.get(anchorId)) return;
+      if ((await entries.query({ where: (entry) => entry.sourceEventId === event.id, limit: 1 }))[0]) return; // pre-anchor legacy rows (idempotent redelivery)
+      const anchorCas = await anchors.cas(anchorId, (current) => current === undefined, (current) => ({ ...(current as SettlementAnchor | undefined), id: anchorId, tenantId: event.tenantId }));
+      if (!anchorCas.ok) return; // a concurrent handler won the anchor
       const entry = await this.append({
         tenantId: event.tenantId,
         entryType: 'REFUND_REVERSAL',
@@ -216,6 +270,7 @@ export class RevenueLedgerService {
         evidence: copy(payment.verificationEvidence),
         notes: `Revenue reversal from verified refund ${payment.id}.`,
       }, entries, counters);
+      await anchors.put({ ...anchorCas.doc!, id: anchorId, tenantId: event.tenantId, entryId: entry.id, sourceEventId: event.id });
       await this.emit(actor, RevenueLedgerEvents.RevenueReversed, entry, { entryId: entry.id, invoiceId: entry.invoiceId, paymentId: entry.paymentId, amount: entry.amount }, scope);
     }, { tenantId: event.tenantId });
   }
@@ -297,7 +352,6 @@ function stable(value: unknown): string {
   return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stable(record[key])}`).join(',')}}`;
 }
 function assertMoney(amount: MonetaryValue): void { if (!Number.isFinite(amount.amount) || amount.amount < 0 || !amount.currency.trim()) throw new RevenueLedgerError('Ledger amount must be non-negative with a currency.'); }
-function moneyEquals(a: MonetaryValue, b: MonetaryValue): boolean { return a.amount === b.amount && a.currency === b.currency; }
 function assertManager(actor: CommercialActor): void { if (!actor.roles.some((role) => ['operator', 'admin', 'global_admin', 'system'].includes(role))) throw new RevenueLedgerError('Commercial operator role is required.'); }
 function canRead(actor: CommercialActor, tenantId: string): boolean { return actor.tenantId === tenantId || actor.roles.includes('global_admin'); }
 function systemActor(tenantId: string): CommercialActor { return { id: 'revenue-ledger-system', tenantId, roles: ['system'] }; }

@@ -3,6 +3,7 @@ import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+import { moneyEquals, moneyProductEquals, quantizeMonetaryValue, sumMoney } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentsService } from '@jataqi/payments';
@@ -80,7 +81,8 @@ export class BillingService {
     assertAdministrator(actor);
     validatePlan(input);
     const now = Date.now();
-    const plan: BillingPlan = { id: randomUUID(), tenantId: actor.tenantId, productId: input.productId, name: input.name, price: copy(input.price), cycle: input.cycle, active: true, createdAt: now, updatedAt: now };
+    // T-07 money policy: prices are quantized at the boundary (2 dp default).
+    const plan: BillingPlan = { id: randomUUID(), tenantId: actor.tenantId, productId: input.productId, name: input.name, price: quantizeMonetaryValue(input.price), cycle: input.cycle, active: true, createdAt: now, updatedAt: now };
     await this.plans.put(plan);
     await this.emit(actor, BillingEvents.PlanCreated, plan.id, { planId: plan.id, productId: plan.productId });
     return copy(plan);
@@ -114,10 +116,14 @@ export class BillingService {
       }
     }
     const now = Date.now();
-    const total = sumLines(input.lines);
+    // T-07 money policy: invoice lines are quantized at the boundary and the
+    // invoice total is the deterministic exact sum of the quantized line
+    // totals (never a float accumulation: 0.1 + 0.2 === 0.3).
+    const lines = input.lines.map((line) => ({ ...line, unitPrice: quantizeMonetaryValue(line.unitPrice), total: quantizeMonetaryValue(line.total) }));
+    const total = sumLines(lines);
     const invoice: Invoice = {
       id: randomUUID(), tenantId: actor.tenantId, subscriptionId: input.subscriptionId, productId: input.productId, customerReference: input.customerReference,
-      lines: copy(input.lines), total, status: 'ISSUED', issuedAt: now, dueAt: input.dueAt, createdAt: now, updatedAt: now,
+      lines: copy(lines), total, status: 'ISSUED', issuedAt: now, dueAt: input.dueAt, createdAt: now, updatedAt: now,
     };
     await this.invoices.put(invoice);
     await this.emit(actor, BillingEvents.InvoiceIssued, invoice.id, { invoiceId: invoice.id, subscriptionId: invoice.subscriptionId, total: invoice.total });
@@ -193,23 +199,35 @@ export class BillingService {
     // T-06: the composed write runs under the EVENT's tenant (the invoice and
     // payment both provably belong to it), so the database RLS context is set
     // inside this transaction.
+    // T-07 I-1/I-6: the ISSUED/PAYMENT_PENDING -> PAID transition is a
+    // compare-and-set on the invoice row itself (the constraint-backed
+    // single-finalization anchor): even if two PaymentVerified events for the
+    // same payment are delivered concurrently, exactly one handler can move
+    // the invoice to PAID and emit `billing.invoice.paid`; the other sees PAID
+    // and returns. Redelivery after PAID is a no-op (I-7).
     await this.storage.atomically(async (scope) => {
       const invoices = await scope.collection<Invoice>(INVOICES_COLLECTION);
       const invoice = await invoices.get(invoiceId);
       if (!invoice || invoice.tenantId !== event.tenantId || invoice.paymentId !== payment.id || !moneyEquals(invoice.total, payment.amount)) return;
-      if (invoice.status === 'PAID') return; // idempotent redelivery
       const now = Date.now();
-      const paid: Invoice = { ...invoice, status: 'PAID', providerReference: payment.providerReference, paidAt: now, updatedAt: now };
-      await invoices.put(paid);
+      const casResult = await invoices.cas(
+        invoice.id,
+        (current) => current !== undefined && (current.status === 'ISSUED' || current.status === 'PAYMENT_PENDING') && current.paymentId === payment.id,
+        (current) => ({ ...current, status: 'PAID' as const, providerReference: payment.providerReference, paidAt: now, updatedAt: now }),
+      );
+      if (!casResult.ok || !casResult.doc) return; // another handler already finalized this invoice
+      const paid = copy(casResult.doc);
       await this.emit(actor, BillingEvents.InvoicePaid, paid.id, { invoiceId: paid.id, paymentId: payment.id, amount: paid.total }, { key: `${paid.id}:${payment.id}`, causationId: event.id, scope });
       if (paid.subscriptionId) {
         const subscriptions = await scope.collection<Subscription>(SUBSCRIPTIONS_COLLECTION);
         const subscription = await subscriptions.get(paid.subscriptionId);
-        if (subscription && subscription.tenantId === paid.tenantId && subscription.status !== 'CANCELLED') {
+        if (subscription && subscription.tenantId === paid.tenantId && subscription.status !== 'CANCELLED' && subscription.status !== 'ACTIVE') {
           const period = cyclePeriod((await this.plans.get(subscription.planId))?.cycle);
           const active: Subscription = { ...subscription, status: 'ACTIVE', currentPeriodStart: now, currentPeriodEnd: now + period, updatedAt: now };
-          await subscriptions.put(active);
-          await this.emit(actor, BillingEvents.SubscriptionActivated, active.id, { subscriptionId: active.id, invoiceId: paid.id }, { key: `${active.id}:${paid.id}`, causationId: event.id, scope });
+          const activated = await subscriptions.cas(subscription.id, (current) => current !== undefined && current.status === subscription.status, () => active);
+          if (activated.ok) {
+            await this.emit(actor, BillingEvents.SubscriptionActivated, active.id, { subscriptionId: active.id, invoiceId: paid.id }, { key: `${active.id}:${paid.id}`, causationId: event.id, scope });
+          }
         }
       }
     }, { tenantId: event.tenantId });
@@ -222,13 +240,21 @@ export class BillingService {
     const actor = systemActor(event.tenantId);
     const payment = await this.payments.getPayment(actor, paymentId);
     if (!payment || payment.status !== 'REFUNDED' || payment.tenantId !== event.tenantId) return;
+    // T-07 I-6: PAID -> REFUNDED is a compare-and-set finalization; an
+    // invoice that is not PAID cannot be refunded (fail closed), and two
+    // concurrent refund events produce exactly one REFUNDED transition and
+    // one `billing.invoice.refunded` emission.
     await this.storage.atomically(async (scope) => {
       const invoices = await scope.collection<Invoice>(INVOICES_COLLECTION);
       const invoice = await invoices.get(invoiceId);
       if (!invoice || invoice.tenantId !== event.tenantId || invoice.paymentId !== payment.id) return;
-      if (invoice.status === 'REFUNDED') return; // idempotent redelivery
-      const refunded: Invoice = { ...invoice, status: 'REFUNDED', providerReference: payment.providerReference, refundedAt: Date.now(), updatedAt: Date.now() };
-      await invoices.put(refunded);
+      const casResult = await invoices.cas(
+        invoice.id,
+        (current) => current !== undefined && current.status === 'PAID' && current.paymentId === payment.id,
+        (current) => ({ ...current, status: 'REFUNDED' as const, providerReference: payment.providerReference, refundedAt: Date.now(), updatedAt: Date.now() }),
+      );
+      if (!casResult.ok || !casResult.doc) return; // already finalized (REFUNDED) or not payable in this state
+      const refunded = copy(casResult.doc);
       await this.emit(actor, BillingEvents.InvoiceRefunded, refunded.id, { invoiceId: refunded.id, paymentId: payment.id, amount: payment.refundAmount ?? payment.amount }, { key: `${refunded.id}:${payment.id}`, causationId: event.id, scope });
     }, { tenantId: event.tenantId });
   }
@@ -274,21 +300,24 @@ function validateInvoiceInput(input: CreateInvoiceInput): void {
     if (!line.description.trim() || !Number.isFinite(line.quantity) || line.quantity <= 0) throw new BillingError('Invoice line description and positive quantity are required.');
     assertMoney(line.unitPrice);
     assertMoney(line.total);
-    if (line.unitPrice.currency !== line.total.currency || line.total.amount !== line.unitPrice.amount * line.quantity) throw new BillingError('Invoice line total must equal unit price times quantity in the same currency.');
+    // T-07 AC-5: the line-total check is the exact quantized product rule
+    // (decimal-parts multiplication, half-up once), so float artifacts can
+    // never reject a valid invoice (0.1 x 3, 19.99 x 3, 1.15 x 0.3).
+    if (!moneyProductEquals(line.unitPrice, line.quantity, line.total)) throw new BillingError('Invoice line total must equal unit price times quantity in the same currency.');
   }
 }
 
 function sumLines(lines: readonly InvoiceLine[]): MonetaryValue {
   const currency = lines[0]!.total.currency;
   if (lines.some((line) => line.total.currency !== currency)) throw new BillingError('Invoice lines must use one currency.');
-  return { amount: lines.reduce((total, line) => total + line.total.amount, 0), currency };
+  // T-07: deterministic exact minor-unit summation (never float accumulation).
+  return sumMoney(lines.map((line) => line.total));
 }
 
 function cyclePeriod(cycle: BillingPlan['cycle'] | undefined): number {
   return cycle === 'ANNUAL' ? 365 * 86_400_000 : cycle === 'ONE_TIME' ? 0 : 30 * 86_400_000;
 }
 
-function moneyEquals(a: MonetaryValue, b: MonetaryValue): boolean { return a.currency === b.currency && a.amount === b.amount; }
 function assertMoney(value: MonetaryValue): void { if (!Number.isFinite(value.amount) || value.amount < 0 || !value.currency.trim()) throw new BillingError('Monetary value must be non-negative with a currency.'); }
 function assertAdministrator(actor: CommercialActor): void { if (!actor.roles.includes('admin') && !actor.roles.includes('global_admin')) throw new BillingError('Commercial administrator role is required.'); }
 function assertManager(actor: CommercialActor): void { if (!actor.roles.some((role) => ['operator', 'admin', 'global_admin', 'system'].includes(role))) throw new BillingError('Commercial operator role is required.'); }

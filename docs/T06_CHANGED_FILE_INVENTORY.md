@@ -1,7 +1,7 @@
 # T-06 exact changed-file inventory
 
 Branch: `arena/01a07352-jata-qi` · Baseline: `main` @ `258595fb02f5e7ac4c1d1d14f799d43c1f25d06a`
-25 modified files · 11 new files · 0 deletions · 35 files changed, +3,643/−278 (vs canonical `258595fb`)
+24 modified files · 11 new files · 0 deletions · 35 files changed, +3,643/−278 (vs canonical `258595fb`) <!-- F-02: corrected 25 -> 24 (verified `git diff --name-status` counts) in the T-07 documentation step -->
 
 ## Workstream A — production tenant isolation & RLS (storage substrate)
 

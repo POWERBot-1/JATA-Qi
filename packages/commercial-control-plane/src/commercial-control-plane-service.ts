@@ -14,6 +14,7 @@ import { StorageModule } from '@jataqi/storage';
 import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { evaluatePolicy, scopeMatches, selectPolicy } from './policy-engine.js';
 import { assertCampaignTransition, assertProductTransition } from './state-machine.js';
+import { fromMinorUnits, minorUnitsOf, moneyAtLeast, moneyWithin, sumMonetaryAmounts } from './money.js';
 import {
   CommercialControlPlaneEvents,
   type ActionExecutionStatus,
@@ -397,7 +398,9 @@ export class CommercialControlPlaneService {
 
       if (policy?.maximumSingleActionCost && decision.estimatedCost) {
         const limit = policy.maximumSingleActionCost;
-        if (limit.currency !== decision.estimatedCost.currency || decision.estimatedCost.amount > limit.amount) {
+        // T-07: scale-exact comparison (quantized minor units), never raw
+        // float inequality on amounts.
+        if (!moneyWithin(decision.estimatedCost, limit)) {
           outcome = 'DENY';
           reasons.push('Estimated action cost exceeds the matching policy single-action limit.');
         }
@@ -1480,6 +1483,38 @@ export class CommercialControlPlaneService {
     const allActions = (await this.actions.all()).filter((action) => action.tenantId === decision.tenantId);
     const allDecisions = new Map((await this.decisions.all()).map((item) => [item.id, item]));
     return budgets.map((budget) => {
+      if (isMonetaryBudget(budget)) {
+        // T-07 money policy: monetary budgets consume exact minor units so
+        // accumulation of float amounts (0.1 + 0.2) can never drift and the
+        // limit comparison is scale-exact.
+        const requestedMinor = sumMatchingResourceMinorUnits(decision.resourceRequirements, budget);
+        let consumedMinor = 0n;
+        let reservedMinor = 0n;
+        for (const action of allActions) {
+          const actionDecision = allDecisions.get(action.decisionId);
+          if (!actionDecision || !scopeMatches(budget.scope, actionDecision)) continue;
+          if (!withinBudgetPeriod(action.completedAt ?? action.createdAt, budget.period, now)) continue;
+          if (action.executionStatus === 'COMPLETED') {
+            const consumedResources = action.resourceConsumption.length > 0 ? action.resourceConsumption : action.resourceRequirements;
+            consumedMinor += sumMatchingResourceMinorUnits(consumedResources, budget);
+            const hasMatchingMoneyConsumption = consumedResources.some((resource) =>
+              resource.resourceType === 'MONEY' && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency),
+            );
+            if (budget.resourceType === 'MONEY' && action.financialCost && !hasMatchingMoneyConsumption && moneyMatchesBudget(action.financialCost, budget)) {
+              consumedMinor += minorUnitsOf(action.financialCost.amount);
+            }
+          } else if (['QUEUED', 'EXECUTING', 'VERIFYING', 'RETRYING'].includes(action.executionStatus)) {
+            reservedMinor += sumMatchingResourceMinorUnits(action.resourceRequirements, budget);
+          }
+        }
+        const limitMinor = minorUnitsOf(budget.limit);
+        const effectiveRemainingMinor = limitMinor - consumedMinor - reservedMinor < 0n ? 0n : limitMinor - consumedMinor - reservedMinor;
+        const requested = fromMinorUnits(requestedMinor);
+        const consumed = fromMinorUnits(consumedMinor);
+        const reserved = fromMinorUnits(reservedMinor);
+        const remaining = fromMinorUnits(effectiveRemainingMinor);
+        return { budgetId: budget.id, allowed: requestedMinor <= effectiveRemainingMinor, limit: fromMinorUnits(limitMinor), consumed, reserved, requested, remaining, currency: budget.currency ?? '' };
+      }
       const requested = sumMatchingResources(decision.resourceRequirements, budget);
       let consumed = 0;
       let reserved = 0;
@@ -1490,12 +1525,6 @@ export class CommercialControlPlaneService {
         if (action.executionStatus === 'COMPLETED') {
           const consumedResources = action.resourceConsumption.length > 0 ? action.resourceConsumption : action.resourceRequirements;
           consumed += sumMatchingResources(consumedResources, budget);
-          const hasMatchingMoneyConsumption = consumedResources.some((resource) =>
-            resource.resourceType === 'MONEY' && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency),
-          );
-          if (budget.resourceType === 'MONEY' && action.financialCost && !hasMatchingMoneyConsumption && moneyMatchesBudget(action.financialCost, budget)) {
-            consumed += action.financialCost.amount;
-          }
         } else if (['QUEUED', 'EXECUTING', 'VERIFYING', 'RETRYING'].includes(action.executionStatus)) {
           reserved += sumMatchingResources(action.resourceRequirements, budget);
         }
@@ -1886,6 +1915,22 @@ function assertScopeAdministration(actor: CommercialActor, scope: CommercialScop
   if (scope.tenantId !== undefined) assertSameTenant(actor, scope.tenantId);
 }
 
+/** A budget denominated in money (explicit MONEY type or any currency-bearing budget). */
+function isMonetaryBudget(budget: CommercialBudget): boolean {
+  return budget.resourceType === 'MONEY' || budget.currency !== undefined;
+}
+
+/** T-07: exact minor-unit sum of the resources matching a monetary budget. */
+function sumMatchingResourceMinorUnits(resources: readonly ResourceRequirement[], budget: CommercialBudget): bigint {
+  let minor = 0n;
+  for (const resource of resources) {
+    if (resource.resourceType === budget.resourceType && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency)) {
+      minor += minorUnitsOf(resource.amount);
+    }
+  }
+  return minor;
+}
+
 function sumMatchingResources(resources: readonly ResourceRequirement[], budget: CommercialBudget): number {
   return resources
     .filter((resource) => resource.resourceType === budget.resourceType && resource.unit === budget.unit && (budget.currency === undefined || resource.currency === budget.currency))
@@ -1896,6 +1941,16 @@ function moneyMatchesBudget(value: MonetaryValue, budget: CommercialBudget): boo
   return budget.resourceType === 'MONEY' && (budget.currency === undefined || budget.currency === value.currency);
 }
 
+/** T-07: deterministic money math on experiment cost limits (AC-5/I-4). */
+function experimentMoneyConsumptionExceeded(cost: readonly ResourceRequirement[], maximum: MonetaryValue): boolean {
+  const money = sumMonetaryAmounts(
+    cost
+      .filter((item) => item.resourceType === 'MONEY' && item.currency === maximum.currency)
+      .map((item) => item.amount),
+  );
+  return moneyAtLeast({ amount: money, currency: maximum.currency }, maximum);
+}
+
 function withinBudgetPeriod(timestamp: number, period: CommercialBudget['period'], now: number): boolean {
   if (period === 'LIFETIME' || period === 'EXPERIMENT') return true;
   const duration = period === 'DAILY' ? 86_400_000 : period === 'WEEKLY' ? 604_800_000 : 2_592_000_000;
@@ -1904,10 +1959,7 @@ function withinBudgetPeriod(timestamp: number, period: CommercialBudget['period'
 
 function experimentBudgetExceeded(budget: CommercialExperiment['budget'], cost: readonly ResourceRequirement[], startedAt: number | undefined, now: number): boolean {
   if (startedAt !== undefined && now - startedAt >= budget.maximumDurationMs) return true;
-  const money = budget.maximumMonetaryCost
-    ? cost.filter((item) => item.resourceType === 'MONEY' && item.currency === budget.maximumMonetaryCost!.currency).reduce((sum, item) => sum + item.amount, 0)
-    : 0;
-  if (budget.maximumMonetaryCost && money >= budget.maximumMonetaryCost.amount) return true;
+  if (budget.maximumMonetaryCost && experimentMoneyConsumptionExceeded(cost, budget.maximumMonetaryCost)) return true;
   const compute = cost.filter((item) => item.resourceType === 'COMPUTE').reduce((sum, item) => sum + item.amount, 0);
   if (budget.maximumComputeCost !== undefined && compute >= budget.maximumComputeCost) return true;
   const api = cost.filter((item) => item.resourceType === 'API_CALLS').reduce((sum, item) => sum + item.amount, 0);
