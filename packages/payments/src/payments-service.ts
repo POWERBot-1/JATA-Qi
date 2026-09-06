@@ -156,16 +156,30 @@ export class PaymentsService {
     let reserved = payment;
     if (!payment.createActionId) {
       const processing = await this.casTransition(payment, ['DRAFT', 'FAILED', 'REQUIRES_ACTION'], { status: 'PROCESSING' });
-      action = await this.runtime.plan(actor, decision.id, {
-        targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
-        rollbackStrategy: provider.rollback ? 'provider-managed payment rollback' : undefined,
-        parameters: { paymentId: payment.id, operation: 'CREATE_PAYMENT' as PaymentOperation },
-        resourceRequirements: [{ resourceType: 'MONEY', amount: processing.amount.amount, unit: processing.amount.currency, currency: processing.amount.currency }],
-      });
+      // T-07 B-1: `runtime.plan` REJECTS on a plan-time refusal — a control-plane
+      // DENY (kill switch, policy, budget), a simulation-only policy under
+      // `dryRun:false`, a missing adapter. It does not return a falsy action, so
+      // a `!action` guard alone can never observe those paths. Without this
+      // try/catch the throw escapes past the reservation above and strands the
+      // payment in PROCESSING, which no entry point accepts as a start state:
+      // the payment deadlocks permanently. Release the reservation on EVERY
+      // planning failure and rethrow the original error unchanged, so the
+      // caller still sees the authoritative fail-closed refusal.
+      try {
+        action = await this.runtime.plan(actor, decision.id, {
+          targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
+          rollbackStrategy: provider.rollback ? 'provider-managed payment rollback' : undefined,
+          parameters: { paymentId: payment.id, operation: 'CREATE_PAYMENT' as PaymentOperation },
+          resourceRequirements: [{ resourceType: 'MONEY', amount: processing.amount.amount, unit: processing.amount.currency, currency: processing.amount.currency }],
+        });
+      } catch (error) {
+        await this.releaseReservation(processing, 'PROCESSING', { status: payment.status });
+        throw error;
+      }
       if (!action) {
-        // Roll the reservation back so a planning failure leaves the payment
-        // exactly where it was (DRAFT/FAILED/REQUIRES_ACTION).
-        await this.casTransition(processing, ['PROCESSING'], { status: payment.status }).catch(() => undefined);
+        // Defensive: a falsy plan result leaves the payment exactly where it
+        // was (DRAFT/FAILED/REQUIRES_ACTION) — same release path as a throw.
+        await this.releaseReservation(processing, 'PROCESSING', { status: payment.status });
         throw new PaymentError('Payment action could not be planned.');
       }
       reserved = await this.update(processing, { createActionId: action.id });
@@ -245,15 +259,26 @@ export class PaymentsService {
     // reservation wins; the loser fails closed here — before any action is
     // planned and before any provider call can happen.
     const queued = await this.casTransition(payment, ['VERIFIED'], { refundAmount: copy(amount), status: 'REFUND_PROCESSING' });
-    const action = await this.runtime.plan(actor, decision.id, {
-      targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
-      rollbackStrategy: provider.rollback ? 'provider-managed refund rollback' : undefined,
-      parameters: { paymentId: payment.id, operation: 'REFUND_PAYMENT' as PaymentOperation, reason: input.reason },
-      resourceRequirements: [{ resourceType: 'MONEY', amount: amount.amount, unit: amount.currency, currency: amount.currency }],
-    });
+    // T-07 B-1: identical hazard on the refund path. A plan-time DENY here
+    // strands the payment in REFUND_PROCESSING — `requestRefund` requires
+    // VERIFIED and `verifyRefund` requires REFUND_UNVERIFIED, so neither can
+    // ever pick it up again and the refund deadlocks. Release the reservation
+    // back to VERIFIED (restoring the prior refundAmount) and rethrow.
+    let action;
+    try {
+      action = await this.runtime.plan(actor, decision.id, {
+        targetSystem: targetSystem(provider.id), idempotencyKey: input.idempotencyKey, dryRun: input.dryRun,
+        rollbackStrategy: provider.rollback ? 'provider-managed refund rollback' : undefined,
+        parameters: { paymentId: payment.id, operation: 'REFUND_PAYMENT' as PaymentOperation, reason: input.reason },
+        resourceRequirements: [{ resourceType: 'MONEY', amount: amount.amount, unit: amount.currency, currency: amount.currency }],
+      });
+    } catch (error) {
+      await this.releaseReservation(queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
+      throw error;
+    }
     if (!action) {
-      // Planning failure: release the reservation back to VERIFIED.
-      await this.casTransition(queued, ['REFUND_PROCESSING'], { status: 'VERIFIED' }).catch(() => undefined);
+      // Defensive: falsy plan result releases the reservation identically.
+      await this.releaseReservation(queued, 'REFUND_PROCESSING', { status: 'VERIFIED', refundAmount: payment.refundAmount });
       throw new PaymentError('Refund action could not be planned.');
     }
     const reserved = await this.update(queued, { refundActionId: action.id });
@@ -393,6 +418,20 @@ export class PaymentsService {
     );
     if (!result.ok) return undefined;
     return copy(result.doc);
+  }
+
+  /**
+   * T-07 B-1: release a planning reservation taken before `runtime.plan`.
+   *
+   * Best-effort by design. The reservation is released only while the payment
+   * is still in the reserved status, so a concurrent winner that has already
+   * advanced the row is never overwritten — the CAS simply finds no match and
+   * this returns without a write. Any failure is swallowed deliberately: the
+   * caller is already unwinding an authoritative planning refusal and MUST
+   * surface that original error rather than a secondary rollback error.
+   */
+  private async releaseReservation(reserved: PaymentIntent, reservedStatus: string, restore: Partial<PaymentIntent>): Promise<void> {
+    await this.casTransition(reserved, [reservedStatus], restore).catch(() => undefined);
   }
 
   /** Standalone (non-composed) CAS transition for reservation entry points. */
