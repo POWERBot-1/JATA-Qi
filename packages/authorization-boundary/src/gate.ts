@@ -49,6 +49,13 @@ export interface A01GateConfig {
   readonly audit?: A01AuditSink;
   readonly engine?: A01PolicyEngine;
   readonly policyVersion?: string;
+  /**
+   * R1/D2: verifier for kernel-internal service principals (see
+   * `KernelInternalIdentity`). Supplied by the composition root. When absent,
+   * NO principal is ever treated as a verified kernel worker — the default is
+   * strictly the stricter behaviour.
+   */
+  readonly verifyKernelPrincipal?: (principal: unknown, scope: string) => boolean;
 }
 
 export interface ScopedExecutionContext {
@@ -68,6 +75,7 @@ export class AuthorizationGate {
   private readonly engine: A01PolicyEngine | undefined;
   private readonly audit: A01AuditSink;
   private readonly policyVersion: string;
+  private readonly verifyKernelPrincipal: ((principal: unknown, scope: string) => boolean) | undefined;
   private auditAvailable: boolean;
 
   private readonly consumedEnvelopes = new Set<string>();
@@ -87,6 +95,7 @@ export class AuthorizationGate {
     this.broker = config.broker;
     this.engine = config.engine;
     this.policyVersion = config.policyVersion ?? A01_DEFAULT_POLICY_VERSION;
+    this.verifyKernelPrincipal = config.verifyKernelPrincipal;
     this.audit = config.audit ?? new InMemoryAuditSink();
     // Audit availability is probed lazily per record; a throwing sink turns
     // ALLOW decisions into fail-closed DENYs (AUDIT_UNAVAILABLE).
@@ -147,6 +156,7 @@ export class AuthorizationGate {
       engine: this.engine,
       policyVersion: this.policyVersion,
       rateWindowUsage: usageProbe,
+      ...(this.verifyKernelPrincipal ? { verifyKernelPrincipal: this.verifyKernelPrincipal } : {}),
     };
     const outcome = decideA01(maybeRequest, context);
     const { decision, provenance, credential, manifest } = outcome;

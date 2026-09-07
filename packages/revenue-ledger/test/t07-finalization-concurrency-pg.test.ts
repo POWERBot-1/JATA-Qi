@@ -30,6 +30,12 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
+// R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
+// AuthorizationBoundaryModule — the same module the production composition
+// installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
+// worker operations establish scoped KERNEL_INTERNAL authority through the
+// real boundary; anything out of scope is still denied.
+import { AuthorizationBoundaryModule, testCapabilityManifest, testPrincipal } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule, type ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
 import { CommercialControlPlaneModule, type CommercialActor, type CommercialControlPlaneService, type CommercialEvidence, type PublishCommercialEventInput } from '@jataqi/commercial-control-plane';
 import { CommercialEventStreamModule, type CommercialEventStreamService } from '@jataqi/commercial-event-stream';
@@ -101,6 +107,8 @@ interface Node {
   billing: BillingService;
   ledger: RevenueLedgerService;
   providerRefundCalls: () => number;
+  /** R1: legitimate, narrowly-scoped authorization for direct runtime drives. */
+  authorization: { principal: ReturnType<typeof testPrincipal>; capabilityId: string; capabilityVersion: string };
   close(): Promise<void>;
 }
 
@@ -110,6 +118,7 @@ async function bootNode(): Promise<Node> {
   const kernel = createTestKernel();
   kernel.register(new StorageModule({ driverInstance: driver }));
   kernel.register(new CommercialControlPlaneModule());
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
   kernel.register(new CommercialEventStreamModule({ workerId: 't07-worker', wakeOnPublish: true }));
@@ -136,6 +145,32 @@ async function bootNode(): Promise<Node> {
     billing: kernel.getModule<BillingModule>('billing').getService(),
     ledger: kernel.getModule<RevenueLedgerModule>('revenue-ledger').getService(),
     providerRefundCalls: () => refundCalls,
+    // R1 (§6): LEGITIMATE authorization for tests that drive the action
+    // runtime directly. A narrow REAL manifest bound to the payments adapter
+    // identity plus a verified principal — no mock, no bypass. Anything
+    // outside this scope is still denied by the real decision point.
+    authorization: (() => {
+      const gate = kernel.getModule<AuthorizationBoundaryModule>('authorization-boundary').getService();
+      gate.manifestsRegistry.register(
+        testCapabilityManifest({
+          capabilityId: 't07.payments.direct',
+          operations: [
+            { tool: 'payment:t07-sandbox-provider', operation: PaymentCreateActionType },
+            { tool: 'payment:t07-sandbox-provider', operation: PaymentRefundActionType },
+          ],
+          targets: [{ system: 'payment:t07-sandbox-provider' }],
+          tenantScopes: ['acme'],
+          maxImpact: 'EXTERNAL_SIDE_EFFECT',
+          rateLimit: { windowMs: 60_000, max: 100_000 },
+          budgetPerRunCostUnits: 100_000,
+        }),
+      );
+      return {
+        principal: testPrincipal({ id: 'user:operator', tenantId: 'acme', roles: ['operator'] }),
+        capabilityId: 't07.payments.direct',
+        capabilityVersion: '1',
+      };
+    })(),
     async close() {
       await kernel.shutdown().catch(() => undefined);
       await driver.close().catch(() => undefined);
@@ -304,7 +339,7 @@ describe('T-07 finalization concurrency + money math integrity over real Postgre
       assert.equal((await node.payments.getPayment(operator, paymentId))?.status, 'REFUNDED');
       // Execute the STALE action afterwards: the execution-time precondition
       // must refuse it BEFORE any provider invocation.
-      const execution = await node.runtime.execute(operator, staleAction.id, { maxAttempts: 3, timeoutMs: 60_000 });
+      const execution = await node.runtime.execute(operator, staleAction.id, { maxAttempts: 3, timeoutMs: 60_000, authorization: node.authorization });
       assert.equal(execution.action.executionStatus, 'FAILED', 'stale action fails closed at execute time');
       assert.match(execution.action.error ?? '', /no longer authorizes provider execution/);
       assert.equal(node.providerRefundCalls(), 1, 'no second provider refund call from the stale action (AC-3/I-2)');

@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/unified-loop",
   "version": "0.1.0",
-  "description": "JATA Qi C-1 native unified cognitive/execution loop — deterministic in-repo governed orchestrator over the existing capability fabric (not a new intelligence engine)",
+  "description": "JATA Qi C-1 native unified cognitive/execution loop \u2014 deterministic in-repo governed orchestrator over the existing capability fabric (not a new intelligence engine)",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -24,6 +24,7 @@
   "license": "MIT",
   "dependencies": {
     "@jataqi/authentication": "0.1.0",
+    "@jataqi/authorization-boundary": "0.1.0",
     "@jataqi/autonomous-action-runtime": "0.1.0",
     "@jataqi/capability-fabric": "0.1.0",
     "@jataqi/causal-engine": "0.1.0",

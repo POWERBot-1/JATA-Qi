@@ -34,6 +34,12 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
+// R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
+// AuthorizationBoundaryModule — the same module the production composition
+// installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
+// worker operations establish scoped KERNEL_INTERNAL authority through the
+// real boundary; anything out of scope is still denied.
+import { AuthorizationBoundaryModule } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
 import {
   CommercialControlPlaneModule,
@@ -130,6 +136,7 @@ async function bootNode(options: { wakeOnPublish: boolean }): Promise<Node> {
   const kernel = createTestKernel();
   kernel.register(new StorageModule({ driverInstance: driver }));
   kernel.register(new CommercialControlPlaneModule({ now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
   kernel.register(new CommercialEventStreamModule({ now, workerId: 'chain-worker', wakeOnPublish: options.wakeOnPublish }));

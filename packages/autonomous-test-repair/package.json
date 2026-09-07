@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/autonomous-test-repair",
   "version": "0.1.0",
-  "description": "JATA Qi autonomous test/repair loop — governed test execution, diagnosis, proposal, and verification lifecycle",
+  "description": "JATA Qi autonomous test/repair loop \u2014 governed test execution, diagnosis, proposal, and verification lifecycle",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -17,9 +17,13 @@
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@jataqi/authorization-boundary": "0.1.0",
     "@jataqi/autonomous-action-runtime": "0.1.0",
     "@jataqi/commercial-control-plane": "0.1.0",
     "@jataqi/core-kernel": "0.1.0",

@@ -2,6 +2,40 @@ import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
+// R1 (§6 TEST KERNEL REPAIR): the REAL A-01 boundary, not a mock or bypass.
+import {
+  AuthorizationBoundaryModule,
+  AuthorizationBoundaryModule as _ABM,
+  testCapabilityManifest,
+  testPrincipal,
+} from '@jataqi/authorization-boundary';
+
+/**
+ * R1 (§6): LEGITIMATE authorization for this suite. A narrow real manifest is
+ * registered on the REAL gate and a well-formed verified principal is passed
+ * with each execution. Nothing is mocked or bypassed: an out-of-scope call is
+ * still denied by the real decision point.
+ */
+const AUTHORIZED = {
+  principal: testPrincipal({ id: 'user:alice', tenantId: 'acme', roles: ['operator'] }),
+  capabilityId: 'action.runtime.suite',
+  capabilityVersion: '1',
+} as const;
+
+function grantSuiteCapability(k: ReturnType<typeof createTestKernel>): void {
+  const gate = k.getModule<AuthorizationBoundaryModule>('authorization-boundary').getService();
+  if (gate.manifestsRegistry.get('action.runtime.suite', '1')) return;
+  gate.manifestsRegistry.register(
+    testCapabilityManifest({
+      capabilityId: 'action.runtime.suite',
+      operations: [{ tool: 'sandbox-adapter', operation: 'PUBLISH_CONTENT' }],
+      targets: [{ system: 'sandbox-provider' }],
+      tenantScopes: ['acme'],
+      rateLimit: { windowMs: 60_000, max: 100_000 },
+      budgetPerRunCostUnits: 100_000,
+    }),
+  );
+}
 import {
   CommercialControlPlaneModule,
   type CommercialActor,
@@ -72,8 +106,10 @@ beforeEach(async () => {
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   await kernel.boot();
+  grantSuiteCapability(kernel);
 
   control = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
   await control.createPolicy(admin, {
@@ -131,7 +167,7 @@ describe('Autonomous Action Runtime', () => {
       dryRun: false,
       rollbackStrategy: 'remove the sandbox publication',
     });
-    const executed = await runtime.execute(operator, planned.id);
+    const executed = await runtime.execute(operator, planned.id, { authorization: AUTHORIZED });
     assert.equal(executed.executedExternally, true);
     assert.equal(executed.action.executionStatus, 'VERIFYING');
 
@@ -159,7 +195,7 @@ describe('Autonomous Action Runtime', () => {
       idempotencyKey: 'dry-run-1',
     });
     assert.equal(planned.dryRun, true);
-    const executed = await runtime.execute(operator, planned.id);
+    const executed = await runtime.execute(operator, planned.id, { authorization: AUTHORIZED });
     assert.equal(calls, 0);
     assert.equal(executed.executedExternally, false);
     assert.equal(executed.action.executionStatus, 'VERIFYING');
@@ -181,7 +217,7 @@ describe('Autonomous Action Runtime', () => {
       idempotencyKey: 'retry-1',
       dryRun: false,
     });
-    const executed = await runtime.execute(operator, planned.id, { maxAttempts: 5 });
+    const executed = await runtime.execute(operator, planned.id, { maxAttempts: 5, authorization: AUTHORIZED });
     assert.equal(calls, 2);
     assert.equal(executed.attempts, 2);
     assert.equal(executed.action.executionStatus, 'FAILED');
@@ -206,7 +242,7 @@ describe('Autonomous Action Runtime', () => {
       idempotencyKey: 'timeout-1',
       dryRun: false,
     });
-    const executed = await runtime.execute(operator, planned.id, { timeoutMs: 5 });
+    const executed = await runtime.execute(operator, planned.id, { timeoutMs: 5, authorization: AUTHORIZED });
     assert.equal(executed.action.executionStatus, 'FAILED');
     assert.match(executed.action.error ?? '', /timed out/);
     assert.equal(await runtime.getAction(otherTenant, planned.id), undefined);

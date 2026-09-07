@@ -9,6 +9,8 @@ import {
   type CommercialControlPlaneService,
   type CommercialEvidence,
 } from '@jataqi/commercial-control-plane';
+// R1 (§6): the REAL A-01 boundary, not a mock or a bypass.
+import { AuthorizationBoundaryModule, testCapabilityManifest, testPrincipal } from '@jataqi/authorization-boundary';
 import { ExternalConnectorModule, type ExternalConnector, type ExternalConnectorRegistry } from '@jataqi/external-connectors';
 import { UniversalVisibilityFabricModule, type UniversalVisibilityFabricService } from '@jataqi/universal-visibility-fabric';
 import {
@@ -37,7 +39,9 @@ function evidence(id = 'distribution-evidence', status: CommercialEvidence['stat
 
 function connector(counters: Record<string, number>): ExternalConnector {
   return {
-    id: 'social-connector', providerId: 'sandbox-social', providerType: 'social', targetSystem: 'sandbox-social-api', environment: 'sandbox',
+    // R1 (§6 REPAIR): declare the capability binding the mandatory boundary
+    // requires. This is the legitimate fix, not a bypass.
+    id: 'social-connector', capabilityId: 'connector.social', capabilityVersion: '1', providerId: 'sandbox-social', providerType: 'social', targetSystem: 'sandbox-social-api', environment: 'sandbox',
     supportedActions: [DistributionPublishActionType], authenticationMethod: 'oauth', requiredPermissions: ['publish'],
     rollbackSupport: true, webhookSupport: true, sandboxSupport: true, productionSupport: false,
     async health() { counters.health = (counters.health ?? 0) + 1; return { health: 'HEALTHY', observedAt: now }; },
@@ -57,6 +61,7 @@ beforeEach(async () => {
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
   kernel.register(new UniversalVisibilityFabricModule());

@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/authorization-boundary",
   "version": "0.1.0",
-  "description": "JATA Qi A-01 — the single authoritative fail-closed authorization boundary: sealed tamper-resistant authorization envelopes, explicit capability manifests, a policy decision point, a credential broker with fail-closed semantics, replay protection, exact approval/action binding, budget/rate enforcement, durable privacy-safe provenance, and enforced checkpoints for agent-initiated externally consequential invocations",
+  "description": "JATA Qi A-01 \u2014 the single authoritative fail-closed authorization boundary: sealed tamper-resistant authorization envelopes, explicit capability manifests, a policy decision point, a credential broker with fail-closed semantics, replay protection, exact approval/action binding, budget/rate enforcement, durable privacy-safe provenance, and enforced checkpoints for agent-initiated externally consequential invocations",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -17,7 +17,10 @@
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
     "@jataqi/authentication": "0.1.0",
@@ -26,7 +29,7 @@
     "@jataqi/storage": "0.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
   }
 }

@@ -293,18 +293,21 @@ describe('A-01 external-connectors: bound connector execution is boundary-enforc
     await b.kernel.shutdown();
   });
 
-  it('legacy composition without the boundary: an unbound connector registers and executes with no A-01 context', async () => {
+  // R1 (CF-1 REPAIR): this case previously asserted that a composition
+  // WITHOUT the boundary let an UNBOUND connector register, activate and
+  // execute. That was the defect. INVARIANT M now holds instead: no boundary
+  // -> no capability binding -> no connector execution.
+  it('R1 INVARIANT M — without the boundary a connector cannot even register, and provider code is unreachable', async () => {
     const b = await boot(false);
-    assert.equal(b.connectors.getAuthorizationGate(), undefined, 'no boundary installed');
+    assert.equal(b.connectors.getAuthorizationGate(), undefined, 'precondition: no boundary installed');
     const { connector, calls } = fakeConnector(); // no capabilityId
-    const registration = await b.connectors.register(admin, connector);
-    assert.equal(registration.health, 'DISABLED');
-    await b.connectors.activate(admin, registration.id);
-    const planned = await planPublish(b, 'a01-conn-legacy');
-    const executed = await b.runtime.execute(operator, planned.id);
-    assert.equal(executed.executedExternally, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.authorization, undefined, 'legacy path carries no A-01 context');
+    await assert.rejects(
+      () => b.connectors.register(admin, connector),
+      /AUTHORIZATION_BOUNDARY_ABSENT/,
+      'registration must fail closed without an authoritative boundary',
+    );
+    assert.equal(b.connectors.list(admin).length, 0, 'no registration exists');
+    assert.equal(calls.length, 0, 'INVARIANT I: provider code must never be reached');
     await b.kernel.shutdown();
   });
 });

@@ -93,7 +93,12 @@ export class Agent {
     this.maxIterations = cfg.maxIterations ?? 8;
     this.gate = cfg.authorizationGate;
     this.resolveGate = cfg.authorizationGate ? undefined : cfg.resolveAuthorizationGate;
-    this.tools = new ToolRegistry({ authorizationGate: cfg.authorizationGate });
+    // R1: the registry inherits the same lazily-resolved authoritative
+    // boundary. If none resolves, the registry DENIES every call.
+    this.tools = new ToolRegistry({
+      ...(cfg.authorizationGate ? { authorizationGate: cfg.authorizationGate } : {}),
+      ...(cfg.authorizationGate ? {} : cfg.resolveAuthorizationGate ? { resolveAuthorizationGate: cfg.resolveAuthorizationGate } : {}),
+    });
     for (const t of cfg.tools ?? []) this.tools.register(t);
     this.systemPrompt =
       cfg.systemPrompt ??
@@ -169,7 +174,15 @@ export class Agent {
       budgetCostUnits: auth?.budgetCostUnits ?? 1,
       provenance: { source: `agent:${this.name}` },
     };
-    return this.gate!.decide(request);
+    // R1 INVARIANT B: no boundary -> no envelope can be rendered. The caller
+    // proceeds with NO envelope and the registry denies the call; the tool is
+    // never executed.
+    if (!this.gate) {
+      throw new Error(
+        'Agent: no authoritative A-01 authorization boundary is installed; the tool call is denied (fail-closed).',
+      );
+    }
+    return this.gate.decide(request);
   }
 
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
@@ -228,14 +241,15 @@ export class Agent {
           // A-01: with a gate installed, every model-requested call is first
           // rendered into a sealed envelope (default deny) and the call
           // carries it; the registry enforces it before the tool executes.
+          ctx.authorization = undefined;
           if (this.gate) {
             const tool = this.tools.get(tc.name);
             if (tool) {
               ctx.authorization = { envelope: this.renderToolEnvelope(tool, tc.input, opts, runId) };
-            } else {
-              ctx.authorization = undefined;
             }
           }
+          // With no boundary, ctx.authorization stays undefined AND the
+          // registry itself denies: two independent fail-closed checks.
           const res = await this.tools.call(tc.name, tc.input, ctx);
           toolCalls.push(res);
           messages.push({

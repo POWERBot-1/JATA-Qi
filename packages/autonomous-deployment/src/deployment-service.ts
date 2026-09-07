@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority, type KernelWorkerAuthorization } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -40,7 +41,12 @@ export class DeploymentService {
   private readonly adapterIds = new Map<string, string>();
   private readonly verificationResults = new Map<string, DeploymentVerificationResult>();
 
+  /** R1/D2: verified, scoped kernel-internal worker authority (per adapter). */
+  private readonly workerAuthority = new Map<string, KernelWorkerAuthorization>();
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.deployments = await kernel.getModule<StorageModule>('storage').collection<DeploymentRecord>(DEPLOYMENTS_COLLECTION);
     this.runtime = runtime;
   }
@@ -71,6 +77,15 @@ export class DeploymentService {
       rollback: adapter.rollback ? (context) => adapter.rollback!(context) : undefined,
     };
     this.runtime.registerAdapter(runtimeAdapter);
+    // R1/D2: NARROW kernel-internal authority bound to exactly this adapter,
+    // these action types and this target system. No wildcard operation/tool.
+    const workerAuth = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.deployment.${adapter.id}`,
+      tool: runtimeAdapter.id,
+      operations: [DeploymentActionType],
+      targets: [{ system: targetSystem(adapter.id) }],
+    });
+    if (workerAuth) this.workerAuthority.set(adapter.id, workerAuth);
     this.adapters.set(adapter.id, adapter);
     this.adapterIds.set(adapter.id, runtimeAdapter.id);
     return adapterMetadata(adapter, actor.tenantId);
@@ -129,7 +144,7 @@ export class DeploymentService {
 
     const running: DeploymentRecord = { ...deployment, actionId: action.id, state: 'DEPLOYING', attemptCount: action.attemptCount, updatedAt: Date.now() };
     await this.deployments.put(running);
-    const result = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(adapter.maxAttempts), timeoutMs: adapter.defaultTimeoutMs });
+    const result = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(adapter.maxAttempts), timeoutMs: adapter.defaultTimeoutMs, ...(this.workerAuthority.has(adapter.id) ? { authorization: this.workerAuthority.get(adapter.id)! } : {}) });
     const state = deploymentStateFromAction(result.action.executionStatus);
     const updated: DeploymentRecord = {
       ...running, state, attemptCount: result.action.attemptCount, failureReason: result.action.error,

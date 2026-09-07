@@ -8,6 +8,12 @@ import { VectorSearchModule } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { CommercialControlPlaneModule, type CommercialActor, type CommercialEvidence } from '@jataqi/commercial-control-plane';
+// R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
+// AuthorizationBoundaryModule — the same module the production composition
+// installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
+// worker operations establish scoped KERNEL_INTERNAL authority through the
+// real boundary; anything out of scope is still denied.
+import { AuthorizationBoundaryModule } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule, type ActionExecutionAdapter } from '@jataqi/autonomous-action-runtime';
 import { ExternalConnectorModule } from '@jataqi/external-connectors';
 import { InfrastructureStateRegistryModule } from '@jataqi/infrastructure-state-registry';
@@ -67,6 +73,7 @@ export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> 
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
   kernel.register(new InfrastructureStateRegistryModule());

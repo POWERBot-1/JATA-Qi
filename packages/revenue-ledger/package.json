@@ -31,10 +31,11 @@
     "@jataqi/storage": "0.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.0",
+    "@jataqi/authorization-boundary": "0.1.0",
     "@jataqi/autonomous-action-runtime": "0.1.0",
     "@jataqi/storage-postgres": "0.1.0",
-    "embedded-postgres": "^18.4.0-beta.17"
+    "@types/node": "^20.11.0",
+    "embedded-postgres": "^18.4.0-beta.17",
+    "typescript": "^5.4.0"
   }
 }

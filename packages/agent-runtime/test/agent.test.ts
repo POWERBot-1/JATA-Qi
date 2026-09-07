@@ -15,6 +15,14 @@ import {
   knowledgeSearchTool,
 } from '../src/index.js';
 import type { Kernel } from '@jataqi/core-kernel';
+// R1 (§6): legitimate tests construct LEGITIMATE authorization through the
+// REAL boundary. Nothing here mocks, disables, or bypasses A-01.
+import {
+  agentAuthorization,
+  authorizedContext,
+  authorizedGate,
+  declareTool,
+} from './r1-authorized-fixture.js';
 
 function bootKernel() {
   const k = createTestKernel({ configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } } });
@@ -28,22 +36,24 @@ function bootKernel() {
 
 describe('ToolRegistry', () => {
   it('registers, lists, validates, and calls tools', async () => {
-    const r = new ToolRegistry();
-    r.register({
+    const gate = authorizedGate(['add']);
+    const r = new ToolRegistry({ authorizationGate: gate });
+    r.register(declareTool({
       name: 'add',
       description: 'add two numbers',
       inputSchema: { type: 'object', properties: { a: { type: 'number' }, b: { type: 'number' } }, required: ['a', 'b'] },
       async execute(input: any) { return input.a + input.b; },
-    });
+    }));
     assert.equal(r.has('add'), true);
     assert.equal(r.list().length, 1);
-    const res = await r.call('add', { a: 2, b: 3 }, { runId: 'r', logger: { info() {}, debug() {}, error() {} }, metadata: {} });
+    const res = await r.call('add', { a: 2, b: 3 }, authorizedContext(gate, 'add'));
     assert.equal(res.output, 5);
     assert.equal(res.error, undefined);
-    // Missing required field returns error.
-    const bad = await r.call('add', { a: 1 }, { runId: 'r', logger: { info() {}, debug() {}, error() {} }, metadata: {} });
+    // Missing required field returns error — with legitimate authorization,
+    // so the failure is schema validation and not a denial.
+    const bad = await r.call('add', { a: 1 }, authorizedContext(gate, 'add'));
     assert.ok(bad.error);
-    assert.rejects(() => r.call('missing', {}, { runId: 'r', logger: { info() {}, debug() {}, error() {} }, metadata: {} }));
+    assert.rejects(() => r.call('missing', {}, authorizedContext(gate, 'add')));
   });
 
   it('prevents duplicate registrations', () => {
@@ -56,8 +66,8 @@ describe('ToolRegistry', () => {
 
 describe('Agent', () => {
   it('returns an immediate answer when the LLM returns no tool calls', async () => {
-    const agent = new Agent({ llm: new EchoLLM(), tools: [] });
-    const res = await agent.run({ message: 'hello' });
+    const agent = new Agent({ llm: new EchoLLM(), tools: [], authorizationGate: authorizedGate([]) });
+    const res = await agent.run({ message: 'hello', authorization: agentAuthorization() });
     assert.ok(res.answer.includes('Echo: hello'));
     assert.equal(res.finishedReason, 'answer');
     assert.equal(res.iterations, 1);
@@ -71,14 +81,15 @@ describe('Agent', () => {
     ]);
     const agent = new Agent({
       llm,
-      tools: [{
+      authorizationGate: authorizedGate(['echo']),
+      tools: [declareTool({
         name: 'echo',
         description: 'echo input',
         inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
         async execute(input: any) { return { echo: input.text }; },
-      }],
+      })],
     });
-    const res = await agent.run({ message: 'please echo hi' });
+    const res = await agent.run({ message: 'please echo hi', authorization: agentAuthorization() });
     assert.equal(res.finishedReason, 'answer');
     assert.ok(res.answer.includes('final answer'));
     assert.equal(res.toolCalls.length, 1);
@@ -93,12 +104,13 @@ describe('Agent', () => {
     const agent = new Agent({
       llm,
       maxIterations: 3,
-      tools: [{
+      authorizationGate: authorizedGate(['ping']),
+      tools: [declareTool({
         name: 'ping', description: 'ping', inputSchema: { type: 'object', properties: {} },
         async execute() { return 'pong'; },
-      }],
+      })],
     });
-    const res = await agent.run({ message: 'ping forever' });
+    const res = await agent.run({ message: 'ping forever', authorization: agentAuthorization() });
     assert.equal(res.finishedReason, 'max_iterations');
     assert.equal(res.iterations, 3);
   });
@@ -109,7 +121,8 @@ describe('Agent', () => {
     const agent = new Agent({
       llm,
       maxIterations: 5,
-      tools: [{
+      authorizationGate: authorizedGate(['wait']),
+      tools: [declareTool({
         name: 'wait', description: '', inputSchema: { type: 'object', properties: {} },
         async execute(_i, ctx) {
           return new Promise((resolve) => {
@@ -117,10 +130,10 @@ describe('Agent', () => {
             ctx.signal?.addEventListener('abort', () => { clearTimeout(t); resolve('cancelled'); });
           });
         },
-      }],
+      })],
     });
     setTimeout(() => controller.abort(), 50);
-    const res = await agent.run({ message: 'go', signal: controller.signal, maxIterations: 5 });
+    const res = await agent.run({ message: 'go', signal: controller.signal, maxIterations: 5, authorization: agentAuthorization() });
     assert.equal(res.finishedReason, 'cancelled');
   });
 });

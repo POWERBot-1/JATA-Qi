@@ -4,6 +4,7 @@
 // live kernel (tenant-bound, lifecycle-managed) and returns typed records.
 
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority } from '@jataqi/authorization-boundary';
 import type {
   CommercialActor,
   CommercialEvidence,
@@ -793,7 +794,25 @@ export function buildDefaultCapabilities(): GovernedCapability[] {
         boundaryHeld: true,
       };
     }
-    const result = await svc.runtime.execute(ctx.actor, ctx.state.actionId, { maxAttempts: 2, timeoutMs: 2_000 });
+    // R1/D2: NARROW kernel-internal worker authority scoped to exactly the
+    // adapter that will run this action type against this target system.
+    // No universal bypass: anything outside this scope is still denied.
+    const adapter = svc.runtime.listAdapters().find(
+      (ad) => ad.targetSystem === a.targetSystem && ad.actionTypes.includes(a.actionType),
+    );
+    const workerAuth = adapter
+      ? establishKernelWorkerAuthority(kernelOf(ctx), {
+          capabilityId: `kernel.worker.unified-loop.${adapter.id}`,
+          tool: adapter.id,
+          operations: [a.actionType],
+          targets: [{ system: a.targetSystem }],
+        })
+      : undefined;
+    const result = await svc.runtime.execute(ctx.actor, ctx.state.actionId, {
+      maxAttempts: 2,
+      timeoutMs: 2_000,
+      ...(workerAuth ? { authorization: workerAuth } : {}),
+    });
     return {
       summary: `Execution dispatched for action ${result.action.id}; status ${result.action.executionStatus}; external=${result.executedExternally}.`,
       records: [{ kind: 'ACTION', source: 'autonomous-action-runtime', externalRef: result.action.id, at: ctx.now(), summary: `Action execution ${result.action.executionStatus}`, provenance: provenance(ctx) }],

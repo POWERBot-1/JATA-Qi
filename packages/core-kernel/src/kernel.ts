@@ -3,6 +3,7 @@ import { SYSTEM_TENANT, emitPlainEnveloped } from './event-envelope.js';
 import { Container } from './container.js';
 import { Logger } from './logger.js';
 import { Config, EnvConfigSource, ObjectConfigSource } from './config.js';
+import { SecurityInvariantRegistry, type SecurityInvariant } from './security-invariants.js';
 import {
   IModule,
   KernelApi,
@@ -28,6 +29,11 @@ export class Kernel implements KernelApi {
   private states = new Map<ModuleId, ModuleState>();
   private startedOrder: ModuleId[] = [];
   private booted = false;
+  /**
+   * R1: mandatory, non-removable security invariants. Evaluated after init
+   * and before ANY module starts; a violation aborts boot.
+   */
+  private readonly securityInvariants = new SecurityInvariantRegistry();
 
   constructor(opts: KernelOptions = {}) {
     this.bus = new EventBus();
@@ -47,6 +53,24 @@ export class Kernel implements KernelApi {
     this.container.registerValue('kernel.logger', this.logger);
     this.container.registerValue('kernel.config', this.config);
     this.container.registerValue('kernel', this);
+  }
+
+  /**
+   * R1: declare a MANDATORY security invariant. It is evaluated at the end of
+   * the init phase on every boot and can never be removed, relaxed, or
+   * redeclared. There is no flag that disables it.
+   */
+  requireSecurityInvariant(invariant: SecurityInvariant): void {
+    this.securityInvariants.require(invariant);
+  }
+
+  /** The declared mandatory security invariants (diagnostics; grants nothing). */
+  listSecurityInvariants(): readonly SecurityInvariant[] {
+    return this.securityInvariants.list();
+  }
+
+  hasSecurityInvariant(id: string): boolean {
+    return this.securityInvariants.has(id);
   }
 
   /** Register a module. Must be called before boot(). */
@@ -143,6 +167,18 @@ export class Kernel implements KernelApi {
         await this.emitKernel(KernelEvents.ModuleError, { id, phase: 'init', err });
         throw err;
       }
+    }
+
+    // Phase 1b (R1): every declared mandatory security invariant must hold
+    // BEFORE anything starts. A violation aborts boot deterministically; no
+    // module reaches `start`, so no protected surface can serve work in a
+    // composition whose authorization boundary is absent or substituted.
+    try {
+      await this.securityInvariants.assertAll(this);
+    } catch (err) {
+      this.logger.error('kernel boot aborted: mandatory security invariant violated', err as Error);
+      await this.emitKernel(KernelEvents.ModuleError, { id: 'kernel.security-invariants', phase: 'init', err });
+      throw err;
     }
 
     // Phase 2: start (services may now interact with started dependencies).

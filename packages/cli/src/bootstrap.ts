@@ -47,6 +47,11 @@ import { UnifiedLoopModule } from '@jataqi/unified-loop';
 import { LoopHostModule, WorkIngressModule } from '@jataqi/loop-host';
 import type { PrincipalPolicy } from '@jataqi/loop-host';
 import {
+  AuthorizationBoundaryModule,
+  requireAuthorizationBoundary,
+  type AuthorizationBoundaryModuleConfig,
+} from '@jataqi/authorization-boundary';
+import {
   AuthenticationModule,
   type AuthenticationModuleConfig,
 } from '@jataqi/authentication';
@@ -83,6 +88,16 @@ export interface JataQiConfig {
    * make authenticated work ingress available.
    */
   authentication?: AuthenticationModuleConfig;
+  /**
+   * R1 / A-01: tuning for the MANDATORY authorization boundary. The boundary
+   * itself is NOT optional and cannot be disabled, removed, or replaced: only
+   * its policy engine, capability manifests, credential broker, clock and
+   * audit durability are configurable. There is no flag, environment
+   * variable, or module-ordering trick that produces a runtime without it —
+   * `createJataQi()` declares a kernel security invariant that aborts boot if
+   * the boundary is absent, uninitialized, unsealed, or substituted.
+   */
+  authorization?: AuthorizationBoundaryModuleConfig;
   /**
    * O-01 continuous-operation host. Disabled by default: the module is only
    * registered when `enabled` is explicitly true, and even then the host
@@ -123,6 +138,13 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
     driverInstance: cfg.storage?.driverInstance,
   };
   kernel.register(new StorageModule(storageCfg));
+  // R1 / CF-1: the A-01 authorization boundary is MANDATORY in the default
+  // JATA Qi composition. It is registered here unconditionally, before every
+  // protected surface, and the kernel invariant declared immediately below
+  // makes its absence, non-initialization, unsealing, or substitution a
+  // deterministic BOOT FAILURE rather than a silent fail-open runtime.
+  kernel.register(new AuthorizationBoundaryModule(cfg.authorization ?? {}));
+  requireAuthorizationBoundary(kernel);
   kernel.register(new CommercialControlPlaneModule(cfg.commercialControlPlane));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
@@ -271,6 +293,9 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     graph: overrides.graph,
     commercialControlPlane: overrides.commercialControlPlane,
     kernel: overrides.kernel,
+    // R1: forwarded for policy/manifest configuration only; the boundary
+    // itself is mandatory and cannot be switched off from the environment.
+    authorization: overrides.authorization,
     // T-03: resolve the authentication posture from the environment. This
     // throws on an unusable configuration rather than booting a process that
     // silently trusts nothing or, worse, silently trusts test authority.

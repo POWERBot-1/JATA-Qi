@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/commercial-command-center",
   "version": "0.1.0",
-  "description": "JATA Qi Commercial Command Center — tenant-filtered read model and approval facade across governed commercial systems",
+  "description": "JATA Qi Commercial Command Center \u2014 tenant-filtered read model and approval facade across governed commercial systems",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -17,7 +17,10 @@
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
     "@jataqi/autonomous-deployment": "0.1.0",
@@ -43,7 +46,8 @@
     "@jataqi/universal-visibility-fabric": "0.1.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "@types/node": "^20.11.0"
+    "@jataqi/authorization-boundary": "0.1.0",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0"
   }
 }

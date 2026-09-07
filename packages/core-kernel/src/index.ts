@@ -33,7 +33,7 @@ export type {
   EnvelopeProvenance,
   WrapPlainEnvelopeOptions,
 } from './event-envelope.js';
-export { Container } from './container.js';
+export { Container, SealedBindingError } from './container.js';
 export { Logger } from './logger.js';
 export type { LogEntry, LogLevel, LogSink, LoggerOptions } from './logger.js';
 export { Config, ObjectConfigSource, EnvConfigSource } from './config.js';
@@ -44,6 +44,11 @@ export {
   DependencyError,
   ConfigError,
 } from './errors.js';
+export {
+  SecurityInvariantRegistry,
+  SecurityInvariantViolation,
+} from './security-invariants.js';
+export type { SecurityInvariant } from './security-invariants.js';
 export { KernelEvents } from './types.js';
 export type {
   IModule,

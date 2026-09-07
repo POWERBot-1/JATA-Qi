@@ -69,7 +69,15 @@ export class ExternalConnectorRegistry {
    */
   private assertCapabilityBinding(connector: ExternalConnector): void {
     const gate = this.getAuthorizationGate();
-    if (!gate) return;
+    // R1 INVARIANT B + M: NO AUTHORIZATION BOUNDARY -> NO CAPABILITY BINDING
+    // -> NO CONNECTOR EXECUTION. A connector must not become registrable (and
+    // therefore activatable, and therefore executable) merely because the
+    // authorization infrastructure was omitted from the composition.
+    if (!gate) {
+      throw new ExternalConnectorError(
+        `A-01: connector "${connector.id}" registration rejected (AUTHORIZATION_BOUNDARY_ABSENT) — no authoritative authorization boundary is installed, so no capability binding can be established and no connector may become executable (fail-closed)`,
+      );
+    }
     if (!connector.capabilityId || connector.capabilityId.trim().length === 0) {
       throw new ExternalConnectorError(
         `A-01: connector "${connector.id}" registration rejected (UNBOUND_CONNECTOR) — with an installed authorization boundary every connector must bind a capability manifest`,
@@ -143,6 +151,10 @@ export class ExternalConnectorRegistry {
   async activate(actor: CommercialActor, registrationId: string): Promise<ConnectorActivationResult> {
     const registration = this.requireRegistration(actor, registrationId);
     const connector = this.connectors.get(registrationId)!;
+    // R1 INVARIANT M: re-assert the binding at ACTIVATION. Registration-time
+    // approval is not carried forward blindly; activation is the step that
+    // creates executable capability.
+    this.assertCapabilityBinding(connector);
     const context = connectorContext(registration);
 
     try {
@@ -241,6 +253,14 @@ export class ExternalConnectorRegistry {
   }
 
   private installRuntimeAdapter(registrationId: string, connector: ExternalConnector): void {
+    // R1 INVARIANT M (defence in depth): an executable adapter is only ever
+    // created while the authoritative boundary is resolvable. Provider code
+    // must be unreachable from the action runtime otherwise.
+    if (!this.getAuthorizationGate()) {
+      throw new ExternalConnectorError(
+        `A-01: connector "${registrationId}" cannot be made executable (AUTHORIZATION_BOUNDARY_ABSENT) — no authoritative authorization boundary is installed (fail-closed)`,
+      );
+    }
     this.removeRuntimeAdapter(registrationId);
     const adapterId = `connector:${registrationId}`;
     const adapter: ActionExecutionAdapter = {
