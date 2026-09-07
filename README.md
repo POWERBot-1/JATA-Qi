@@ -109,11 +109,28 @@ await qi.shutdown();
 Run the CLI:
 
 ```bash
+# Knowledge-facing commands (ask, ingest, search, stats, entities, repl) operate
+# as exactly ONE tenant, taken from the deployment configuration. Without it the
+# command fails closed BEFORE the kernel boots — nothing is read, written, or
+# searched — and no default tenant is ever substituted. The reserved test-only
+# tenant id `default` is refused as an operator tenant.
+export JATAQI_OPERATOR_TENANT=tenant-acme
+
 node packages/cli/dist/src/index.js ask "what is JATA Qi?"
 node packages/cli/dist/src/index.js ingest ./README.md
 node packages/cli/dist/src/index.js search "vector search"
 node packages/cli/dist/src/index.js stats
 node packages/cli/dist/src/index.js repl
+
+# --tenant is a CONSISTENCY CHECK ONLY: it must equal JATAQI_OPERATOR_TENANT or
+# the command is refused. It can never override, widen, or establish a tenant.
+node packages/cli/dist/src/index.js search --tenant tenant-acme "vector search"
+
+# The read-only inspection commands (host:work / host:dlq / host:health /
+# host:outbox / host:inbox) resolve the SAME operator tenant BEFORE the kernel
+# boots. Without it — or with the reserved `default` value — they exit 1 having
+# booted, read, and reported nothing (S-1/B-4).
+node packages/cli/dist/src/index.js host:health
 ```
 
 ## Local development configuration
@@ -133,6 +150,63 @@ The CLI auto-loads `.env`; library users call `createJataQiFromEnv()`. A
 production persistence/control-plane design is documented in
 [`docs/PERSISTENCE_ARCHITECTURE.md`](docs/PERSISTENCE_ARCHITECTURE.md), but is
 not implemented in this repository.
+
+## Tenant boundary (S-1)
+
+Tenant isolation is enforced **outside the model**, at the authoritative data
+boundary — not in prompts, not in tool inputs, and not in the CLI alone. Every
+tenant-bound data-plane operation in `@jataqi/knowledge-service`,
+`@jataqi/vector-search`, `@jataqi/knowledge-graph`, the `@jataqi/agent-runtime`
+built-in tools, and the CLI obeys the same contract:
+
+| Caller supplies | Result |
+| --- | --- |
+| a non-blank tenant id | the operation is scoped to exactly that tenant (never widened) |
+| nothing, `''`, whitespace, or a non-string | **refused** (`TenantContextError` / exit 1) with zero data-plane work |
+| an identifier owned by another tenant | **denied** — reads resolve to nothing, deletes return `false` and mutate nothing |
+| a durable row with no tenant tag | **quarantined** — invisible to every tenant, including the reserved `default` bucket |
+
+There is **no implicit default tenant**. `DEFAULT_TENANT_ID` (`"default"`) is a
+reserved, isolated test bucket that is only reachable through the explicit
+T-08.1/K1 test-compat flags (`JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK=1` or
+`JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK=1`); even then it resolves to **one**
+tenant's bucket and never to cross-tenant data, and no `NODE_ENV` value can
+authorize it. Production code paths never set those flags.
+
+Additional guarantees:
+
+- **No ambient store handle.** `KnowledgeGraphModule` exposes no `graph.store`
+  and registers none in the DI container; a store is reachable only through
+  `storeFor(tenantId)`, which fails closed without an unambiguous tenant, so an
+  untrusted caller cannot obtain a privileged default-tenant handle (S-1/B-2).
+- **Untagged durable rows are quarantined, never adopted.** They stay on disk
+  verbatim, are reported through `graph.quarantineReport()` plus a structured
+  `WARN`, and can only be attributed by an operator's explicit, validated
+  `KnowledgeGraphConfig.untaggedRowTenant` migration option — which rejects
+  blank values and the reserved `default` (S-1/B-3).
+- **Events are untrusted input.** A `knowledge.document.ingested` envelope is
+  acted on only after producer attestation (`source`/`provenance.source ===
+  'knowledge'`), tenant binding (non-blank, non-`system`, payload may only
+  *agree* with the envelope), and an authoritative **tenant-scoped** document
+  re-read. A forged or replayed event therefore cannot disclose or index another
+  tenant's document metadata; refusals are audited (S-1/V-1,
+  `authorizeDocumentIngestedEvent`).
+- **Tools cannot be steered across tenants.** No built-in tool input schema
+  accepts a tenant: the execution tenant comes from the run context
+  (`metadata.tenantId`), and a run without one receives a refusal that is fed
+  back to the model instead of data (S-1).
+- **CLI defense-in-depth.** `entities` re-attributes every listed row through the
+  authoritative tenant-scoped lookup and drops (with an audited count) anything
+  not attributable to the operator tenant, including when the lookup is
+  unavailable (S-1/V-2).
+
+The adversarial suites that pin this contract are
+`packages/*/test/s1-*.test.ts` (service boundary, vector layer, graph
+B-2/B-3/V-1, agent tools, CLI V-2/B-4) together with the PostgreSQL tenant
+isolation suite `packages/knowledge-graph/test/t06-knowledge-tenant-pg.test.ts`
+and the CLI suite `packages/cli/test/cli-tenant-isolation.test.ts`. The design
+notes, root-cause map, and per-finding decisions are in
+[`docs/S01_TENANT_BOUNDARY_HARDENING.md`](docs/S01_TENANT_BOUNDARY_HARDENING.md).
 
 ## Commercial control-plane safety
 

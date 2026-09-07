@@ -3,7 +3,7 @@ import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
-import { moneyEquals } from '@jataqi/commercial-control-plane';
+import { isQuantizedAmount, moneyEquals, scaleOf } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvidence, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentIntent, PaymentsService } from '@jataqi/payments';
@@ -136,7 +136,8 @@ function internalDiscrepancies(payments: readonly PaymentIntent[], entries: read
     } else if (matches.length > 1) {
       discrepancies.push(discrepancy('DUPLICATE_LEDGER', { paymentId: payment.id, providerReference: payment.providerReference, detail: `Payment has ${matches.length} matching ${relevantType} ledger entries.`, ledgerEntryId: matches[0]!.id }));
     } else if (!moneyEquals(matches[0]!.amount, payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount)) {
-      discrepancies.push(discrepancy('AMOUNT_MISMATCH', { paymentId: payment.id, ledgerEntryId: matches[0]!.id, providerReference: payment.providerReference, detail: 'Internal payment and revenue ledger amounts do not match.', expected: payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount, observed: matches[0]!.amount }));
+      const expected = payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount;
+      discrepancies.push(discrepancy('AMOUNT_MISMATCH', { paymentId: payment.id, ledgerEntryId: matches[0]!.id, providerReference: payment.providerReference, detail: `Internal payment and revenue ledger amounts do not match.${scaleNote(expected, matches[0]!.amount)}`, expected, observed: matches[0]!.amount }));
     }
   }
   for (const entry of entries) {
@@ -162,12 +163,16 @@ function providerDiscrepancies(payments: readonly PaymentIntent[], observations:
     const expectedStatus = payment.status === 'REFUNDED' ? 'REFUNDED' : 'SUCCEEDED';
     if (observation.status !== expectedStatus) discrepancies.push(discrepancy('PROVIDER_STATUS_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: `Provider status ${observation.status} does not match internal status ${expectedStatus}.` }));
     const expectedAmount = payment.status === 'REFUNDED' ? payment.refundAmount ?? payment.amount : payment.amount;
-    // T-08 R-MONEY-02: use canonical quantized money comparison, never raw float equality.
+    // T-08 R-MONEY-02 / T-09 AC-6: use canonical currency-aware quantized money
+    // comparison, never raw float equality. Minor units are derived at the
+    // currency's own scale, so a provider reporting 100.5 JPY (not
+    // representable at 0dp) or 1.2345 KWD (not representable at 3dp) is a real
+    // discrepancy instead of a silent 2-decimal assumption.
     if (!moneyEquals(observation.amount, expectedAmount)) {
       if (observation.amount.currency !== expectedAmount.currency) {
         discrepancies.push(discrepancy('CURRENCY_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: 'Provider currency does not match internal currency.', expected: expectedAmount, observed: observation.amount }));
       } else {
-        discrepancies.push(discrepancy('AMOUNT_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: 'Provider amount does not match internal amount.', expected: expectedAmount, observed: observation.amount }));
+        discrepancies.push(discrepancy('AMOUNT_MISMATCH', { paymentId: payment.id, providerReference: payment.providerReference, detail: `Provider amount does not match internal amount.${scaleNote(expectedAmount, observation.amount)}`, expected: expectedAmount, observed: observation.amount }));
       }
     }
   }
@@ -176,8 +181,21 @@ function providerDiscrepancies(payments: readonly PaymentIntent[], observations:
 
 function discrepancy(kind: ReconciliationDiscrepancy['kind'], input: Omit<ReconciliationDiscrepancy, 'id' | 'kind'>): ReconciliationDiscrepancy { return { id: randomUUID(), kind, ...input }; }
 function systemEvidence(summary: string): CommercialEvidence { const now = Date.now(); return { id: `reconciliation:${randomUUID()}`, status: 'OBSERVED', source: 'reconciliation', observedAt: now, confidence: 100, summary, provenance: { source: 'reconciliation', collectedAt: now }, privacyClassification: 'INTERNAL' }; }
-// T-09 follow-up (R-MONEY-03): per-currency scale migration (JPY 0dp, KWD 3dp) will extend moneyEquals.
-// Current single-scale (2dp for all currencies) is preserved for T-08; see commercial-control-plane/money.ts.
+/**
+ * T-09 (R-MONEY-03) IMPLEMENTED: reconciliation money semantics are
+ * currency-aware. `moneyEquals` compares exact minor units at each currency's
+ * own scale (JPY/KRW/CLP 0dp, BHD/KWD/OMR 3dp, default 2dp) — see
+ * commercial-control-plane/money.ts. This note adds the scale diagnostic to an
+ * amount mismatch so an auditor can see whether one side is not representable
+ * at the currency's minor-unit scale (a float/scale trap) rather than merely
+ * different.
+ */
+function scaleNote(expected: MonetaryValue, observed: MonetaryValue): string {
+  const notes: string[] = [];
+  if (!isQuantizedAmount(expected.amount, expected.currency)) notes.push(`expected ${expected.amount} ${expected.currency} is not representable at ${scaleOf(expected.currency)} decimal place(s)`);
+  if (!isQuantizedAmount(observed.amount, observed.currency)) notes.push(`observed ${observed.amount} ${observed.currency} is not representable at ${scaleOf(observed.currency)} decimal place(s)`);
+  return notes.length > 0 ? ` Scale: ${notes.join('; ')}.` : '';
+}
 function assertAdministrator(actor: CommercialActor): void { if (!actor.roles.includes('admin') && !actor.roles.includes('global_admin')) throw new ReconciliationError('Commercial administrator role is required.'); }
 function assertManager(actor: CommercialActor): void { if (!actor.roles.some((role) => ['operator', 'admin', 'global_admin', 'system'].includes(role))) throw new ReconciliationError('Commercial operator role is required.'); }
 function canRead(actor: CommercialActor, tenantId: string): boolean { return actor.tenantId === tenantId || actor.roles.includes('global_admin'); }

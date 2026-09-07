@@ -16,6 +16,7 @@ import type { CommercialActor, CommercialActorRole } from '@jataqi/commercial-co
 import { CommercialEventStreamModule } from '@jataqi/commercial-event-stream';
 import { createJataQiFromEnv } from './bootstrap.js';
 import { redactConnectionString } from './storage-driver.js';
+import { CliTenantRefusal, resolveOperatorTenant } from './knowledge-command.js';
 
 const INSPECT_STATUSES: readonly HostedWorkStatus[] = [
   'QUEUED',
@@ -32,9 +33,16 @@ const INSPECT_STATUSES: readonly HostedWorkStatus[] = [
  * Build the read-only inspection actor. Tenant comes from the operator's
  * environment; `global_admin` is only granted when explicitly requested, so the
  * default is a single-tenant read.
+ *
+ * S-1/B-4: the tenant is resolved through the SAME authoritative CLI resolver
+ * the knowledge commands use, so a missing, blank, or reserved-`default`
+ * operator tenant is REFUSED instead of silently becoming the shared default
+ * bucket (which previously let `host:*` inspection run — and report delivery
+ * health — as tenant `default` with no tenant configured at all). Least
+ * privilege is unchanged: `global_admin` still requires an explicit opt-in.
  */
 function inspectActor(env: NodeJS.ProcessEnv): CommercialActor {
-  const tenantId = env.JATAQI_OPERATOR_TENANT ?? 'default';
+  const tenantId = resolveOperatorTenant(env);
   const roles: CommercialActorRole[] =
     env.JATAQI_OPERATOR_GLOBAL_ADMIN === 'true' ? ['operator', 'global_admin'] : ['operator'];
   return { id: env.JATAQI_OPERATOR_ID ?? 'cli-operator', tenantId, roles };
@@ -48,6 +56,18 @@ export async function runHostInspectCommand(
   args: readonly string[],
   log: (line: string) => void = (line) => console.log(line),
 ): Promise<number> {
+  // S-1/B-4: resolve the operator tenant BEFORE the kernel boots, exactly like
+  // the knowledge commands — a refusal must not read, boot, or report anything.
+  let actor: CommercialActor;
+  try {
+    actor = inspectActor(process.env);
+  } catch (error) {
+    const refusal = error as CliTenantRefusal;
+    const detail = refusal instanceof CliTenantRefusal ? refusal.message : (error as Error).message;
+    console.error(`${cmd}: refused (no tenant context; nothing was booted or read): ${detail}`);
+    return 1;
+  }
+
   let instance: Awaited<ReturnType<typeof createJataQiFromEnv>>;
   try {
     instance = await createJataQiFromEnv({ loopHost: { enabled: true } });
@@ -60,7 +80,6 @@ export async function runHostInspectCommand(
   try {
     const driverId = kernel.getModule<StorageModule>('storage').getDriver().id;
     const host: LoopHostService = kernel.getModule<LoopHostModule>('loop-host').getService();
-    const actor = inspectActor(process.env);
 
     const controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
     const stream = kernel.getModule<CommercialEventStreamModule>('commercial-event-stream').getService();

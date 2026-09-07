@@ -81,7 +81,9 @@ export class BillingService {
     assertAdministrator(actor);
     validatePlan(input);
     const now = Date.now();
-    // T-07 money policy: prices are quantized at the boundary (2 dp default).
+    // T-07/T-09 money policy: prices are quantized at the boundary at the
+    // PLAN CURRENCY's minor-unit scale (JPY/KRW/CLP 0dp, BHD/KWD/OMR 3dp,
+    // default 2dp) — a JPY plan price is whole yen, a KWD plan price keeps fils.
     const plan: BillingPlan = { id: randomUUID(), tenantId: actor.tenantId, productId: input.productId, name: input.name, price: quantizeMonetaryValue(input.price), cycle: input.cycle, active: true, createdAt: now, updatedAt: now };
     await this.plans.put(plan);
     await this.emit(actor, BillingEvents.PlanCreated, plan.id, { planId: plan.id, productId: plan.productId });
@@ -116,9 +118,11 @@ export class BillingService {
       }
     }
     const now = Date.now();
-    // T-07 money policy: invoice lines are quantized at the boundary and the
-    // invoice total is the deterministic exact sum of the quantized line
-    // totals (never a float accumulation: 0.1 + 0.2 === 0.3).
+    // T-07/T-09 money policy: invoice lines are quantized at the boundary at
+    // their own currency's minor-unit scale and the invoice total is the
+    // deterministic exact sum of the quantized line totals in that ONE
+    // currency (never a float accumulation: 0.1 + 0.2 === 0.3; never a
+    // cross-currency or cross-scale sum).
     const lines = input.lines.map((line) => ({ ...line, unitPrice: quantizeMonetaryValue(line.unitPrice), total: quantizeMonetaryValue(line.total) }));
     const total = sumLines(lines);
     const invoice: Invoice = {
@@ -300,9 +304,11 @@ function validateInvoiceInput(input: CreateInvoiceInput): void {
     if (!line.description.trim() || !Number.isFinite(line.quantity) || line.quantity <= 0) throw new BillingError('Invoice line description and positive quantity are required.');
     assertMoney(line.unitPrice);
     assertMoney(line.total);
-    // T-07 AC-5: the line-total check is the exact quantized product rule
-    // (decimal-parts multiplication, half-up once), so float artifacts can
-    // never reject a valid invoice (0.1 x 3, 19.99 x 3, 1.15 x 0.3).
+    // T-07 AC-5 / T-09 AC-7: the line-total check is the exact quantized
+    // product rule (decimal-parts multiplication, rounded half-up ONCE at the
+    // line currency's minor-unit scale), so float artifacts can never reject a
+    // valid invoice (0.1 x 3, 19.99 x 3, 1.15 x 0.3) and a 0dp/3dp currency is
+    // never silently assumed to have two decimal places.
     if (!moneyProductEquals(line.unitPrice, line.quantity, line.total)) throw new BillingError('Invoice line total must equal unit price times quantity in the same currency.');
   }
 }
@@ -310,7 +316,8 @@ function validateInvoiceInput(input: CreateInvoiceInput): void {
 function sumLines(lines: readonly InvoiceLine[]): MonetaryValue {
   const currency = lines[0]!.total.currency;
   if (lines.some((line) => line.total.currency !== currency)) throw new BillingError('Invoice lines must use one currency.');
-  // T-07: deterministic exact minor-unit summation (never float accumulation).
+  // T-07/T-09: deterministic exact minor-unit summation at the shared line
+  // currency's scale (never float accumulation, never mixed scales).
   return sumMoney(lines.map((line) => line.total));
 }
 

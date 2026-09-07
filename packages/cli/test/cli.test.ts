@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createJataQi } from '../src/bootstrap.js';
 import { AgentRuntimeModule } from '@jataqi/agent-runtime';
-import { KnowledgeService } from '@jataqi/knowledge-service';
+import { DEFAULT_TENANT_ID, KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
@@ -115,17 +115,35 @@ describe('createJataQi bootstrap', () => {
     const qi = await createJataQi();
     const ks = qi.kernel.getModule<KnowledgeService>('knowledge');
     const g = qi.kernel.getModule<KnowledgeGraphModule>('knowledge-graph');
-    const doc = await ks.ingestText('Alice founded Acme Corp. Bob works at Acme Corp.', { chunkSize: 500 });
+    // R-1 (CI gate remediation): T-08.1 K1 authorizes the DEFAULT_TENANT_ID
+    // fallback only behind an explicit test flag — no NODE_ENV value may
+    // authorize it — so this test declares its tenant instead of relying on the
+    // removed implicit fallback. The guard stays armed: nothing here sets
+    // JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK or
+    // JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK.
+    const tenantId = 'tenant-cli-bootstrap';
+    const doc = await ks.ingestText('Alice founded Acme Corp. Bob works at Acme Corp.', { chunkSize: 500, tenantId });
+    assert.equal(doc.tenantId, tenantId, 'ingest must be stamped with the explicit tenant');
+    assert.notEqual(doc.tenantId, DEFAULT_TENANT_ID, 'no default tenant may be substituted');
     for (const cid of doc.chunkIds) {
-      const c = await ks.getChunk(cid);
+      const c = await ks.getChunk(cid, { tenantId });
       if (c) {
-        const r = g.extractFromText(c.text, { chunkId: cid, documentId: doc.id });
-        for (const t of r.triples) g.linkMention(cid, t.object, 0.7, doc.id);
+        const r = g.extractFromText(c.text, { chunkId: cid, documentId: doc.id }, tenantId);
+        for (const t of r.triples) g.linkMention(cid, t.object, 0.7, doc.id, tenantId);
       }
     }
-    const stats = g.stats();
+    const stats = g.stats(tenantId);
     assert.ok(stats.entities >= 2, `expected entities, got ${stats.entities}`);
     assert.ok(stats.triples >= 1, `expected triples, got ${stats.triples}`);
+    // The graph write path is tenant-partitioned: the declared tenant has a
+    // store holding the extracted graph. Note that knowledge-graph registers a
+    // legacy, EMPTY DEFAULT_TENANT_ID store handle at boot (`graph.store`), so
+    // the invariant that matters here is that no DATA was written to the
+    // reserved default tenant by this tenant-scoped path.
+    assert.ok(g.tenantKeys().includes(tenantId), 'expected a store for the explicit tenant');
+    const defaultStats = g.stats(DEFAULT_TENANT_ID);
+    assert.equal(defaultStats.entities, 0, 'no entity may be written to the default tenant');
+    assert.equal(defaultStats.triples, 0, 'no triple may be written to the default tenant');
     await qi.shutdown();
   });
 });

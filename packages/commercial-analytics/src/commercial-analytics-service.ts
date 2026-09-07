@@ -5,7 +5,7 @@ import type { ICollection } from '@jataqi/storage';
 import { BillingModule } from '@jataqi/billing';
 import type { BillingPlan, BillingService, Subscription } from '@jataqi/billing';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
-import { fromMinorUnits, minorUnitsOf } from '@jataqi/commercial-control-plane';
+import { MONTHS_PER_YEAR, divideMinorUnitsHalfUp, fromMinorUnits, minorUnitsOf } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvidence, CommercialProvenance, EvidenceStatus } from '@jataqi/commercial-control-plane';
 import { PaymentsModule } from '@jataqi/payments';
 import type { PaymentsService } from '@jataqi/payments';
@@ -142,15 +142,15 @@ function calculateCurrencies(activeSubscriptions: readonly Subscription[], plans
     if (plan) currencySet.add(plan.price.currency);
   }
   return [...currencySet].sort().map((currency) => {
-    // T-07 money policy: monetary accumulations are exact integer minor
-    // units; each bucket converts once at the end (deterministic sums, no
-    // float drift from many entries).
+    // T-07/T-09 money policy: monetary accumulations are exact integer minor
+    // units AT THE BUCKET CURRENCY'S OWN SCALE; each bucket converts once at
+    // the end (deterministic sums, no float drift from many entries).
     const categoryCosts = emptyMinorCostMap();
     const estimatedCosts = emptyMinorCostMap();
     let recognizedRevenue = 0n;
     let reversedRevenue = 0n;
     for (const entry of entries.filter((candidate) => candidate.amount.currency === currency)) {
-      const minor = minorUnitsOf(entry.amount.amount);
+      const minor = minorUnitsOf(entry.amount.amount, entry.amount.currency);
       if (entry.entryType === 'REVENUE' && entry.recognitionStatus === 'RECOGNIZED') recognizedRevenue += minor;
       else if (entry.entryType === 'REFUND_REVERSAL' && entry.recognitionStatus === 'REVERSED') reversedRevenue += minor;
       else if (entry.entryType === 'COST' && entry.costCategory) {
@@ -158,34 +158,37 @@ function calculateCurrencies(activeSubscriptions: readonly Subscription[], plans
         else categoryCosts[entry.costCategory] += minor;
       }
     }
-    const measuredCosts = minorCostMapToNumber(categoryCosts);
-    const estimated = minorCostMapToNumber(estimatedCosts);
-    // T-08 R-MONEY-01: MRR/ARR use exact minor-unit arithmetic.
-    // Annual→monthly allocation uses half-up rounding: (minor + d/2)/d with d=12 (half=6),
-    // i.e. ties round away from zero, matching T-07 money policy `MONEY_ROUNDING_RULE=half-up`.
-    // This preserves currency metadata and avoids any binary floating-point arithmetic.
-    // T-09 follow-up: per-currency scale migration (JPY 0dp, KWD 3dp) will extend this.
+    const measuredCosts = minorCostMapToNumber(categoryCosts, currency);
+    const estimated = minorCostMapToNumber(estimatedCosts, currency);
+    // T-08 R-MONEY-01 / T-09 AC-8: MRR/ARR use exact minor-unit arithmetic at
+    // the plan currency's own minor-unit scale (JPY/KRW/CLP 0dp, BHD/KWD/OMR
+    // 3dp, default 2dp). Annual→monthly allocation divides exact minor units
+    // by 12 with half-up rounding (`divideMinorUnitsHalfUp`), i.e. ties round
+    // away from zero, matching the canonical `MONEY_ROUNDING_RULE=half-up`.
+    // The previous fixed `(minor + 6n) / 12n` was the 2dp special case of the
+    // same rule (half of 12 is 6) and is preserved bit-for-bit for 2dp
+    // currencies; no binary floating-point division is involved anywhere.
     let mrrMinor = 0n;
     let arrMinor = 0n;
     for (const subscription of activeSubscriptions) {
       const plan = plans.find((candidate) => candidate.id === subscription.planId && candidate.price.currency === currency);
       if (!plan) continue;
-      const minor = minorUnitsOf(plan.price.amount);
+      const minor = minorUnitsOf(plan.price.amount, plan.price.currency);
       if (plan.cycle === 'MONTHLY') {
         mrrMinor += minor;
-        arrMinor += minor * 12n;
+        arrMinor += minor * BigInt(MONTHS_PER_YEAR);
       } else if (plan.cycle === 'ANNUAL') {
-        const monthlyMinor = (minor + 6n) / 12n;
+        const monthlyMinor = divideMinorUnitsHalfUp(minor, BigInt(MONTHS_PER_YEAR));
         mrrMinor += monthlyMinor;
         arrMinor += minor;
       } else if (plan.cycle === 'ONE_TIME') {
         // ONE_TIME: no recurring MRR; preserve legacy ARR as minor*12 for backward compat (until product defines ONE_TIME ARR).
-        arrMinor += minor * 12n;
+        arrMinor += minor * BigInt(MONTHS_PER_YEAR);
       }
     }
-    const mrr = fromMinorUnits(mrrMinor);
-    const arr = fromMinorUnits(arrMinor);
-    const netRevenue = fromMinorUnits(recognizedRevenue - reversedRevenue);
+    const mrr = fromMinorUnits(mrrMinor, currency);
+    const arr = fromMinorUnits(arrMinor, currency);
+    const netRevenue = fromMinorUnits(recognizedRevenue - reversedRevenue, currency);
     const directCosts = measuredCosts.PAYMENT + measuredCosts.AI + measuredCosts.INFRASTRUCTURE + measuredCosts.THIRD_PARTY;
     const allCosts = Object.values(measuredCosts).reduce((total, cost) => total + cost, 0);
     const grossProfit = netRevenue - directCosts;
@@ -195,7 +198,7 @@ function calculateCurrencies(activeSubscriptions: readonly Subscription[], plans
     const cac = paidCustomers > 0 && marketingCost > 0 ? round(marketingCost / paidCustomers) : undefined;
     const roas = marketingCost > 0 ? round(netRevenue / marketingCost) : undefined;
     const ltv = arpu !== undefined && churnRate !== undefined && churnRate > 0 ? round(arpu / churnRate) : undefined;
-    return { currency, recognizedRevenue: fromMinorUnits(recognizedRevenue), reversedRevenue: fromMinorUnits(reversedRevenue), measuredCosts, estimatedCosts: estimated, grossProfit: round(grossProfit), contributionMargin: round(contributionMargin), mrr: round(mrr), arr: round(arr), arpu, cac, roas, ltv };
+    return { currency, recognizedRevenue: fromMinorUnits(recognizedRevenue, currency), reversedRevenue: fromMinorUnits(reversedRevenue, currency), measuredCosts, estimatedCosts: estimated, grossProfit: round(grossProfit), contributionMargin: round(contributionMargin), mrr: round(mrr), arr: round(arr), arpu, cac, roas, ltv };
   });
 }
 
@@ -230,8 +233,12 @@ function observation(tenantId: string, metric: EconomicMetricName | string, valu
 function statusForCount(value: number): EvidenceStatus { return value > 0 ? 'MEASURED' : 'PARTIAL'; }
 type MinorCostMap = Record<CostCategory, bigint>;
 function emptyMinorCostMap(): MinorCostMap { return { PAYMENT: 0n, AI: 0n, MARKETING: 0n, INFRASTRUCTURE: 0n, SUPPORT: 0n, THIRD_PARTY: 0n, OTHER: 0n }; }
-function minorCostMapToNumber(map: MinorCostMap): Record<CostCategory, number> {
-  return { PAYMENT: fromMinorUnits(map.PAYMENT), AI: fromMinorUnits(map.AI), MARKETING: fromMinorUnits(map.MARKETING), INFRASTRUCTURE: fromMinorUnits(map.INFRASTRUCTURE), SUPPORT: fromMinorUnits(map.SUPPORT), THIRD_PARTY: fromMinorUnits(map.THIRD_PARTY), OTHER: fromMinorUnits(map.OTHER) };
+function minorCostMapToNumber(map: MinorCostMap, currency: string): Record<CostCategory, number> {
+  return {
+    PAYMENT: fromMinorUnits(map.PAYMENT, currency), AI: fromMinorUnits(map.AI, currency), MARKETING: fromMinorUnits(map.MARKETING, currency),
+    INFRASTRUCTURE: fromMinorUnits(map.INFRASTRUCTURE, currency), SUPPORT: fromMinorUnits(map.SUPPORT, currency),
+    THIRD_PARTY: fromMinorUnits(map.THIRD_PARTY, currency), OTHER: fromMinorUnits(map.OTHER, currency),
+  };
 }
 function round(value: number): number { return Math.round(value * 10000) / 10000; }
 function assertManager(actor: CommercialActor): void { if (!actor.roles.some((role) => ['observer', 'agent', 'operator', 'admin', 'global_admin', 'system'].includes(role))) throw new CommercialAnalyticsError('A commercial actor role is required.'); }

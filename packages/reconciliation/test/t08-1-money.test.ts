@@ -2,6 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { moneyEquals, quantizeMonetaryValue, minorUnitsOf, fromMinorUnits } from '@jataqi/commercial-control-plane';
 
+// T-09: money helpers now require the currency explicitly (no silent 2dp
+// default). This T-08.1 regression passes 'KES' (a 2-decimal currency), so
+// every expected value below is unchanged from the T-08.1 baseline.
 describe('T-08.1 R-MONEY-02 reconciliation canonical moneyEquals', () => {
   it('0.30000000000000004 vs 0.3 are equal via canonical moneyEquals (no float trap)', async () => {
     // classic float trap: 0.1 + 0.2 = 0.30000000000000004 !== 0.3
@@ -15,8 +18,8 @@ describe('T-08.1 R-MONEY-02 reconciliation canonical moneyEquals', () => {
     const q2 = quantizeMonetaryValue({ amount: 0.3, currency: 'KES' });
     assert.equal(q1.amount, 0.3);
     assert.equal(q2.amount, 0.3);
-    assert.equal(minorUnitsOf(sum), 30n);
-    assert.equal(minorUnitsOf(0.3), 30n);
+    assert.equal(minorUnitsOf(sum, 'KES'), 30n);
+    assert.equal(minorUnitsOf(0.3, 'KES'), 30n);
   });
 
   it('reconciliation observes exact minor units, not float string', async () => {

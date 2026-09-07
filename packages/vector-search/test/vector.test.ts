@@ -133,6 +133,9 @@ describe('FlatIndex', () => {
   });
 });
 
+/** S-1: every module-level vector search is tenant-bound; records carry the same tenant. */
+const TENANT = 'tenant-vector';
+
 describe('VectorSearchModule (kernel integration)', () => {
   let kernel: Kernel;
   beforeEach(async () => {
@@ -144,12 +147,14 @@ describe('VectorSearchModule (kernel integration)', () => {
 
   it('embeds + indexes + searches text end-to-end', async () => {
     const mod = kernel.getModule<VectorSearchModule>('vector-search');
+    // S-1: vector records are tenant-tagged and every module-level search names
+    // its tenant — an unscoped module search is refused (see s1-vector-tenant.test.ts).
     await mod.embedAndAdd('docs', [
-      { id: 'd1', text: 'Cats are beloved domestic pets that purr.' },
-      { id: 'd2', text: 'The mitochondrion is the powerhouse of the cell.' },
-      { id: 'd3', text: 'Dogs are loyal animals often kept as pets.' },
+      { id: 'd1', text: 'Cats are beloved domestic pets that purr.', metadata: { tenantId: TENANT } },
+      { id: 'd2', text: 'The mitochondrion is the powerhouse of the cell.', metadata: { tenantId: TENANT } },
+      { id: 'd3', text: 'Dogs are loyal animals often kept as pets.', metadata: { tenantId: TENANT } },
     ]);
-    const hits = await mod.embedAndSearch('docs', 'Which animals are kept as pets?', { topK: 2 });
+    const hits = await mod.embedAndSearch('docs', 'Which animals are kept as pets?', { tenantId: TENANT, topK: 2 });
     assert.ok(hits.length >= 1);
     // d1 and d3 should both rank above d2.
     const topIds = hits.map((h) => h.id);
@@ -161,8 +166,8 @@ describe('VectorSearchModule (kernel integration)', () => {
     const mod = kernel.getModule<VectorSearchModule>('vector-search');
     const storageMod = kernel.getModule<StorageModule>('storage');
     await mod.embedAndAdd('p', [
-      { id: 'x', text: 'alpha bravo' },
-      { id: 'y', text: 'charlie delta' },
+      { id: 'x', text: 'alpha bravo', metadata: { tenantId: TENANT } },
+      { id: 'y', text: 'charlie delta', metadata: { tenantId: TENANT } },
     ]);
     await mod.persist('p');
     // Now load into a fresh VectorSearchModule using the SAME (already-initialized)
@@ -175,7 +180,7 @@ describe('VectorSearchModule (kernel integration)', () => {
     const mod2 = kernel2.getModule<VectorSearchModule>('vector-search');
     const idx = await mod2.load('p');
     assert.equal(await idx.count(), 2);
-    const hits = await mod2.embedAndSearch('p', 'alpha bravo', { topK: 1 });
+    const hits = await mod2.embedAndSearch('p', 'alpha bravo', { tenantId: TENANT, topK: 1 });
     assert.equal(hits[0]!.id, 'x');
     await kernel2.shutdown();
   });
@@ -190,8 +195,8 @@ describe('VectorSearchModule (kernel integration)', () => {
       await first.boot();
       const firstVectors = first.getModule<VectorSearchModule>('vector-search');
       await firstVectors.embedAndAdd('restart-index', [
-        { id: 'alpha', text: 'alpha bravo durable vector record' },
-        { id: 'beta', text: 'charlie delta unrelated record' },
+        { id: 'alpha', text: 'alpha bravo durable vector record', metadata: { tenantId: TENANT } },
+        { id: 'beta', text: 'charlie delta unrelated record', metadata: { tenantId: TENANT } },
       ]);
       await first.shutdown();
 
@@ -201,7 +206,10 @@ describe('VectorSearchModule (kernel integration)', () => {
       const secondVectors = second.getModule<VectorSearchModule>('vector-search');
       const restored = await secondVectors.load('restart-index');
       assert.equal(await restored.count(), 2);
-      const hits = await secondVectors.embedAndSearch('restart-index', 'alpha bravo durable vector record', { topK: 1 });
+      const hits = await secondVectors.embedAndSearch('restart-index', 'alpha bravo durable vector record', {
+        tenantId: TENANT,
+        topK: 1,
+      });
       assert.equal(hits[0]!.id, 'alpha');
     } finally {
       try { await first.shutdown(); } catch { /* cleanup after failed boot/test */ }
@@ -216,8 +224,8 @@ describe('VectorSearchModule (kernel integration)', () => {
     kernel.bus.on(VectorEvents.IndexCreated, () => { events.push('index-created'); });
     kernel.bus.on(VectorEvents.VectorAdded, () => { events.push('added'); });
     kernel.bus.on(VectorEvents.Searched, () => { events.push('searched'); });
-    await mod.embedAndAdd('e', [{ id: '1', text: 'hello' }]);
-    await mod.embedAndSearch('e', 'hello');
+    await mod.embedAndAdd('e', [{ id: '1', text: 'hello', metadata: { tenantId: TENANT } }]);
+    await mod.embedAndSearch('e', 'hello', { tenantId: TENANT });
     assert.ok(events.includes('index-created'));
     assert.ok(events.includes('added'));
     assert.ok(events.includes('searched'));

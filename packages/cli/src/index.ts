@@ -6,6 +6,13 @@ import { loadEnv } from './config.js';
 import { parseHostArgs, runHostCommand } from './host-command.js';
 import { runHostInspectCommand } from './host-inspect.js';
 import { runHostEnqueueCommand } from './host-ingress-command.js';
+import {
+  isKnowledgeCommand,
+  parseKnowledgeCommandArgs,
+  resolveOperatorTenant,
+  runKnowledgeCommand,
+  type KnowledgeCommandDeps,
+} from './knowledge-command.js';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import type { AgentRuntimeModule } from '@jataqi/agent-runtime';
@@ -24,6 +31,28 @@ Commands:
   repl                Start an interactive REPL.
   help                Show this help.
   exit / quit         Exit REPL.
+
+Operator tenant (R-4):
+  Every knowledge-facing command (ask, ingest, stats, search, entities, repl)
+  operates as exactly one tenant, taken from the deployment configuration:
+
+        JATAQI_OPERATOR_TENANT=<tenantId>   Required. The tenant this CLI
+                                            process operates as.
+
+  Without it the command FAILS CLOSED before the kernel boots: nothing is read,
+  written, searched, or listed, and NO default tenant is ever substituted. The
+  reserved test-only default tenant is refused as an operator tenant.
+
+        --tenant <tenantId>                 Optional consistency check ONLY.
+                                            Must equal JATAQI_OPERATOR_TENANT or
+                                            the command is refused; it can never
+                                            override or widen it, and it can
+                                            never establish a tenant on its own.
+
+  Tenant scoping is end to end: ingest stamps the tenant on the document, its
+  chunks, and the extracted graph; search and stats are filtered to it; and
+  ask/repl pass it to the agent as the execution tenant for the built-in
+  knowledge.search / graph.* / vector.search tools.
 
 Host runtime (R-01):
   host [options]      Run the supervised, unattended governed host process.
@@ -86,88 +115,83 @@ async function main() {
     process.exit(code);
   }
 
+  // `help` is pure text: it needs no tenant and boots nothing.
+  if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
+    console.log(HELP);
+    return;
+  }
+
+  // R-4: the operator tenant is resolved BEFORE anything boots, so a
+  // tenant-less invocation performs no data-plane work at all — no read, no
+  // write, no search — and can never land in another tenant's (or the shared
+  // default) knowledge. `--tenant` is only ever a consistency check.
+  let requestedTenant: string | undefined;
+  try {
+    requestedTenant = parseKnowledgeCommandArgs(args.slice(1)).tenantId;
+  } catch (error) {
+    console.error(`${cmd}: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  let tenantId: string;
+  try {
+    tenantId = resolveOperatorTenant(process.env, requestedTenant);
+  } catch (error) {
+    console.error(
+      `${cmd}: refused (no tenant context; nothing was booted, read, written, or searched): ${(error as Error).message}`,
+    );
+    process.exit(1);
+  }
+
   const jataqi = await createJataQiFromEnv();
   const kernel = jataqi.kernel;
   const agents = kernel.getModule<AgentRuntimeModule>('agent-runtime');
   const knowledge = kernel.getModule<KnowledgeService>('knowledge');
   const graph = kernel.getModule<KnowledgeGraphModule>('knowledge-graph');
+  const deps: KnowledgeCommandDeps = {
+    knowledge,
+    graph,
+    // The resolved tenant is threaded into the run metadata, which is the
+    // execution tenant every built-in tool reads (knowledge.search, graph.*,
+    // vector.search). Without it those tools retrieve unscoped or fail closed.
+    runAgent: (message, opts) => agents.run(message, opts),
+    env: process.env,
+  };
 
   try {
-    switch (cmd) {
-      case 'help':
-      case '--help':
-      case '-h':
-        console.log(HELP);
-        break;
-      case 'ask': {
-        const q = args.slice(1).join(' ');
-        if (!q) { console.error('Usage: jataqi ask <question>'); process.exit(1); }
-        const res = await agents.run(q);
-        console.log(res.answer);
-        break;
-      }
-      case 'ingest': {
-        const file = args[1];
-        if (!file) { console.error('Usage: jataqi ingest <file>'); process.exit(1); }
-        const fs = await import('node:fs/promises');
-        const text = await fs.readFile(file, 'utf8');
-        const doc = await knowledge.ingestText(text, { title: file });
-        // Auto-extract entities for each chunk.
-        for (const cid of doc.chunkIds) {
-          const c = await knowledge.getChunk(cid);
-          if (!c) continue;
-          const r = graph.extractFromText(c.text, { chunkId: cid, documentId: doc.id });
-          for (const t of r.triples) {
-            graph.linkMention(cid, t.object, 0.7, doc.id);
-          }
-        }
-        console.log(`Ingested ${file} → doc ${doc.id} (${doc.chunkIds.length} chunks)`);
-        break;
-      }
-      case 'stats': {
-        const ks = await knowledge.stats();
-        const gs = graph.stats();
-        console.log(JSON.stringify({ knowledge: ks, graph: gs }, null, 2));
-        break;
-      }
-      case 'search': {
-        const q = args.slice(1).join(' ');
-        if (!q) { console.error('Usage: jataqi search <query>'); process.exit(1); }
-        const hits = await knowledge.retrieve(q, { topK: 3, expandContext: false });
-        for (const h of hits) {
-          console.log(`- [${h.score.toFixed(3)}] (doc=${h.document.id}) ${h.chunk.text.slice(0, 200)}${h.chunk.text.length > 200 ? '…' : ''}`);
-        }
-        break;
-      }
-      case 'entities': {
-        const type = args[1];
-        const ents = type ? graph.entitiesByType(type) : graph.allEntities();
-        for (const e of ents.slice(0, 50)) console.log(`[${e.type}] ${e.id}\t${e.name}`);
-        console.log(`\n${ents.length} entities shown`);
-        break;
-      }
-      case 'repl':
-      default: {
-        const rl = readline.createInterface({ input, output });
-        console.log('JATA Qi REPL. Type "help" for commands, "exit" to quit.');
-        while (true) {
-          const line = (await rl.question('jataqi> ')).trim();
-          if (!line) continue;
-          if (line === 'exit' || line === 'quit') break;
-          if (line === 'help') { console.log(HELP); continue; }
-          if (line.startsWith('ingest ') || line.startsWith('search ') || line.startsWith('stats') || line.startsWith('entities')) {
-            const parts = line.split(/\s+/);
-            process.argv = ['node', 'jataqi', ...parts];
-            await main(); // restart command dispatch (simple impl)
-            continue;
-          }
-          const res = await agents.run(line);
-          console.log(res.answer);
-        }
-        rl.close();
-        break;
-      }
+    if (isKnowledgeCommand(cmd)) {
+      const code = await runKnowledgeCommand(cmd, args.slice(1), deps);
+      // Non-zero is recorded rather than process.exit()ed so the kernel is
+      // still shut down cleanly by the finally block below.
+      if (code !== 0) process.exitCode = code;
+      return;
     }
+
+    // repl (also the default for an unrecognized command)
+    const rl = readline.createInterface({ input, output });
+    console.log(`JATA Qi REPL [tenant ${tenantId}]. Type "help" for commands, "exit" to quit.`);
+    while (true) {
+      const line = (await rl.question('jataqi> ')).trim();
+      if (!line) continue;
+      if (line === 'exit' || line === 'quit') break;
+      if (line === 'help') {
+        console.log(HELP);
+        continue;
+      }
+      const parts = line.split(/\s+/);
+      const inner = parts[0] ?? '';
+      if (isKnowledgeCommand(inner)) {
+        // R-4: REPL sub-commands go through the SAME tenant-scoped path as the
+        // top-level dispatch. They no longer mutate process.argv and re-enter
+        // main() (which re-booted a second kernel per command and gave the
+        // sub-command a fresh, unverified argv).
+        const code = await runKnowledgeCommand(inner, parts.slice(1), deps);
+        if (code !== 0) console.error(`(refused: exit ${code})`);
+        continue;
+      }
+      const res = await agents.run(line, { metadata: { tenantId } });
+      console.log(res.answer);
+    }
+    rl.close();
   } finally {
     await jataqi.shutdown();
   }

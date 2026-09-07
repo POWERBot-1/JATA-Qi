@@ -156,11 +156,25 @@ describe('AgentRuntimeModule (kernel integration)', () => {
 
   it('knowledge.search tool hits the knowledge service', async () => {
     const svc = kernel.getModule<KnowledgeService>('knowledge');
-    await svc.ingestText('JATA Qi is a modular AI operating system.');
+    // R-1 (CI gate remediation): T-08.1 K1 authorizes the DEFAULT_TENANT_ID
+    // fallback only behind an explicit test flag — no NODE_ENV value may
+    // authorize it — so this test declares its tenant instead of relying on the
+    // removed implicit fallback. The guard stays armed: nothing here sets
+    // JATAQI_ALLOW_DEFAULT_TENANT_FALLBACK or
+    // JATAQI_TEST_ONLY_DEFAULT_TENANT_FALLBACK. The tool reads its execution
+    // tenant from ctx.metadata.tenantId, so the ingest and the tool call must
+    // agree on it.
+    const tenantId = 'tenant-agent-runtime';
+    const doc = await svc.ingestText('JATA Qi is a modular AI operating system.', { tenantId });
+    assert.equal(doc.tenantId, tenantId, 'ingest must be stamped with the explicit tenant');
     const tool = knowledgeSearchTool(() => svc);
-    const out = await tool.execute({ query: 'JATA Qi', topK: 1 }, { runId: 'x', logger: { info() {}, debug() {}, error() {} }, metadata: {} });
+    const out = await tool.execute({ query: 'JATA Qi', topK: 1 }, { runId: 'x', logger: { info() {}, debug() {}, error() {} }, metadata: { tenantId } });
     assert.ok(Array.isArray(out));
     assert.equal(out.length, 1);
     assert.ok((out as any)[0].text.includes('JATA Qi'));
+    // Same query, different tenant: the tool must return nothing rather than
+    // fall back to an unscoped retrieval.
+    const other = await tool.execute({ query: 'JATA Qi', topK: 1 }, { runId: 'y', logger: { info() {}, debug() {}, error() {} }, metadata: { tenantId: 'tenant-other' } });
+    assert.deepEqual(other, []);
   });
 });

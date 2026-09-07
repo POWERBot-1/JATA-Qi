@@ -44,14 +44,19 @@ export class GraphRAGRetriever {
     const depth = opts.graphDepth ?? 1;
     const gWeight = opts.graphWeight ?? 0.3;
     const graphTopK = opts.graphTopK ?? topK * 2;
-    // T-06: graph-RAG retrieval is tenant-scoped end to end. The tenant (when
-    // given) flows into the knowledge retrieval, every graph lookup, and every
-    // chunk/document re-read, so cross-tenant knowledge is unreachable.
-    const tenantId = opts.tenantId;
-    const docOpts = tenantId !== undefined ? { tenantId } : {};
+    // T-06: graph-RAG retrieval is tenant-scoped end to end. S-1 makes the
+    // tenant REQUIRED and resolves it FIRST — before any embedding, vector
+    // search, graph lookup, or chunk/document re-read — so a tenantless call is
+    // refused with no data-plane work at all (previously the unscoped vector
+    // retrieval ran first and only the later graph call failed closed). The
+    // resolved tenant flows into the knowledge retrieval, every graph lookup,
+    // and every chunk/document re-read, so cross-tenant knowledge is
+    // unreachable and no default tenant is substituted.
+    const tenantId = graph.requireTenant(opts.tenantId, 'graphRetrieve');
+    const docOpts = { tenantId };
 
-    // 1. Vector retrieval (tenant-scoped when opts.tenantId is given).
-    const vectorHits = await svc.retrieve(query, { ...opts, topK: topK + graphTopK });
+    // 1. Vector retrieval, tenant-scoped unconditionally.
+    const vectorHits = await svc.retrieve(query, { ...opts, tenantId, topK: topK + graphTopK });
 
     // 2. Find entities "mentioned" in the retrieved chunks.
     // Convention: triples with predicate 'mentions' link chunkId → entityId.
