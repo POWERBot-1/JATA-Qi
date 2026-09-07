@@ -1,4 +1,5 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
+import { AUTHORIZATION_GATE_TOKEN, type AuthorizationGate } from '@jataqi/authorization-boundary';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { VectorSearchModule } from '@jataqi/vector-search';
@@ -31,6 +32,8 @@ export class AgentRuntimeModule implements IModule {
   private agents = new Map<string, Agent>();
   private defaultLLM!: ILLM;
   private cfg!: AgentModuleConfig;
+  /** A-01: the authoritative boundary, when this composition installs it. */
+  private gate: AuthorizationGate | undefined;
 
   constructor(cfg: AgentModuleConfig = {}) {
     this.cfg = cfg;
@@ -39,6 +42,11 @@ export class AgentRuntimeModule implements IModule {
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
     this.defaultLLM = this.cfg.llm ?? new EchoLLM();
+    // A-01: when the composition root installs the authorization boundary
+    // module, every agent created by this module is enforced by it.
+    if (kernel.container.has(AUTHORIZATION_GATE_TOKEN)) {
+      this.gate = kernel.container.resolveSync<AuthorizationGate>(AUTHORIZATION_GATE_TOKEN);
+    }
     kernel.container.registerValue('agent.runtime', this);
     kernel.container.registerValue('llm.default', this.defaultLLM);
 
@@ -65,6 +73,7 @@ export class AgentRuntimeModule implements IModule {
       systemPrompt: cfg?.systemPrompt ?? this.cfg.systemPrompt,
       maxIterations: cfg?.maxIterations,
       tools,
+      authorizationGate: cfg?.authorizationGate ?? this.gate,
     });
     this.agents.set(name, agent);
     return agent;
