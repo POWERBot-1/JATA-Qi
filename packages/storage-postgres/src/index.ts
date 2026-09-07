@@ -1,6 +1,7 @@
 export { PostgresDriver } from './postgres-driver.js';
 export { PostgresNamespace, PostgresBlobStore, postgresStorageModule } from './postgres-driver.js';
 export type { PostgresStorageFactory } from './postgres-driver.js';
+export type { PostgresPoolHealth } from './postgres-driver.js';
 export { PostgresCollection } from './postgres-collection.js';
 export type { PgExecutor } from './postgres-collection.js';
 export { STORAGE_POSTGRES_SCHEMA_VERSION, R2_DEFAULT_LOCK_TIMEOUT_MS, R2_DEFAULT_STATEMENT_TIMEOUT_MS } from './config.js';

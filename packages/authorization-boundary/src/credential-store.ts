@@ -13,7 +13,7 @@
 // deleted (revocation evidence is permanent).
 
 import { randomBytes } from 'node:crypto';
-import { StorageModule, type ICollection } from '@jataqi/storage';
+import { StorageModule } from '@jataqi/storage';
 import {
   R2_SKEW_MS,
   SecurityStateError,

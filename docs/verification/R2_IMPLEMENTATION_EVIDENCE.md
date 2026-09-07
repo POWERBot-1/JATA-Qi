@@ -107,3 +107,76 @@ prior pass). R2 tests: 11 suites + 5 `r2-pg.ts` + `r2-fixtures.ts` +
 binding; the durable path never consults the in-memory registry).
 
 STOP: commit → push → PR, no merge, await independent verification.
+
+---
+
+## Post-verification remediation (F1 + F2 ONLY, PR #24 unmerged)
+
+Independent verification returned PASS WITH NON-BLOCKING FINDINGS
+(13 findings, F1–F12 + R2-OBS assessment; original record above
+preserved unchanged). This section records ONLY the two authorized
+pre-merge engineering remediations. No F3–F12 work. No R3 work.
+
+### F1 — PostgreSQL pool outage robustness (FIXED)
+
+Finding: `PostgresDriver` attached no pool `'error'` listener; a live
+PG outage produced an uncaught exception that terminated the host
+(proven live pre-fix: 2 uncaught exceptions on server stop).
+
+Fix (`packages/storage-postgres/src/postgres-driver.ts`, +~60 lines,
+no happy-path behavior change):
+- pool `'error'` listener → `notePoolError()` (records, never throws,
+  never falls back — host survives);
+- observable degradation state via `getPoolHealth()` (`degraded`,
+  monotonic `poolErrors`, `lastPoolErrorAt/Message`; type
+  `PostgresPoolHealth` re-exported from the package index);
+- recovery: `degraded` clears on the next operation that completes a
+  live round-trip (`beginTransaction` setup success, successful
+  `COMMIT`) — no restart, no permissive retry;
+- fail-closed chain unchanged and re-proven: ops attempted while PG is
+  unreachable fail through the normal query-error path, mapped to
+  `SECURITY_STATE_UNAVAILABLE` by `DurableDecider.storageDenied` (never
+  ALLOW, never MemoryDriver, never process-local authority).
+
+Regression: `packages/authorization-boundary/test/r2-pool-outage.test.ts`
+(5 tests, real embedded-PG stop/restart, no mocks/seam): healthy
+baseline (pool not degraded) → outage (host survives, degradation
+recorded, decide throws `SECURITY_STATE_UNAVAILABLE`, session issuance
+refused) → pre-outage ALLOW envelope executes NO effect during outage
+(`SECURITY_STATE_UNAVAILABLE`; gate still durably attached, sync
+`decide` still refuses) → restart (decide ALLOWs again, effect runs,
+`degraded` clears, outage stays visible in the monotonic counter).
+Mutation-checked: with the listener neutralized the suite FAILS (3/5);
+with the fix it passes 5/5.
+
+### F2 — R2 lint failures (FIXED)
+
+- `postgres-driver.ts` `ensureIndex`: 12 `no-useless-escape` errors
+  removed by writing `"` instead of `\"` in template literals, regex
+  literals, and single-quoted strings. SQL semantics byte-identical
+  (proven by evaluating old vs new DDL construction over adversarial
+  inputs incl. embedded quotes — identical output). No rule
+  suppression, no config change.
+- `credential-store.ts:16`: removed the unused `ICollection` import.
+
+### Remediation regression (2026-09-07, post-fix)
+
+- `npm run build`: exit 0 (0 TS errors).
+- `npm test`: exit 0 — 242 suites, 1151/1151 pass, 0 fail, 0 skipped,
+  0 todo (1146 pre-remediation + 5 new F1 tests). No test weakened.
+- `npm run lint`: exit 0 — 0 errors, 62 warnings (pre-remediation:
+  12 errors + 63 warnings; the 62 remaining warnings are pre-existing
+  and untouched).
+- R2 scope + F1 suite + T-15 + T-18: 12 suites, 69/69 pass, 0 skip.
+- All 20 adversarial cases re-executed live post-fix: 50/50 checks
+  pass (P1 10/10, P2 12/12, P3 7/7, P4 6/6, P5 3/3, P6 5/5, P9 7/7 —
+  incl. the previously failing host-survival probe, now passing, plus
+  a degradation-observability probe).
+- `npm run scan:r2`: PASS (8 files, 13 rows, 0 findings).
+
+Changed files (remediation): `storage-postgres/src/postgres-driver.ts`,
+`storage-postgres/src/index.ts`,
+`authorization-boundary/src/credential-store.ts`,
+`authorization-boundary/test/r2-pool-outage.test.ts` (new), this pack.
+Main (`0db2f36`) not mutated. Merge still UNAUTHORIZED; awaiting fresh
+read-only verification of this corrective patch.
