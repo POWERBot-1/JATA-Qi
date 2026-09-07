@@ -92,23 +92,65 @@ export interface ToolCallResult<Output = unknown> {
 
 export interface ToolRegistryOptions {
   /**
-   * A-01: the authoritative authorization boundary. When set, every call is
-   * enforced through it; there is no per-call opt-out.
+   * A-01: the authoritative authorization boundary. Every call is enforced
+   * through it; there is no per-call opt-out. R1: when it is ABSENT, calls
+   * are DENIED — absence is never permission.
    */
   authorizationGate?: AuthorizationGate;
+  /**
+   * A-01: lazy boundary provider (module init order is not guaranteed). It is
+   * consulted once, on the first call. If it yields nothing, the call is
+   * denied — an unresolvable boundary is a missing boundary.
+   */
+  resolveAuthorizationGate?: () => AuthorizationGate | undefined;
 }
+
+/**
+ * R1 INVARIANT B/O: the denial reported when a tool call is attempted with no
+ * authoritative authorization boundary installed. The tool's `execute` is
+ * never reached.
+ */
+export const NO_BOUNDARY_DENIAL =
+  'AUTHORIZATION_DENIED: AUTHORIZATION_BOUNDARY_ABSENT — no authoritative A-01 authorization boundary is installed for this tool registry; the call is denied and the tool was not executed (fail-closed)';
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private gate: AuthorizationGate | undefined;
+  private resolveGate: (() => AuthorizationGate | undefined) | undefined;
+  private gateResolved: boolean;
 
   constructor(options: ToolRegistryOptions = {}) {
     this.gate = options.authorizationGate;
+    this.resolveGate = options.authorizationGate ? undefined : options.resolveAuthorizationGate;
+    this.gateResolved = Boolean(options.authorizationGate);
   }
 
-  /** Install/replace the A-01 boundary for this registry. */
+  /**
+   * Install the A-01 boundary for this registry. R1: the boundary is
+   * install-once. Replacing an installed authoritative boundary with a
+   * different one is rejected — a swappable gate is not authoritative.
+   */
   setAuthorizationGate(gate: AuthorizationGate): void {
+    if (this.gate && this.gate !== gate) {
+      throw new Error(
+        'ToolRegistry: an authoritative A-01 authorization boundary is already installed and cannot be replaced (fail-closed).',
+      );
+    }
     this.gate = gate;
+    this.gateResolved = true;
+  }
+
+  /**
+   * Resolve the authoritative boundary once. Returns undefined only when the
+   * composition genuinely installed none — in which case every call DENIES.
+   */
+  private authoritativeGate(): AuthorizationGate | undefined {
+    if (this.gate) return this.gate;
+    if (!this.gateResolved && this.resolveGate) {
+      this.gateResolved = true;
+      this.gate = this.resolveGate();
+    }
+    return this.gate;
   }
 
   /** The installed boundary, if any (diagnostics; never grants anything). */
@@ -146,8 +188,20 @@ export class ToolRegistry {
     // A-01: behind an installed boundary, the gate is the only path to the
     // tool. Denial is returned as a tool error result — the side effect is
     // never invoked.
-    if (this.gate) {
-      const gate = this.gate;
+    // R1 INVARIANT B + O: NO BOUNDARY -> DENY. The tool's side effect is
+    // unreachable when authorization cannot be established. There is no
+    // unguarded execution path below this point.
+    const gate = this.authoritativeGate();
+    if (!gate) {
+      return {
+        tool: name,
+        input,
+        output: undefined,
+        error: NO_BOUNDARY_DENIAL,
+        durationMs: Date.now() - start,
+      };
+    }
+    {
       try {
         const decl = tool.authorization;
         if (!decl) {
@@ -195,19 +249,6 @@ export class ToolRegistry {
           durationMs: Date.now() - start,
         };
       }
-    }
-    try {
-      validateInput(tool, input);
-      const output = await tool.execute(input, ctx);
-      return { tool: name, input, output, durationMs: Date.now() - start };
-    } catch (err: any) {
-      return {
-        tool: name,
-        input,
-        output: undefined,
-        error: err?.message ?? String(err),
-        durationMs: Date.now() - start,
-      };
     }
   }
 }

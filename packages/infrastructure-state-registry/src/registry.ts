@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority, type KernelWorkerAuthorization } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -40,7 +41,12 @@ export class InfrastructureStateRegistry {
   private readonly adapters = new Map<string, InfrastructureAdapter>();
   private readonly verificationResults = new Map<string, InfrastructureVerificationResult>();
 
+  /** R1/D2: verified, scoped kernel-internal worker authority (per adapter). */
+  private readonly workerAuthority = new Map<string, KernelWorkerAuthorization>();
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.resources = await kernel.getModule<StorageModule>('storage').collection<InfrastructureResource>(RESOURCES_COLLECTION);
     this.runtime = runtime;
   }
@@ -70,6 +76,15 @@ export class InfrastructureStateRegistry {
       rollback: adapter.rollback ? (context) => adapter.rollback!(context) : undefined,
     };
     this.runtime.registerAdapter(runtimeAdapter);
+    // R1/D2: NARROW kernel-internal authority bound to exactly this adapter,
+    // these action types and this target system. No wildcard operation/tool.
+    const workerAuth = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.infrastructure.${adapter.id}`,
+      tool: runtimeAdapter.id,
+      operations: [InfrastructureProvisionActionType],
+      targets: [{ system: targetSystem(adapter.id) }],
+    });
+    if (workerAuth) this.workerAuthority.set(adapter.id, workerAuth);
     this.adapters.set(adapter.id, adapter);
     return metadata(adapter, actor.tenantId);
   }
@@ -119,7 +134,7 @@ export class InfrastructureStateRegistry {
         });
     if (!action) throw new InfrastructureRegistryError('Provisioning action could not be planned.');
     const provisioning = await this.update(resource, { actionId: action.id, status: 'PROVISIONING', updatedAt: Date.now() });
-    const result = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(adapter.maxAttempts), timeoutMs: adapter.defaultTimeoutMs });
+    const result = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(adapter.maxAttempts), timeoutMs: adapter.defaultTimeoutMs, ...(this.workerAuthority.has(adapter.id) ? { authorization: this.workerAuthority.get(adapter.id)! } : {}) });
     return this.update(provisioning, {
       status: statusFromAction(result.action.executionStatus),
       actionId: action.id,

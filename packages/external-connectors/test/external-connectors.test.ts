@@ -2,6 +2,12 @@ import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
+// R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
+// AuthorizationBoundaryModule — the same module the production composition
+// installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
+// worker operations establish scoped KERNEL_INTERNAL authority through the
+// real boundary; anything out of scope is still denied.
+import { AuthorizationBoundaryModule, testCapabilityManifest, testPrincipal } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule, type ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
 import { CommercialControlPlaneModule, type CommercialActor, type CommercialControlPlaneService, type CommercialEvidence } from '@jataqi/commercial-control-plane';
 import { ExternalConnectorError, ExternalConnectorModule, type ExternalConnector, type ExternalConnectorRegistry } from '../src/index.js';
@@ -28,6 +34,11 @@ function evidence(id = 'connector-evidence'): CommercialEvidence {
 function connector(counters: Record<string, number>, overrides: Partial<ExternalConnector> = {}): ExternalConnector {
   return {
     id: 'test-email-connector',
+    // R1 (§6 REPAIR): behind the now-mandatory boundary every connector must
+    // bind a capability. Declaring the binding is the LEGITIMATE fix; the
+    // previous fixture relied on the boundary being absent.
+    capabilityId: 'connector.test-email',
+    capabilityVersion: '1',
     providerId: 'test-email',
     providerType: 'email',
     targetSystem: 'test-email-api',
@@ -77,6 +88,7 @@ beforeEach(async () => {
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
   await kernel.boot();
@@ -129,7 +141,24 @@ describe('External Connector Fabric', () => {
 
     const proposed = await decision(registration.id);
     const planned = await runtime.plan(operator, proposed.id, { targetSystem: 'test-email-api', idempotencyKey: 'active-connector', dryRun: false });
-    const execution = await runtime.execute(operator, planned.id);
+    // R1 (§6 REPAIR): a legitimate external execution now supplies legitimate
+    // authorization — a narrow real manifest bound to the executable adapter
+    // identity, and a verified principal. Nothing is bypassed.
+    registry.getAuthorizationGate()!.manifestsRegistry.register(
+      testCapabilityManifest({
+        capabilityId: 'connector.test-email',
+        operations: [{ tool: `connector:${registration.id}`, operation: 'PUBLISH_CONTENT' }],
+        targets: [{ system: 'test-email-api' }],
+        tenantScopes: ['acme'],
+      }),
+    );
+    const execution = await runtime.execute(operator, planned.id, {
+      authorization: {
+        principal: testPrincipal({ id: 'user:alice', tenantId: 'acme', roles: ['operator'] }),
+        capabilityId: 'connector.test-email',
+        capabilityVersion: '1',
+      },
+    });
     assert.equal(execution.action.executionStatus, 'VERIFYING');
     await runtime.verify(operator, planned.id);
     assert.equal(counters.execute, 1);

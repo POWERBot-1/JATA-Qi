@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority, type KernelWorkerAuthorization } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -41,7 +42,12 @@ export class CodingAgentTaskGraph {
   private readonly adapterIds = new Map<string, string>();
   private readonly taskResults = new Map<string, CodingTaskResult>();
 
+  /** R1/D2: verified, scoped kernel-internal worker authority (per adapter). */
+  private readonly workerAuthority = new Map<string, KernelWorkerAuthorization>();
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.tasks = await kernel.getModule<StorageModule>('storage').collection<EngineeringTask>(TASKS_COLLECTION);
     this.runtime = runtime;
   }
@@ -79,6 +85,15 @@ export class CodingAgentTaskGraph {
       rollback: worker.rollback ? (context) => worker.rollback!(context) : undefined,
     };
     this.runtime.registerAdapter(adapter);
+    // R1/D2: NARROW kernel-internal authority bound to exactly this adapter,
+    // these action types and this target system. No wildcard operation/tool.
+    const workerAuth = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.copilot.${worker.id}`,
+      tool: adapter.id,
+      operations: [CodingAgentActionType],
+      targets: [{ system: targetSystem(worker.id) }],
+    });
+    if (workerAuth) this.workerAuthority.set(worker.id, workerAuth);
     this.workers.set(worker.id, worker);
     this.adapterIds.set(worker.id, adapterId);
     return workerMetadata(worker, actor.tenantId);
@@ -203,7 +218,7 @@ export class CodingAgentTaskGraph {
     const running: EngineeringTask = { ...task, actionId: action.id, status: 'RUNNING', attemptCount: action.attemptCount, updatedAt: Date.now() };
     await this.tasks.put(running);
 
-    const result = await this.runtime.execute(actor, action.id, { maxAttempts: task.maxAttempts, timeoutMs: worker.defaultTimeoutMs });
+    const result = await this.runtime.execute(actor, action.id, { maxAttempts: task.maxAttempts, timeoutMs: worker.defaultTimeoutMs, ...(this.workerAuthority.has(worker.id) ? { authorization: this.workerAuthority.get(worker.id)! } : {}) });
     const taskResult = this.taskResults.get(action.id);
     const state = taskStateFromAction(result.action.executionStatus);
     const updated: EngineeringTask = {

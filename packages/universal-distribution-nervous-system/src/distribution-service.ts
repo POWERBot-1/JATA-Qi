@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -46,7 +47,11 @@ export class UniversalDistributionService {
   private visibility!: UniversalVisibilityFabricService;
   private controlPlane!: CommercialControlPlaneService;
 
+  /** R1/D2: verified, scoped kernel-internal worker authority. */
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.plans = await kernel.getModule<StorageModule>('storage').collection<DistributionPlan>(PLANS_COLLECTION);
     this.runtime = runtime;
     this.connectors = kernel.getModule<ExternalConnectorModule>('external-connectors').getRegistry();
@@ -114,7 +119,16 @@ export class UniversalDistributionService {
     if (!action) throw new DistributionError('Distribution action could not be planned.');
     const publishing = await this.update(plan, { actionId: action.id, state: 'PUBLISHING' });
     await this.emit(actor, DistributionEvents.Publishing, publishing, { planId: publishing.id, actionId: action.id, dryRun: action.dryRun });
-    const execution = await this.runtime.execute(actor, action.id);
+    // R1/D2: establish NARROW kernel-internal authority for exactly this
+    // connector adapter, this action type and this target system. Nothing is
+    // bypassed: an out-of-scope execution is still denied by the boundary.
+    const workerAuth = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.distribution.${plan.connectorId}`,
+      tool: `connector:${plan.connectorId}`,
+      operations: [action.actionType],
+      targets: [{ system: connector.targetSystem }],
+    });
+    const execution = await this.runtime.execute(actor, action.id, workerAuth ? { authorization: workerAuth } : {});
     const state = execution.action.dryRun ? 'SIMULATED' : execution.action.executionStatus === 'VERIFYING' ? 'VERIFYING' : mapActionFailure(execution.action);
     const updated = await this.update(publishing, { state, failureReason: execution.action.error });
     if (state === 'FAILED' || state === 'BLOCKED') await this.emit(actor, DistributionEvents.Failed, updated, { planId: updated.id, state, reason: updated.failureReason });

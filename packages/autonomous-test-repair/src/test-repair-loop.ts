@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority, type KernelWorkerAuthorization } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -42,7 +43,12 @@ export class TestRepairLoop {
   private readonly adapterIds = new Map<string, string>();
   private readonly results = new Map<string, TestRepairResult>();
 
+  /** R1/D2: verified, scoped kernel-internal worker authority (per adapter). */
+  private readonly workerAuthority = new Map<string, KernelWorkerAuthorization>();
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.runs = await kernel.getModule<StorageModule>('storage').collection<TestRepairRun>(RUNS_COLLECTION);
     this.runtime = runtime;
   }
@@ -82,6 +88,15 @@ export class TestRepairLoop {
       rollback: worker.rollback ? (context) => worker.rollback!(context) : undefined,
     };
     this.runtime.registerAdapter(adapter);
+    // R1/D2: NARROW kernel-internal authority bound to exactly this adapter,
+    // these action types and this target system. No wildcard operation/tool.
+    const workerAuth = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.test-repair.${worker.id}`,
+      tool: adapter.id,
+      operations: [TestRepairActionType],
+      targets: [{ system: targetSystem(worker.id) }],
+    });
+    if (workerAuth) this.workerAuthority.set(worker.id, workerAuth);
     this.workers.set(worker.id, worker);
     this.adapterIds.set(worker.id, adapter.id);
     return workerMetadata(worker, actor.tenantId);
@@ -132,7 +147,7 @@ export class TestRepairLoop {
 
     const running: TestRepairRun = { ...run, actionId: action.id, state: 'TESTING', attemptCount: action.attemptCount, updatedAt: Date.now() };
     await this.runs.put(running);
-    const execution = await this.runtime.execute(actor, action.id, { maxAttempts: run.maxAttempts, timeoutMs: run.request.timeoutMs ?? worker.defaultTimeoutMs });
+    const execution = await this.runtime.execute(actor, action.id, { maxAttempts: run.maxAttempts, timeoutMs: run.request.timeoutMs ?? worker.defaultTimeoutMs, ...(this.workerAuthority.has(worker.id) ? { authorization: this.workerAuthority.get(worker.id)! } : {}) });
     const result = this.results.get(action.id);
     const state = runStateFromAction(execution.action.executionStatus, result);
     const updated: TestRepairRun = {

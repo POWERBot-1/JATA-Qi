@@ -2,6 +2,12 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
+// R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
+// AuthorizationBoundaryModule — the same module the production composition
+// installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
+// worker operations establish scoped KERNEL_INTERNAL authority through the
+// real boundary; anything out of scope is still denied.
+import { AuthorizationBoundaryModule } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
 import { CommercialControlPlaneModule, type CommercialActor } from '@jataqi/commercial-control-plane';
 import { PaymentsModule, type PaymentsService, PaymentEvents } from '../src/index.js';
@@ -19,6 +25,7 @@ beforeEach(async () => {
   kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
   await kernel.boot();

@@ -31,6 +31,9 @@ describe('T-08.1 R-MONEY-02 reconciliation canonical moneyEquals', () => {
     const { BillingModule } = await import('@jataqi/billing');
     const { PaymentsModule, PaymentCreateActionType } = await import('@jataqi/payments');
     const { RevenueLedgerModule } = await import('@jataqi/revenue-ledger');
+    // R1 (§6): the REAL mandatory authorization boundary — the same module the
+    // production composition installs. Not a mock, not a bypass.
+    const { AuthorizationBoundaryModule } = await import('@jataqi/authorization-boundary');
     const { ReconciliationModule } = await import('../src/index.js');
     const now = Date.now();
     const admin = { id: 'admin', tenantId: 'acme', roles: ['admin'] as const };
@@ -38,6 +41,7 @@ describe('T-08.1 R-MONEY-02 reconciliation canonical moneyEquals', () => {
     const kernel = createTestKernel();
     kernel.register(new StorageModule());
     kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+    kernel.register(new AuthorizationBoundaryModule());
     kernel.register(new AutonomousActionRuntimeModule());
     kernel.register(new PaymentsModule());
     kernel.register(new CommercialEventStreamModule({ now: () => now }));

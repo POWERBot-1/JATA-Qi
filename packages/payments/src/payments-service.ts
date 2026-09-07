@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority, type KernelWorkerAuthorization } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection, StorageWriteScope } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -50,7 +51,16 @@ export class PaymentsService {
   private readonly verificationResults = new Map<string, PaymentVerificationResult>();
   private readonly recoveredReservationIds = new Set<string>();
 
+  /**
+   * R1/D2: verified, scoped kernel-internal authority for the payments
+   * worker. Established per registered provider adapter; `undefined` when no
+   * boundary is installed, in which case execution DENIES (fail-closed).
+   */
+  private readonly workerAuthority = new Map<string, KernelWorkerAuthorization>();
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.api = kernel;
     this.storage = kernel.getModule<StorageModule>('storage');
     this.payments = await this.storage.collection<PaymentIntent>(PAYMENTS_COLLECTION);
@@ -113,6 +123,16 @@ export class PaymentsService {
       rollback: provider.rollback ? (context) => provider.rollback!(context) : undefined,
     };
     this.runtime.registerAdapter(adapter);
+    // R1/D2: bind NARROW kernel-internal authority to exactly this adapter,
+    // exactly these action types, and exactly this provider's target system.
+    const authority = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.payments.${provider.id}`,
+      description: `Payments worker authority for provider ${provider.id}`,
+      tool: adapter.id,
+      operations: actionTypes,
+      targets: [{ system: targetSystem(provider.id) }],
+    });
+    if (authority) this.workerAuthority.set(provider.id, authority);
     this.providers.set(provider.id, provider);
     return providerMetadata(provider, actor.tenantId);
   }
@@ -189,7 +209,11 @@ export class PaymentsService {
       action = await this.runtime.getAction(actor, payment.createActionId);
       if (!action) throw new PaymentError('Payment execution action is missing.');
     }
-    const execution = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(provider.maxAttempts), timeoutMs: provider.defaultTimeoutMs });
+    const execution = await this.runtime.execute(actor, action.id, {
+      maxAttempts: normalizedAttempts(provider.maxAttempts),
+      timeoutMs: provider.defaultTimeoutMs,
+      ...(this.workerAuthority.has(provider.id) ? { authorization: this.workerAuthority.get(provider.id)! } : {}),
+    });
     const result = this.providerResults.get(action.id);
     const status = execution.action.dryRun ? 'SIMULATED' : execution.action.executionStatus === 'VERIFYING' ? 'SUCCEEDED_UNVERIFIED' : execution.action.executionStatus === 'FAILED' ? 'FAILED' : 'BLOCKED';
     const updated = await this.update(reserved, {
@@ -284,7 +308,11 @@ export class PaymentsService {
       throw new PaymentError('Refund action could not be planned.');
     }
     const reserved = await this.update(queued, { refundActionId: action.id });
-    const execution = await this.runtime.execute(actor, action.id, { maxAttempts: normalizedAttempts(provider.maxAttempts), timeoutMs: provider.defaultTimeoutMs });
+    const execution = await this.runtime.execute(actor, action.id, {
+      maxAttempts: normalizedAttempts(provider.maxAttempts),
+      timeoutMs: provider.defaultTimeoutMs,
+      ...(this.workerAuthority.has(provider.id) ? { authorization: this.workerAuthority.get(provider.id)! } : {}),
+    });
     const result = this.providerResults.get(action.id);
     return this.update(reserved, {
       status: execution.action.dryRun ? 'SIMULATED' : execution.action.executionStatus === 'VERIFYING' ? 'REFUND_UNVERIFIED' : 'FAILED',

@@ -156,8 +156,16 @@ export class ActionRuntimeService {
       const timeoutMs = options.timeoutMs ?? adapter.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
       const invokeAdapter = (): ReturnType<typeof adapter.execute> => {
         const gate = this.getAuthorizationGate();
+        // R1 INVARIANT B + N: NO AUTHORITATIVE BOUNDARY -> DENY.
+        // adapter.execute() is unreachable. Absence of authorization
+        // infrastructure is never permission to act externally.
         if (!gate) {
-          return withTimeout(adapter.execute(context), controller, timeoutMs, `Execution timed out for action ${running.id}.`);
+          return Promise.reject(
+            new AuthorizationDeniedError(
+              ['POLICY_ENGINE_UNAVAILABLE'],
+              'no authoritative A-01 authorization boundary is installed; external adapter execution is denied and was not invoked (fail-closed)',
+            ),
+          );
         }
         // A-01: the external call is decided and enforced at the boundary.
         // Each attempt is re-decided (fresh envelope); a DENY is

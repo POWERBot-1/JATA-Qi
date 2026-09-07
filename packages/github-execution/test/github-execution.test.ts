@@ -2,6 +2,12 @@ import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
+// R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
+// AuthorizationBoundaryModule — the same module the production composition
+// installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
+// worker operations establish scoped KERNEL_INTERNAL authority through the
+// real boundary; anything out of scope is still denied.
+import { AuthorizationBoundaryModule } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
 import {
   CommercialControlPlaneModule,
@@ -73,6 +79,7 @@ beforeEach(async () => {
   const kernel = createTestKernel();
   kernel.register(new StorageModule());
   kernel.register(new CommercialControlPlaneModule({ now: () => now }));
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
   kernel.register(new GitHubExecutionModule());
@@ -97,7 +104,7 @@ async function createDecision(connectorId: string) {
 
 describe('GitHub Execution', () => {
   it('reports an unconfigured GitHub connection as blocked without attempting a provider operation', async () => {
-    const connection = await github.configure(admin, { credentialReference: 'secret://github/acme' });
+    const connection = await github.configure(admin, { credentialReference: 'secret://github/acme', capabilityId: 'connector.github', capabilityVersion: '1' });
     assert.equal(connection.status, 'BLOCKED_CREDENTIALS');
     assert.equal(connection.connectorHealth, 'AUTHORIZATION_REQUIRED');
     const activated = await github.activate(admin, connection.id);
@@ -111,7 +118,8 @@ describe('GitHub Execution', () => {
   it('requires capability/health activation and control-plane authorization before a sandbox operation', async () => {
     const counters: Record<string, number> = {};
     const connection = await github.configure(admin, {
-      credentialReference: 'secret://github/acme', client: client(counters), supportedActions: ['GITHUB_BRANCH_CREATE'],
+      // R1 (§6 REPAIR): the mandatory boundary requires a capability binding.
+      capabilityId: 'connector.github', capabilityVersion: '1', credentialReference: 'secret://github/acme', client: client(counters), supportedActions: ['GITHUB_BRANCH_CREATE'],
       requiredPermissions: ['contents:write'], environment: 'sandbox',
     });
     const activated = await github.activate(admin, connection.id);
@@ -137,6 +145,7 @@ describe('GitHub Execution', () => {
   it('maps an authorization-required provider response to a blocked permission state', async () => {
     const counters: Record<string, number> = {};
     const connection = await github.configure(admin, {
+      capabilityId: 'connector.github', capabilityVersion: '1',
       credentialReference: 'secret://github/acme', client: client(counters, 'AUTHORIZATION_REQUIRED'),
       supportedActions: ['GITHUB_BRANCH_CREATE'], requiredPermissions: ['contents:write'],
     });
@@ -148,6 +157,7 @@ describe('GitHub Execution', () => {
   it('keeps production execution behind explicit enablement and live verification', async () => {
     const counters: Record<string, number> = {};
     const staged = await github.configure(admin, {
+      capabilityId: 'connector.github', capabilityVersion: '1',
       credentialReference: 'secret://github/acme-production', client: client(counters),
       supportedActions: ['GITHUB_BRANCH_CREATE'], requiredPermissions: ['contents:write'], environment: 'production', productionEnabled: false,
     });
@@ -156,6 +166,7 @@ describe('GitHub Execution', () => {
     assert.equal(counters.connect ?? 0, 0, 'production connector was not contacted before explicit enablement');
 
     const enabled = await github.configure(admin, {
+      capabilityId: 'connector.github', capabilityVersion: '1',
       credentialReference: 'secret://github/acme-production', client: client(counters),
       supportedActions: ['GITHUB_BRANCH_CREATE'], requiredPermissions: ['contents:write'], environment: 'production', productionEnabled: true,
     });

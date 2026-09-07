@@ -80,6 +80,24 @@ export {
 } from './audit.js';
 
 export {
+  KernelInternalIdentity,
+  KERNEL_INTERNAL_SCOPES,
+  KERNEL_INTERNAL_TENANT,
+  KERNEL_INTERNAL_PRINCIPAL_PREFIX,
+  KERNEL_INTERNAL_IDENTITY_TOKEN,
+  isKernelInternalScope,
+} from './kernel-principal.js';
+export type { KernelInternalScope, KernelInternalPrincipal } from './kernel-principal.js';
+
+export { establishKernelWorkerAuthority } from './kernel-worker-authority.js';
+export type { KernelWorkerCapabilitySpec, KernelWorkerAuthorization } from './kernel-worker-authority.js';
+
+export { testCapabilityManifest, withTestManifests, testPrincipal } from './test-kernel.js';
+
+export {
+  requireAuthorizationBoundary,
+  A01_MANDATORY_BOUNDARY_INVARIANT,
+  AUTHORIZATION_BOUNDARY_MODULE_ID,
   AuthorizationBoundaryModule,
   AUTHORIZATION_GATE_TOKEN,
   AUTHORIZATION_MANIFESTS_TOKEN,

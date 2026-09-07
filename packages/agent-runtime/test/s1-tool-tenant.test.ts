@@ -26,6 +26,37 @@ import {
   vectorSearchTool,
 } from '../src/index.js';
 import type { Tool, ToolContext } from '../src/index.js';
+// R1 (§6): the agent loop now runs behind the REAL mandatory boundary. These
+// fixtures construct LEGITIMATE per-tenant authorization; nothing is mocked
+// or bypassed. The tenant on a call comes from the SEALED ENVELOPE, which is
+// strictly stronger than the caller-supplied metadata this suite used before.
+import {
+  AuthorizationGate,
+  CapabilityManifestRegistry,
+  InMemoryAuditSink,
+  testCapabilityManifest,
+  testPrincipal,
+} from '@jataqi/authorization-boundary';
+
+/** A real gate granting `internal-knowledge.read` to exactly one tenant. */
+function knowledgeGate(tenantId: string): AuthorizationGate {
+  const manifests = new CapabilityManifestRegistry();
+  manifests.register(
+    testCapabilityManifest({
+      capabilityId: 'internal-knowledge.read',
+      operations: [
+        { tool: 'knowledge.search', operation: 'search' },
+        { tool: 'graph.traverse', operation: 'traverse' },
+      ],
+      targets: [{ system: 'tenant-knowledge' }],
+      tenantScopes: [tenantId],
+      maxImpact: 'READ',
+      rateLimit: { windowMs: 60_000, max: 100_000 },
+      budgetPerRunCostUnits: 100_000,
+    }),
+  );
+  return new AuthorizationGate({ manifests, audit: new InMemoryAuditSink() });
+}
 
 const TENANT_A = 'tenant-alpha';
 const TENANT_B = 'tenant-beta';
@@ -213,7 +244,7 @@ describe('S-1 agent tool tenant boundary (authorization outside the model)', () 
   });
 
   describe('agent loop: a run without tenant context gets a refusal, not data', () => {
-    function agentWithSearch() {
+    function agentWithSearch(gate?: AuthorizationGate) {
       return new Agent({
         name: 's1-agent',
         llm: new ScriptedLLM([
@@ -221,17 +252,21 @@ describe('S-1 agent tool tenant boundary (authorization outside the model)', () 
           { text: 'done' },
         ]),
         tools: [knowledgeSearchTool(() => svc)],
+        ...(gate ? { authorizationGate: gate } : {}),
       });
     }
 
+    // R1: a run with NO authorization context is now denied by the mandatory
+    // boundary itself, which is strictly stronger than the previous
+    // tenant-context refusal: the tool is never entered at all.
     it('surfaces the refusal to the model and discloses nothing', async () => {
       const agent = agentWithSearch();
       const res = await agent.run({ message: 'What do we know about narwhals and otters?' });
       assert.equal(res.toolCalls.length, 1, 'the tool was attempted');
       const call = res.toolCalls[0]!;
       assert.ok(call.error, 'the tool call failed closed');
-      assert.match(call.error!, /Failing closed/, 'the refusal reason reaches the loop');
-      assert.match(call.error!, /no default tenant/, 'the refusal states no default tenant substitution');
+      assert.match(call.error!, /AUTHORIZATION_DENIED|Failing closed/, 'the refusal reason reaches the loop');
+      assert.equal(call.output, undefined, 'a denied call discloses no data');
       assert.equal(JSON.stringify(res.messages).includes(SECRET_A), false, 'no A data entered the conversation');
       assert.equal(JSON.stringify(res.messages).includes('crimson otter ledgers in a Mombasa'), false, 'no B data entered the conversation');
       // The victim tenants' data is untouched and still only visible to them.
@@ -239,9 +274,12 @@ describe('S-1 agent tool tenant boundary (authorization outside the model)', () 
       assert.ok(await svc.getDocument(docBId, { tenantId: TENANT_B }));
     });
 
-    it('returns only the run tenant data when the run metadata carries the tenant', async () => {
-      const agent = agentWithSearch();
-      const res = await agent.run({ message: 'What do we know about narwhals?', metadata: { tenantId: TENANT_A } });
+    it('returns only the run tenant data when the SEALED ENVELOPE carries the tenant', async () => {
+      const agent = agentWithSearch(knowledgeGate(TENANT_A));
+      const res = await agent.run({
+        message: 'What do we know about narwhals?',
+        authorization: { principal: testPrincipal({ id: 'user:a', tenantId: TENANT_A, roles: ['operator'] }), agentId: 's1-agent' },
+      });
       const call = res.toolCalls[0]!;
       assert.equal(call.error, undefined, 'the tenant-bound call succeeds');
       const output = JSON.stringify(call.output);
@@ -251,9 +289,12 @@ describe('S-1 agent tool tenant boundary (authorization outside the model)', () 
       assert.equal(JSON.stringify(res.messages).includes('beta-only'), false, 'B metadata never reaches the model');
     });
 
-    it('a run whose metadata names another tenant is scoped to that tenant only (no mixing)', async () => {
-      const agent = agentWithSearch();
-      const res = await agent.run({ message: 'otter ledgers?', metadata: { tenantId: TENANT_B } });
+    it('a run authorized for another tenant is scoped to that tenant only (no mixing)', async () => {
+      const agent = agentWithSearch(knowledgeGate(TENANT_B));
+      const res = await agent.run({
+        message: 'otter ledgers?',
+        authorization: { principal: testPrincipal({ id: 'user:b', tenantId: TENANT_B, roles: ['operator'] }), agentId: 's1-agent' },
+      });
       const output = JSON.stringify(res.toolCalls[0]!.output);
       assert.ok(output.includes(docBId), 'B run sees B data');
       assert.equal(output.includes(docAId), false, 'B run never sees A data');

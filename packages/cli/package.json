@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/cli",
   "version": "0.1.0",
-  "description": "JATA Qi CLI — entry point for booting and interacting with the OS",
+  "description": "JATA Qi CLI \u2014 entry point for booting and interacting with the OS",
   "type": "module",
   "bin": {
     "jataqi": "./dist/src/index.js"
@@ -22,6 +22,7 @@
   "dependencies": {
     "@jataqi/agent-runtime": "0.1.0",
     "@jataqi/authentication": "0.1.0",
+    "@jataqi/authorization-boundary": "0.1.0",
     "@jataqi/autonomous-action-runtime": "0.1.0",
     "@jataqi/autonomous-deployment": "0.1.0",
     "@jataqi/autonomous-test-repair": "0.1.0",

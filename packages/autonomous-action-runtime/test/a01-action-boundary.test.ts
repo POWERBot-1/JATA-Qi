@@ -411,16 +411,21 @@ describe('A-01 action-runtime: external execution is boundary-enforced', () => {
     await b.kernel.shutdown();
   });
 
-  it('legacy composition without the boundary: adapter executes with NO authorization context (baseline unchanged)', async () => {
+  // R1 (CF-1 REPAIR): this case previously asserted that a composition
+  // WITHOUT the boundary still executed the adapter. That was the defect. The
+  // assertion is now inverted to the authoritative invariant (INVARIANT B/N):
+  // no boundary -> DENY -> adapter.execute() is never invoked.
+  it('R1 INVARIANT B/N — a composition without the boundary DENIES and never invokes the adapter', async () => {
     const b = await boot(false);
-    assert.equal(b.runtime.getAuthorizationGate(), undefined, 'no boundary installed');
+    assert.equal(b.runtime.getAuthorizationGate(), undefined, 'precondition: no boundary installed');
     const { adapter, calls } = trackingAdapter();
     b.runtime.registerAdapter(adapter);
-    const planned = await plannedAction(b, 'a01-legacy');
+    const planned = await plannedAction(b, 'a01-no-boundary');
     const executed = await b.runtime.execute(operator, planned.id);
-    assert.equal(executed.executedExternally, true);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.authorization, undefined, 'legacy path carries no A-01 context');
+    assert.equal(executed.executedExternally, false, 'no external effect without an authoritative boundary');
+    assert.equal(calls.length, 0, 'INVARIANT I: adapter.execute() must never be reached');
+    const reported = executed.action.result?.externalResponse as Record<string, unknown> | undefined;
+    assert.equal(reported?.errorType, 'authorization_denied');
     await b.kernel.shutdown();
   });
 });

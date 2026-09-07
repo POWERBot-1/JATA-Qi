@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { establishKernelWorkerAuthority } from '@jataqi/authorization-boundary';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -39,7 +40,11 @@ export class GitHubExecutionService {
   private runtime!: ActionRuntimeService;
   private readonly clients = new Map<string, GitHubExecutionClient>();
 
+  /** R1/D2: verified, scoped kernel-internal worker authority. */
+  private kernel!: KernelApi;
+
   async init(kernel: KernelApi, registry: ExternalConnectorRegistry, runtime: ActionRuntimeService): Promise<void> {
+    this.kernel = kernel;
     this.connections = await kernel.getModule<StorageModule>('storage').collection<GitHubExecutionConnection>(CONNECTIONS_COLLECTION);
     this.registry = registry;
     this.runtime = runtime;
@@ -162,7 +167,18 @@ export class GitHubExecutionService {
     if (requireLiveVerification && connection.status !== 'LIVE_VERIFIED') {
       throw new GitHubExecutionError('GitHub production execution requires a LIVE_VERIFIED connection.');
     }
-    const result = await this.runtime.execute(actor, actionId, options);
+    // R1/D2: NARROW kernel-internal authority for exactly this connector
+    // adapter, this connection's declared actions, and its target system.
+    const workerAuth = establishKernelWorkerAuthority(this.kernel, {
+      capabilityId: `kernel.worker.github.${connection.id}`,
+      tool: `connector:${connection.connectorRegistrationId}`,
+      operations: [...connection.supportedActions],
+      targets: [{ system: targetSystem(connection) }],
+    });
+    const result = await this.runtime.execute(actor, actionId, {
+      ...options,
+      ...(options.authorization ? {} : workerAuth ? { authorization: workerAuth } : {}),
+    });
     return {
       actionId,
       status: connection.status,

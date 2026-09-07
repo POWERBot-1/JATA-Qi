@@ -41,6 +41,16 @@ export interface A01PolicyContext {
    * (tenant, principal, capability) key. Provided by the gate's rate state.
    */
   readonly rateWindowUsage?: (key: { tenantId: string; principalId: string; capabilityId: string }) => number;
+  /**
+   * R1/D2: verifier for kernel-internal service principals. Supplied by the
+   * gate from the process's `KernelInternalIdentity`. It returns true ONLY
+   * for a principal this process actually minted, for the exact scope named.
+   * A forged, foreign, or re-scoped kernel principal fails.
+   *
+   * Its ONLY effect is described at the tenant check below: it does not skip
+   * any other check and never converts a DENY into an ALLOW on its own.
+   */
+  readonly verifyKernelPrincipal?: (principal: unknown, scope: string) => boolean;
 }
 
 export interface A01DecisionResult {
@@ -89,6 +99,8 @@ function renderDecision(request: unknown, ctx: A01PolicyContext): A01DecisionRes
   const now = ctx.now;
   const reasons = new Set<A01DenialReason>();
   const engine = ctx.engine ?? new PermissiveBaselinePolicyEngine();
+  /** Set only when a VERIFIED kernel worker principal acts for another tenant. */
+  let kernelWorkerTenancy = false;
 
   // 1. Structural request validity ------------------------------------------------
   if (!request || typeof request !== 'object' || Array.isArray(request)) {
@@ -153,8 +165,32 @@ function renderDecision(request: unknown, ctx: A01PolicyContext): A01DecisionRes
   } else if (tenantRaw.trim().length === 0) {
     reasons.add('BLANK_TENANT');
   } else if (principal && tenantRaw !== principal.tenantId) {
-    // Caller attempted to act under a tenant that is not the verified one.
-    reasons.add('TENANT_SUBSTITUTION');
+    // R1/D2 — PLATFORM WORKER TENANCY.
+    //
+    // Normally this is tenant substitution and is denied outright. There is
+    // exactly ONE narrow exception, and it is a VERIFIED one, not a claim:
+    // a kernel-internal service principal that this process actually minted,
+    // for the `kernel:internal-execution` scope, acting under a capability
+    // whose manifest is DELIBERATELY system-scoped (allowTenantWildcard).
+    //
+    // Platform workers (payments settlement, billing, deployment, …) act for
+    // every tenant on the instance by design; the tenant on each decision
+    // comes from the durable action record, not from caller metadata.
+    //
+    // This is NOT a bypass: the principal must verify cryptographically
+    // against the process authority, the capability must exist, the manifest
+    // must be explicitly system-scoped, and every other check below
+    // (operation allow-list, target, classification, impact, rate, budget,
+    // replay, audit) still applies in full. A kernel principal without a
+    // matching manifest is denied exactly like any other principal.
+    const kernelWorkerVerified =
+      principal.authenticationMethod === 'KERNEL_INTERNAL' &&
+      ctx.verifyKernelPrincipal?.(principalRaw, 'kernel:internal-execution') === true;
+    if (!kernelWorkerVerified) {
+      reasons.add('TENANT_SUBSTITUTION');
+    } else {
+      kernelWorkerTenancy = true;
+    }
   }
   const tenantId = typeof tenantRaw === 'string' ? tenantRaw : '';
 
@@ -236,6 +272,15 @@ function renderDecision(request: unknown, ctx: A01PolicyContext): A01DecisionRes
     if (!manifest.allowTenantWildcard && !manifest.tenantScopes.includes(tenantId)) {
       reasons.add('TENANT_OUT_OF_SCOPE');
     }
+    // R1/D2: the verified-kernel-worker tenancy above is only honoured under
+    // a capability that is DELIBERATELY system-scoped. A kernel worker acting
+    // cross-tenant under a tenant-pinned capability is still substitution.
+    if (kernelWorkerTenancy && !manifest.allowTenantWildcard) {
+      reasons.add('TENANT_SUBSTITUTION');
+    }
+  } else if (kernelWorkerTenancy) {
+    // No manifest resolved: the cross-tenant claim has nothing authorising it.
+    reasons.add('TENANT_SUBSTITUTION');
   }
 
   // 10. Classification / impact ceilings -----------------------------------------------------

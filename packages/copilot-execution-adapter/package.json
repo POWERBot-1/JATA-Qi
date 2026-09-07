@@ -1,7 +1,7 @@
 {
   "name": "@jataqi/copilot-execution-adapter",
   "version": "0.1.0",
-  "description": "JATA Qi coding-agent execution adapter — governed task graph and verified worker execution",
+  "description": "JATA Qi coding-agent execution adapter \u2014 governed task graph and verified worker execution",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -17,9 +17,13 @@
     "test": "node --test dist/test/*.test.js",
     "pretest": "npm run build"
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "license": "MIT",
   "dependencies": {
+    "@jataqi/authorization-boundary": "0.1.0",
     "@jataqi/autonomous-action-runtime": "0.1.0",
     "@jataqi/commercial-control-plane": "0.1.0",
     "@jataqi/core-kernel": "0.1.0",

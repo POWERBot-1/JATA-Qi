@@ -23,6 +23,8 @@ import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
+// R1 (§6): forked worker processes install the REAL A-01 boundary too.
+import { AuthorizationBoundaryModule } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule } from '@jataqi/autonomous-action-runtime';
 import { PaymentsModule } from '@jataqi/payments';
 
@@ -45,6 +47,7 @@ async function main() {
   const kernel = createTestKernel();
   kernel.register(new StorageModule({ driverInstance: driver }));
   kernel.register(new CommercialControlPlaneModule());
+  kernel.register(new AuthorizationBoundaryModule());
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new PaymentsModule());
   await kernel.boot();

@@ -49,6 +49,17 @@ export interface KernelApi {
   getModuleState(id: ModuleId): ModuleState;
   /** Register a module at runtime (must be initialized/started manually if kernel already started). */
   register(module: IModule): void;
+  /**
+   * R1: declare a MANDATORY security invariant, evaluated after init and
+   * before any module starts. Append-only; no flag disables it.
+   */
+  requireSecurityInvariant(invariant: {
+    readonly id: string;
+    readonly description: string;
+    check(kernel: KernelApi): boolean | string | Promise<boolean | string>;
+  }): void;
+  /** Is a mandatory security invariant with this id declared? */
+  hasSecurityInvariant(id: string): boolean;
 }
 
 /** Static kernel-level events published on the bus. */
