@@ -68,6 +68,12 @@ export interface AgentConfig {
   maxIterations?: number;
   /** A-01: the authoritative authorization boundary for this agent's tool calls. */
   authorizationGate?: AuthorizationGate;
+  /**
+   * A-01: lazy boundary provider. Module init order vs the boundary is not
+   * guaranteed, so a module-created agent resolves the installed boundary on
+   * first run (post-boot) instead of trusting an init-time container read.
+   */
+  resolveAuthorizationGate?: () => AuthorizationGate | undefined;
 }
 
 export class Agent {
@@ -77,7 +83,8 @@ export class Agent {
   private readonly llm: ILLM;
   private readonly tools: ToolRegistry;
   private readonly maxIterations: number;
-  private readonly gate: AuthorizationGate | undefined;
+  private readonly resolveGate: (() => AuthorizationGate | undefined) | undefined;
+  private gate: AuthorizationGate | undefined;
 
   constructor(cfg: AgentConfig) {
     this.name = cfg.name ?? 'agent';
@@ -85,6 +92,7 @@ export class Agent {
     this.llm = cfg.llm;
     this.maxIterations = cfg.maxIterations ?? 8;
     this.gate = cfg.authorizationGate;
+    this.resolveGate = cfg.authorizationGate ? undefined : cfg.resolveAuthorizationGate;
     this.tools = new ToolRegistry({ authorizationGate: cfg.authorizationGate });
     for (const t of cfg.tools ?? []) this.tools.register(t);
     this.systemPrompt =
@@ -165,6 +173,13 @@ export class Agent {
   }
 
   async run(opts: AgentRunOptions): Promise<AgentRunResult> {
+    // A-01: resolve the installed boundary lazily (post-boot). Once resolved
+    // it is fixed for this agent — a composition either installs the
+    // boundary or it does not.
+    if (!this.gate && this.resolveGate) {
+      this.gate = this.resolveGate();
+      if (this.gate) this.tools.setAuthorizationGate(this.gate);
+    }
     const runId = randomUUID();
     const maxIters = opts.maxIterations ?? this.maxIterations;
     const logger = makeRunLogger(runId);

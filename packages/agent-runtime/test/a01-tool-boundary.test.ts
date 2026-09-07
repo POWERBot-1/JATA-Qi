@@ -17,15 +17,23 @@ import {
 } from '@jataqi/authorization-boundary';
 import {
   Agent,
+  AgentRuntimeModule,
   ScriptedLLM,
   ToolRegistry,
   knowledgeSearchTool,
+  type AgentRunOptions,
   type Tool,
   type ToolCallRequest,
   type ToolContext,
   type ToolInputSchema,
 } from '../src/index.js';
 import type { A01AuthorizationRequest } from '@jataqi/authorization-boundary';
+import { AuthorizationBoundaryModule } from '@jataqi/authorization-boundary';
+import { createTestKernel } from '@jataqi/core-kernel/testing';
+import { StorageModule } from '@jataqi/storage';
+import { VectorSearchModule } from '@jataqi/vector-search';
+import { KnowledgeService } from '@jataqi/knowledge-service';
+import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { TenantContextError } from '@jataqi/knowledge-service';
 
 // --- fixtures -------------------------------------------------------------
@@ -469,5 +477,80 @@ describe('A-01 agent-runtime: secrets stay out of the tool context', () => {
     assert.equal(res.error, undefined);
     assert.equal(res.output, 'no-material-here');
     assert.equal(sawCredential, undefined, 'the tool context must not expose any credential material');
+  });
+});
+
+// --- 5. Module-level boundary pickup is independent of registration order --
+describe('A-01 agent-runtime: module boundary pickup is order-independent', () => {
+  // Regression: AgentRuntimeModule.init must NOT read the gate token at init
+  // time. Module init order vs authorization-boundary is not guaranteed, so a
+  // composition that registers the agent module first would (pre-fix) get
+  // silently UNGATED agents. The gate is now resolved lazily at first run.
+  it('a module-created agent is enforced even when the boundary module registers AFTER the agent module', async () => {
+    const kernel = createTestKernel({
+      configDefaults: { vector: { model: 'hash', metric: 'cosine', hashDim: 64 } },
+    });
+    kernel.register(new StorageModule());
+    kernel.register(new VectorSearchModule({ model: 'hash', hashDim: 64 }));
+    kernel.register(new KnowledgeService());
+    kernel.register(new KnowledgeGraphModule({ autoIndexDocuments: false }));
+    // Adversarial order: agent runtime BEFORE the authorization boundary.
+    kernel.register(new AgentRuntimeModule());
+    kernel.register(new AuthorizationBoundaryModule({ now: () => T0, policyVersion: 'test-policy' }));
+    await kernel.boot();
+
+    const boundary = kernel.getModule<AuthorizationBoundaryModule>('authorization-boundary');
+    const agentMod = kernel.getModule<AgentRuntimeModule>('agent-runtime');
+    // The module must have picked up the boundary lazily, not at init.
+    assert.ok(boundary.getService(), 'boundary module booted');
+
+    let ran = 0;
+    // declaredTool carries targetFromInput so the manifest's resource pattern
+    // (res-*) binds a specific resource — no implicit "all resources".
+    const tool = declaredTool('sec-tool', async () => {
+      ran += 1;
+      return 'ran';
+    });
+    const llm = new ScriptedLLM([
+      { toolCalls: [{ id: 'tc1', name: 'sec-tool', input: { resource: 'res-1' } }] },
+      { text: 'done' },
+    ] as Array<{ text?: string; toolCalls?: ToolCallRequest[] }>);
+    const agent = agentMod.createAgent('secured', { llm, tools: [tool] });
+    // Pre-fix, this would have been resolved at module init time — undefined
+    // for this registration order. The boundary is now resolved lazily at
+    // first run, so it is not yet attached pre-run either; the point is that
+    // the FIRST RUN still enforces.
+    assert.equal(agent.getAuthorizationGate(), undefined, 'gate not yet resolved pre-run (lazy)');
+    // Grant the capability.
+    boundary.getService().manifestsRegistry.register(manifestFor('sec-tool', 'do'));
+
+    // Without a verified principal: the tool call must be DENIED (the agent is
+    // enforced by the lazily-resolved boundary), and the body must not run.
+    const res = await agent.run({ message: 'go' } as AgentRunOptions);
+    assert.equal(ran, 0, 'the tool body must not run without a verified principal');
+    const call = res.toolCalls.find((t) => t.tool === 'sec-tool');
+    assert.ok(call?.error?.startsWith('AUTHORIZATION_DENIED'), `expected denial, got: ${call?.error}`);
+    assert.ok(call?.error?.includes('MISSING_PRINCIPAL'), `denied for the right reason, got: ${call?.error}`);
+    // The first run lazily resolved the composition's boundary — this is the
+    // regression assertion: a module-created agent under adversarial module
+    // registration order IS enforced by the installed boundary.
+    assert.ok(agent.getAuthorizationGate(), 'gate lazily resolved on first run');
+
+    // With a verified principal in scope: it runs.
+    const llm2 = new ScriptedLLM([
+      { toolCalls: [{ id: 'tc1', name: 'sec-tool', input: { resource: 'res-1' } }] },
+      { text: 'done' },
+    ] as Array<{ text?: string; toolCalls?: ToolCallRequest[] }>);
+    const agent2 = agentMod.createAgent('secured-ok', { llm: llm2, tools: [tool] });
+    const res2 = await agent2.run({
+      message: 'go',
+      authorization: { principal: principal(), agentId: 'secured-ok', runId: 'run-1' },
+    } as AgentRunOptions);
+    assert.equal(ran, 1, 'the tool runs exactly once under a verified principal');
+    const call2 = res2.toolCalls.find((t) => t.tool === 'sec-tool');
+    assert.equal(call2?.error, undefined);
+    assert.equal(call2?.output, 'ran');
+
+    await kernel.shutdown();
   });
 });

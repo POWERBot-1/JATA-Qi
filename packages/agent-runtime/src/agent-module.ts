@@ -32,8 +32,6 @@ export class AgentRuntimeModule implements IModule {
   private agents = new Map<string, Agent>();
   private defaultLLM!: ILLM;
   private cfg!: AgentModuleConfig;
-  /** A-01: the authoritative boundary, when this composition installs it. */
-  private gate: AuthorizationGate | undefined;
 
   constructor(cfg: AgentModuleConfig = {}) {
     this.cfg = cfg;
@@ -42,11 +40,10 @@ export class AgentRuntimeModule implements IModule {
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
     this.defaultLLM = this.cfg.llm ?? new EchoLLM();
-    // A-01: when the composition root installs the authorization boundary
-    // module, every agent created by this module is enforced by it.
-    if (kernel.container.has(AUTHORIZATION_GATE_TOKEN)) {
-      this.gate = kernel.container.resolveSync<AuthorizationGate>(AUTHORIZATION_GATE_TOKEN);
-    }
+    // A-01: the installed boundary is resolved LAZILY (per agent, at first
+    // run, post-boot) — module init order vs authorization-boundary is not
+    // guaranteed, so an init-time container read would silently produce
+    // ungated agents for one registration order and gated agents for another.
     kernel.container.registerValue('agent.runtime', this);
     kernel.container.registerValue('llm.default', this.defaultLLM);
 
@@ -73,7 +70,15 @@ export class AgentRuntimeModule implements IModule {
       systemPrompt: cfg?.systemPrompt ?? this.cfg.systemPrompt,
       maxIterations: cfg?.maxIterations,
       tools,
-      authorizationGate: cfg?.authorizationGate ?? this.gate,
+      // An explicit gate (tests / direct wiring) wins; otherwise the agent
+      // resolves the composition's installed boundary lazily at first run.
+      authorizationGate: cfg?.authorizationGate,
+      resolveAuthorizationGate: cfg?.authorizationGate
+        ? undefined
+        : () =>
+            this.api.container.has(AUTHORIZATION_GATE_TOKEN)
+              ? this.api.container.resolveSync<AuthorizationGate>(AUTHORIZATION_GATE_TOKEN)
+              : undefined,
     });
     this.agents.set(name, agent);
     return agent;
