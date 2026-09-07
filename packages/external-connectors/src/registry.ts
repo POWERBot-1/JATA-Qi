@@ -1,4 +1,5 @@
 import type { KernelApi } from '@jataqi/core-kernel';
+import { AUTHORIZATION_GATE_TOKEN, type AuthorizationGate } from '@jataqi/authorization-boundary';
 import { AutonomousActionRuntimeModule, type ActionExecutionAdapter, type ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
 import {
   CommercialControlPlaneModule,
@@ -31,6 +32,8 @@ export class ExternalConnectorError extends Error {
 export class ExternalConnectorRegistry {
   private controlPlane!: CommercialControlPlaneService;
   private runtime!: ActionRuntimeService;
+  private container: KernelApi['container'] | undefined;
+  private cachedGate: AuthorizationGate | undefined;
   private readonly connectors = new Map<string, ExternalConnector>();
   private readonly registrations = new Map<string, ConnectorRegistration>();
   private readonly runtimeAdapterIds = new Map<string, string>();
@@ -38,11 +41,59 @@ export class ExternalConnectorRegistry {
   async init(kernel: KernelApi): Promise<void> {
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
     this.runtime = kernel.getModule<AutonomousActionRuntimeModule>('autonomous-action-runtime').getService();
+    // A-01: keep the container handle; the boundary is resolved lazily
+    // (post-boot) because module init order vs authorization-boundary is not
+    // guaranteed.
+    this.container = kernel.container;
+  }
+
+  /** The installed boundary, if any (diagnostics; never grants anything). */
+  getAuthorizationGate(): AuthorizationGate | undefined {
+    if (!this.container) return undefined;
+    if (this.cachedGate) return this.cachedGate;
+    if (this.container.has(AUTHORIZATION_GATE_TOKEN)) {
+      this.cachedGate = this.container.resolveSync<AuthorizationGate>(AUTHORIZATION_GATE_TOKEN);
+    }
+    return this.cachedGate;
+  }
+
+  /**
+   * A-01 registration-time binding check. Fail-closed:
+   *   * an installed boundary REQUIRES every connector to bind a capability;
+   *   * if a manifest exists for the bound capability, the connector's action
+   *     list must be a subset of the manifest's operations (over-privileged
+   *     connectors are rejected at registration);
+   *   * without a manifest the registration is allowed, but execution stays
+   *     impossible — the decision point denies UNKNOWN_CAPABILITY until a
+   *     matching manifest is registered.
+   */
+  private assertCapabilityBinding(connector: ExternalConnector): void {
+    const gate = this.getAuthorizationGate();
+    if (!gate) return;
+    if (!connector.capabilityId || connector.capabilityId.trim().length === 0) {
+      throw new ExternalConnectorError(
+        `A-01: connector "${connector.id}" registration rejected (UNBOUND_CONNECTOR) — with an installed authorization boundary every connector must bind a capability manifest`,
+      );
+    }
+    const version = connector.capabilityVersion ?? '1';
+    const manifest = gate.manifestsRegistry.get(connector.capabilityId, version)
+      ?? gate.manifestsRegistry.latest(connector.capabilityId);
+    if (manifest) {
+      for (const action of connector.supportedActions) {
+        const allowed = manifest.allowedOperations.some((entry) => entry.operation === action);
+        if (!allowed) {
+          throw new ExternalConnectorError(
+            `A-01: connector "${connector.id}" registration rejected (OVER_PRIVILEGED_CONNECTOR) — action "${action}" is not in the capability manifest "${connector.capabilityId}" allow-list`,
+          );
+        }
+      }
+    }
   }
 
   /** Register a capability declaration in disabled state; no provider call is made. */
   async register(actor: CommercialActor, connector: ExternalConnector): Promise<ConnectorRegistration> {
     validateConnector(connector);
+    this.assertCapabilityBinding(connector);
     if (this.connectors.has(connector.id)) throw new ExternalConnectorError(`Connector "${connector.id}" is already registered.`);
     if (connector.tenantId && connector.tenantId !== actor.tenantId && !actor.roles.includes('global_admin')) {
       throw new ExternalConnectorError('A connector may only be registered for the caller tenant.');

@@ -1,4 +1,5 @@
 import type { KernelApi, IModule } from '@jataqi/core-kernel';
+import { AUTHORIZATION_GATE_TOKEN, type AuthorizationGate } from '@jataqi/authorization-boundary';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '@jataqi/knowledge-graph';
 import { VectorSearchModule } from '@jataqi/vector-search';
@@ -39,6 +40,10 @@ export class AgentRuntimeModule implements IModule {
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
     this.defaultLLM = this.cfg.llm ?? new EchoLLM();
+    // A-01: the installed boundary is resolved LAZILY (per agent, at first
+    // run, post-boot) — module init order vs authorization-boundary is not
+    // guaranteed, so an init-time container read would silently produce
+    // ungated agents for one registration order and gated agents for another.
     kernel.container.registerValue('agent.runtime', this);
     kernel.container.registerValue('llm.default', this.defaultLLM);
 
@@ -65,6 +70,15 @@ export class AgentRuntimeModule implements IModule {
       systemPrompt: cfg?.systemPrompt ?? this.cfg.systemPrompt,
       maxIterations: cfg?.maxIterations,
       tools,
+      // An explicit gate (tests / direct wiring) wins; otherwise the agent
+      // resolves the composition's installed boundary lazily at first run.
+      authorizationGate: cfg?.authorizationGate,
+      resolveAuthorizationGate: cfg?.authorizationGate
+        ? undefined
+        : () =>
+            this.api.container.has(AUTHORIZATION_GATE_TOKEN)
+              ? this.api.container.resolveSync<AuthorizationGate>(AUTHORIZATION_GATE_TOKEN)
+              : undefined,
     });
     this.agents.set(name, agent);
     return agent;

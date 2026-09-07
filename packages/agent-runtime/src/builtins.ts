@@ -21,7 +21,32 @@ import type { VectorSearchModule } from '@jataqi/vector-search';
  * these tools and gets a refusal, not data. A tool input can never name a
  * tenant — none of the input schemas accepts one.
  */
+/**
+ * Resolve the execution tenant for a built-in tool call.
+ *
+ * A-01: when the call carries a sealed authorization envelope (installed
+ * boundary), the envelope's tenant — derived from the VERIFIED principal at
+ * decision time — is the only tenant source. A conflicting `metadata.tenantId`
+ * is caller-supplied metadata and is refused (IDENTITY_CONFLICT), never
+ * reconciled in the caller's favor.
+ *
+ * Without a boundary (S-1 legacy mode), the tenant comes from
+ * `metadata.tenantId` as before. Both paths fail closed: no unscoped read, no
+ * default tenant, no cross-tenant disclosure.
+ */
 function ctxTenantId(ctx: ToolContext, tool: string): string {
+  const envelopeTenant = ctx.authorization?.envelope?.tenantId;
+  if (envelopeTenant !== undefined) {
+    const meta = ctx.metadata?.tenantId;
+    if (typeof meta === 'string' && meta.trim().length > 0 && meta !== envelopeTenant) {
+      throw new TenantContextError(
+        tool,
+        `${tool}: the sealed authorization envelope and the run metadata disagree on the tenant ` +
+          '(IDENTITY_CONFLICT). Caller-supplied metadata can never override the authoritative envelope. Failing closed.',
+      );
+    }
+    return envelopeTenant;
+  }
   const t = ctx.metadata?.tenantId;
   if (typeof t !== 'string' || t.trim().length === 0) {
     throw new TenantContextError(
@@ -33,6 +58,15 @@ function ctxTenantId(ctx: ToolContext, tool: string): string {
   }
   return t;
 }
+
+/** A-01 declaration shared by the read-only tenant-scoped built-ins. */
+const KNOWLEDGE_READ_CAPABILITY = {
+  capabilityId: 'internal-knowledge.read',
+  capabilityVersion: '1',
+  impact: 'READ' as const,
+  dataClassification: 'INTERNAL' as const,
+  targetSystem: 'tenant-knowledge',
+};
 
 /** knowledge.search — semantic retrieval over documents. */
 export function knowledgeSearchTool(getService: () => KnowledgeService): Tool {
@@ -48,6 +82,7 @@ export function knowledgeSearchTool(getService: () => KnowledgeService): Tool {
       },
       required: ['query'],
     },
+  authorization: { ...KNOWLEDGE_READ_CAPABILITY, operation: 'search' },
     async execute(input: any, ctx: ToolContext) {
       const svc = getService();
       const tenantId = ctxTenantId(ctx, 'knowledge.search');
@@ -86,6 +121,7 @@ export function graphTraverseTool(getGraph: () => KnowledgeGraphModule): Tool {
       },
       required: ['entityId'],
     },
+  authorization: { ...KNOWLEDGE_READ_CAPABILITY, operation: 'traverse' },
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
       const predicates = input.followPredicates
@@ -120,6 +156,7 @@ export function graphFindEntityTool(getGraph: () => KnowledgeGraphModule): Tool 
       },
       required: ['query'],
     },
+  authorization: { ...KNOWLEDGE_READ_CAPABILITY, operation: 'findEntity' },
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
       const tenantId = ctxTenantId(ctx, 'graph.findEntity');
@@ -147,6 +184,7 @@ export function graphRetrieveTool(getGraph: () => KnowledgeGraphModule): Tool {
       },
       required: ['query'],
     },
+  authorization: { ...KNOWLEDGE_READ_CAPABILITY, operation: 'retrieve' },
     async execute(input: any, ctx: ToolContext) {
       const g = getGraph();
       const hits = await g.graphRetrieve(String(input.query), {
@@ -180,6 +218,7 @@ export function vectorSearchTool(getVectors: () => VectorSearchModule): Tool {
       },
       required: ['query'],
     },
+  authorization: { ...KNOWLEDGE_READ_CAPABILITY, operation: 'search' },
     async execute(input: any, ctx: ToolContext) {
       const v = getVectors();
       // Resolved before the index name is even read: no data-plane work without a tenant.

@@ -5,9 +5,12 @@ import {
   type CommercialActor,
   type CommercialEvidence,
 } from '@jataqi/commercial-control-plane';
+import { AuthorizationDeniedError } from '@jataqi/authorization-boundary';
+import type { A01AuthorizationRequest, AuthorizationGate } from '@jataqi/authorization-boundary';
 import type {
   ActionExecutionAdapter,
   ActionExecutionContext,
+  ActionRuntimeAuthorization,
   AdapterVerificationResult,
   RegisteredActionAdapter,
   RuntimeExecutionOptions,
@@ -33,10 +36,46 @@ export class ActionRuntimeError extends Error {
  * idempotency, state transitions, ledger records, and final verification state
  * remain controlled by CommercialControlPlaneService.
  */
+export interface ActionRuntimeServiceOptions {
+  /**
+   * A-01: the authoritative authorization boundary. When set, every external
+   * adapter execution is decided and enforced through it (default deny); a
+   * denied or unverifiable authorization stops the execution BEFORE any
+   * external I/O. Retries re-decide (a fresh envelope per attempt); the
+   * action's idempotency key keeps duplicate delivery from re-executing a
+   * successful external effect.
+   */
+  authorizationGate?: AuthorizationGate;
+  /**
+   * A-01: lazy boundary provider. The composition registers the
+   * authorization-boundary module; module init order is not guaranteed, so the
+   * gate is resolved on first use (post-boot) rather than at construction.
+   */
+  resolveAuthorizationGate?: () => AuthorizationGate | undefined;
+}
+
 export class ActionRuntimeService {
   private readonly adapters = new Map<string, ActionExecutionAdapter>();
+  private readonly staticGate: AuthorizationGate | undefined;
+  private readonly resolveGate: (() => AuthorizationGate | undefined) | undefined;
+  private cachedGate: AuthorizationGate | undefined;
 
-  constructor(private readonly controlPlane: CommercialControlPlaneService) {}
+  constructor(private readonly controlPlane: CommercialControlPlaneService, options: ActionRuntimeServiceOptions = {}) {
+    this.staticGate = options.authorizationGate;
+    this.resolveGate = options.resolveAuthorizationGate;
+  }
+
+  /** The installed boundary, if any (diagnostics; never grants anything). */
+  getAuthorizationGate(): AuthorizationGate | undefined {
+    if (this.staticGate) return this.staticGate;
+    if (this.resolveGate) {
+      // Cache once resolved; a composition either installs the boundary or it
+      // does not — it is never toggled at runtime.
+      if (!this.cachedGate) this.cachedGate = this.resolveGate();
+      return this.cachedGate;
+    }
+    return undefined;
+  }
 
   registerAdapter(adapter: ActionExecutionAdapter): void {
     validateAdapter(adapter);
@@ -114,10 +153,45 @@ export class ActionRuntimeService {
 
       const controller = new AbortController();
       const context: ActionExecutionContext = { action: running, actor, attempt: running.attemptCount, signal: controller.signal };
+      const timeoutMs = options.timeoutMs ?? adapter.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const invokeAdapter = (): ReturnType<typeof adapter.execute> => {
+        const gate = this.getAuthorizationGate();
+        if (!gate) {
+          return withTimeout(adapter.execute(context), controller, timeoutMs, `Execution timed out for action ${running.id}.`);
+        }
+        // A-01: the external call is decided and enforced at the boundary.
+        // Each attempt is re-decided (fresh envelope); a DENY is
+        // deterministic and stops the execution before any external I/O.
+        return (async () => {
+          const envelope = gate.decide(this.buildAuthorizationRequest(running, adapter, options.authorization));
+          if (envelope.decision.decision !== 'ALLOW') {
+            throw new AuthorizationDeniedError(envelope.decision.reasonCodes, 'authorization denied before external execution');
+          }
+          return await gate.executeAuthorized(
+            envelope,
+            (scoped) =>
+              withTimeout(
+                adapter.execute({ ...context, authorization: { envelope: scoped.envelope, ...(scoped.credential ? { credential: scoped.credential } : {}) } }),
+                controller,
+                timeoutMs,
+                `Execution timed out for action ${running.id}.`,
+              ),
+            { tool: adapter.id, operation: running.actionType, ...(running.targetResource ? { targetResource: running.targetResource } : {}) },
+          );
+        })();
+      };
       try {
-        const result = await withTimeout(adapter.execute(context), controller, options.timeoutMs ?? adapter.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS, `Execution timed out for action ${running.id}.`);
+        const result = await invokeAdapter();
         last = await this.controlPlane.reportActionResult(actor, running.id, result);
       } catch (error) {
+        if (error instanceof AuthorizationDeniedError) {
+          last = await this.controlPlane.reportActionResult(actor, running.id, {
+            reportedSuccess: false,
+            summary: `A-01 authorization denied before external execution: ${error.reasons.join(', ')}`,
+            externalResponse: { adapterId: adapter.id, errorType: 'authorization_denied', reasonCodes: [...error.reasons] },
+          });
+          return { action: last, attempts: last.attemptCount, executedExternally: false };
+        }
         last = await this.controlPlane.reportActionResult(actor, running.id, {
           reportedSuccess: false,
           summary: errorMessage(error),
@@ -185,6 +259,61 @@ export class ActionRuntimeService {
     const action = await this.controlPlane.getAction(actor, actionId);
     if (!action) throw new ActionRuntimeError('Commercial action not found.');
     return action;
+  }
+
+  /**
+   * A-01: build the authorization request for one external adapter attempt
+   * from the DURABLE action record and the verified identity supplied at
+   * execution time. Nothing in this request comes from model output or free
+   * caller metadata: identities come from the verified principal, and the
+   * action's target/operation/approval/idempotency come from the control
+   * plane's durable record.
+   */
+  private buildAuthorizationRequest(
+    action: CommercialAction,
+    adapter: ActionExecutionAdapter,
+    auth: ActionRuntimeAuthorization | undefined,
+  ): A01AuthorizationRequest {
+    const principal = auth?.principal ?? {
+      id: '',
+      tenantId: '',
+      roles: [],
+      authenticationMethod: 'KERNEL_INTERNAL',
+      authenticationEventId: '',
+    };
+    return {
+      principal,
+      tenantId: action.tenantId,
+      agent: { agentId: action.agentId ?? 'autonomous-action-runtime' },
+      run: {
+        runId: action.id,
+        correlationId: action.correlationId,
+        ...(action.idempotencyKey ? { causationId: action.idempotencyKey } : {}),
+      },
+      capability: {
+        capabilityId: auth?.capabilityId ?? `action:${action.actionType}`,
+        capabilityVersion: auth?.capabilityVersion ?? '1',
+      },
+      tool: adapter.id,
+      operation: action.actionType,
+      target: {
+        system: action.targetSystem,
+        ...(action.targetResource ? { resource: action.targetResource } : {}),
+        ...(auth?.credential?.audience ? { audience: auth.credential.audience } : {}),
+      },
+      dataClassification: auth?.dataClassification ?? 'INTERNAL',
+      // An adapter execution is, by definition, an external side effect.
+      impact: 'EXTERNAL_SIDE_EFFECT',
+      ...(auth?.approval ? { approval: auth.approval } : {}),
+      ...(auth?.credential ? { credential: auth.credential } : {}),
+      // The gate's in-process idempotency cache is keyed per ATTEMPT: a retry
+      // is a fresh attempt and MUST re-execute (a cached failure from an
+      // earlier attempt would poison the retry). A redelivered duplicate of
+      // the same attempt returns the cached result instead of re-executing.
+      ...(action.idempotencyKey ? { idempotencyKey: `${action.idempotencyKey}::attempt-${action.attemptCount}` } : {}),
+      budgetCostUnits: 1,
+      provenance: { source: 'autonomous-action-runtime', causationId: action.correlationId },
+    };
   }
 
   private findAdapter(targetSystem: string, actionType: string): ActionExecutionAdapter | undefined {

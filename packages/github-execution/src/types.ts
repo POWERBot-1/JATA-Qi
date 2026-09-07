@@ -49,6 +49,9 @@ export interface ConfigureGitHubExecutionInput {
   tenantId?: string;
   /** Secret-manager key only, such as secret://github/org-app; never a token. */
   credentialReference?: string;
+  /** A-01: capability binding required when the authorization boundary is installed. */
+  capabilityId?: string;
+  capabilityVersion?: string;
   environment?: 'sandbox' | 'production';
   client?: GitHubExecutionClient;
   supportedActions?: GitHubActionType[];
@@ -63,6 +66,9 @@ export interface GitHubExecutionConnection {
   tenantId: string;
   environment: 'sandbox' | 'production';
   credentialReference?: string;
+  /** A-01: capability binding carried into connector registration. */
+  capabilityId?: string;
+  capabilityVersion?: string;
   status: GitHubExecutionStatus;
   connectorHealth: ConnectorHealth;
   supportedActions: GitHubActionType[];

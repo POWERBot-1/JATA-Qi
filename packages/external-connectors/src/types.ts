@@ -29,6 +29,15 @@ export interface ExternalConnector extends ConnectorCapability {
   defaultTimeoutMs?: number;
   /** Credential identifier in a secret manager, never a credential value. */
   credentialReference?: string;
+  /**
+   * A-01: the capability this connector executes under. When the composition
+   * installs the authorization boundary, a connector MUST bind to a
+   * registered capability manifest (fail-closed: unbound connectors cannot be
+   * registered, and over-privileged action lists are rejected against the
+   * manifest).
+   */
+  capabilityId?: string;
+  capabilityVersion?: string;
   connect?(context: ConnectorContext): Promise<void>;
   authenticate?(context: ConnectorContext): Promise<void>;
   health(context: ConnectorContext): Promise<ConnectorHealthReport>;
