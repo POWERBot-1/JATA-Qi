@@ -18,4 +18,6 @@ export type {
   ListResult,
   QueryOptions,
   Predicate,
+  CollectionIndexDef,
+  SecurityCollectionSource,
 } from './types.js';

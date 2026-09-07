@@ -38,7 +38,27 @@ export interface PostgresDriverConfig {
    * production composition.
    */
   requireExplicitConfig?: boolean;
+  /**
+   * R2: per-transaction statement timeout applied via `SET LOCAL
+   * statement_timeout` inside `beginTransaction` (never global pool
+   * state, so other users of a shared pool are unaffected). Bounds how
+   * long any single statement in an R2 enforcement transaction may run;
+   * expiry aborts the transaction (callers fail closed). Optional;
+   * when absent, no statement timeout is set.
+   */
+  statementTimeoutMs?: number;
+  /**
+   * R2: per-transaction lock timeout applied via `SET LOCAL lock_timeout`
+   * inside `beginTransaction`. Bounds row-lock waits; expiry surfaces
+   * SQLSTATE 55P03 (callers fail closed without retry). Optional; when
+   * absent, no lock timeout is set.
+   */
+  lockTimeoutMs?: number;
 }
+
+/** R2 enforcement-transaction defaults (see the R2 design freeze §14). */
+export const R2_DEFAULT_STATEMENT_TIMEOUT_MS = 10_000;
+export const R2_DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 
 function present(value: string | undefined): boolean {
   return value !== undefined && value.trim().length > 0;

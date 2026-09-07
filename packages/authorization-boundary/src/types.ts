@@ -108,7 +108,10 @@ export type A01DenialReason =
   | 'AMBIGUOUS_POLICY_RESULT'
   | 'AUDIT_UNAVAILABLE'
   | 'UNBOUND_CONNECTOR'
-  | 'OVER_PRIVILEGED_CONNECTOR';
+  | 'OVER_PRIVILEGED_CONNECTOR'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'PRINCIPAL_REVOKED'
+  | 'SECURITY_STATE_UNAVAILABLE';
 
 export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
   'ENVELOPE_MALFORMED',
@@ -162,6 +165,9 @@ export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
   'AUDIT_UNAVAILABLE',
   'UNBOUND_CONNECTOR',
   'OVER_PRIVILEGED_CONNECTOR',
+  'IDEMPOTENCY_CONFLICT',
+  'PRINCIPAL_REVOKED',
+  'SECURITY_STATE_UNAVAILABLE',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -372,7 +378,37 @@ export interface A01AuthorizationEnvelope {
   readonly credential?: A01CredentialBinding;
   readonly provenance: A01ProvenanceBinding;
   readonly decision: A01DecisionRecord;
+  /**
+   * R2 durable citations (present ONLY on `decideAsync` envelopes, covered
+   * by the integrity digest). Enforcement re-validates them against live
+   * durable state; an envelope without citations is refused by the durable
+   * enforcement path (it cannot prove which manifest revision authorized it).
+   */
+  readonly manifestId?: string;
+  readonly manifestDigest?: string;
+  readonly sessionEventId?: string;
+  readonly sessionStatus?: A01SessionAuditStatus;
+  readonly securityStoreTxId?: string;
   readonly integrity: { readonly algorithm: 'sha256'; readonly digest: string };
+}
+
+/**
+ * R2: the durable session assessment outcome cited on an envelope / audit
+ * record. `KERNEL_INTERNAL_VERIFIED` marks the verified-kernel-worker path
+ * (cryptographic process verification, no S-8 row by design).
+ */
+export type A01SessionAuditStatus = 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'UNKNOWN' | 'KERNEL_INTERNAL_VERIFIED';
+
+export const A01_SESSION_AUDIT_STATUSES: readonly A01SessionAuditStatus[] = Object.freeze([
+  'ACTIVE',
+  'REVOKED',
+  'EXPIRED',
+  'UNKNOWN',
+  'KERNEL_INTERNAL_VERIFIED',
+]);
+
+export function isA01SessionAuditStatus(value: unknown): value is A01SessionAuditStatus {
+  return typeof value === 'string' && (A01_SESSION_AUDIT_STATUSES as readonly string[]).includes(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +448,95 @@ export interface A01AuditRecord {
   readonly consumedAt?: number;
   readonly sideEffectInvoked?: boolean;
   readonly idempotentReplay?: boolean;
+  /**
+   * R2 S-10 extensions (durable path only): the exact manifest revision,
+   * session assessment, and enforcement transaction behind the record.
+   */
+  readonly manifestId?: string;
+  readonly manifestDigest?: string;
+  readonly sessionEventId?: string;
+  readonly sessionStatus?: A01SessionAuditStatus;
+  readonly securityStoreTxId?: string;
+}
+
+/**
+ * R2 S-10 credential-lifecycle audit row (`CREDENTIAL_ISSUED` /
+ * `CREDENTIAL_REVOKED`). Written by the durable broker inside its mutation
+ * transaction. References only — never material.
+ */
+export interface A01CredentialAuditRecord {
+  readonly id: string;
+  readonly kind: 'CREDENTIAL_ISSUED' | 'CREDENTIAL_REVOKED';
+  readonly credentialId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+  readonly capabilityId: string;
+  readonly tool: string;
+  readonly operation: string;
+  readonly audience: string;
+  readonly scopes: readonly string[];
+  readonly issuedBy: string;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  readonly revokedAt?: number;
+  readonly revocationReason?: string;
+  readonly recordedAt: number;
+}
+
+/**
+ * R2 S-10 retention/GC batch audit row. Written by the substrate GC inside
+ * each deletion transaction (same tx as the deletes it evidences).
+ */
+export interface A01GcAuditRecord {
+  readonly id: string;
+  readonly kind: 'GC_BATCH';
+  readonly collection: string;
+  readonly tenantId: string;
+  readonly deletedCount: number;
+  readonly markedExpiredCount: number;
+  readonly maintenanceBy: string;
+  readonly startedAt: number;
+  readonly completedAt: number;
+}
+
+/** Every row shape the S-10 `authorization.decisions` collection may hold. */
+export type A01StoredAuditRecord = A01AuditRecord | A01CredentialAuditRecord | A01GcAuditRecord;
+
+export const A01_STORED_AUDIT_KINDS: readonly A01StoredAuditRecord['kind'][] = Object.freeze([
+  'DECISION',
+  'CONSUMED',
+  'CREDENTIAL_ISSUED',
+  'CREDENTIAL_REVOKED',
+  'GC_BATCH',
+]);
+
+export function isA01StoredAuditKind(value: unknown): value is A01StoredAuditRecord['kind'] {
+  return typeof value === 'string' && (A01_STORED_AUDIT_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * R2: the receipt returned (instead of a cached side-effect result) when a
+ * durable idempotent duplicate finds a COMPLETED S-5 row. Durable results
+ * are never cached (results may carry secrets or unbounded bulk); the
+ * receipt re-fetches the referenced evidence. Discriminate with
+ * `isA01IdempotencyReceipt`.
+ */
+export interface A01IdempotencyReceipt {
+  readonly idempotentReplay: true;
+  readonly decisionId: string;
+  readonly envelopeId: string;
+  readonly completedAt: number;
+}
+
+export function isA01IdempotencyReceipt(value: unknown): value is A01IdempotencyReceipt {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.idempotentReplay === true &&
+    typeof candidate.decisionId === 'string' &&
+    typeof candidate.envelopeId === 'string' &&
+    typeof candidate.completedAt === 'number'
+  );
 }
 
 export interface A01AuditSink {

@@ -123,12 +123,12 @@ export class Agent {
    * is built ONLY from the verified run principal and the tool's declared
    * authorization metadata — never from model output or caller metadata.
    */
-  private renderToolEnvelope(
+  private async renderToolEnvelope(
     tool: Tool,
     input: unknown,
     opts: AgentRunOptions,
     runId: string,
-  ): A01AuthorizationEnvelope {
+  ): Promise<A01AuthorizationEnvelope> {
     const auth = opts.authorization;
     const runIdFinal = auth?.runId ?? runId;
     const correlationId = auth?.correlationId ?? runIdFinal;
@@ -181,6 +181,12 @@ export class Agent {
       throw new Error(
         'Agent: no authoritative A-01 authorization boundary is installed; the tool call is denied (fail-closed).',
       );
+    }
+    // R2: a gate with durable security state renders ONLY via decideAsync
+    // (sync decide() throws there by construction); an R1 gate keeps the
+    // exact sync path.
+    if (this.gate.securityStore) {
+      return this.gate.decideAsync(request);
     }
     return this.gate.decide(request);
   }
@@ -245,7 +251,7 @@ export class Agent {
           if (this.gate) {
             const tool = this.tools.get(tc.name);
             if (tool) {
-              ctx.authorization = { envelope: this.renderToolEnvelope(tool, tc.input, opts, runId) };
+              ctx.authorization = { envelope: await this.renderToolEnvelope(tool, tc.input, opts, runId) };
             }
           }
           // With no boundary, ctx.authorization stays undefined AND the

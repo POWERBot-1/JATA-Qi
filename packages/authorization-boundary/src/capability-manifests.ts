@@ -23,7 +23,12 @@ function isNonBlankString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function validateManifestShape(manifest: A01CapabilityManifest): void {
+/**
+ * Strict manifest shape validation. Exported for the R2 durable manifest
+ * repository, which validates on write AND re-validates rows on read
+ * (defense in depth: a corrupt durable row fails closed, never authorizes).
+ */
+export function validateManifestShape(manifest: A01CapabilityManifest): void {
   if (!isNonBlankString(manifest.capabilityId)) {
     throw new ManifestRejectedError('manifest: capabilityId is required (non-blank string)');
   }
@@ -121,8 +126,8 @@ function targetKey(entry: { system: string; resourcePattern?: string }): string 
   return `${entry.system}::${entry.resourcePattern ?? ''}`;
 }
 
-/** Whether `newManifest` narrows `previous` (never widens). */
-function isNarrowing(previous: A01CapabilityManifest, next: A01CapabilityManifest): { ok: boolean; violation?: string } {
+/** Whether `newManifest` narrows `previous` (never widens). Exported for the R2 durable manifest repository, which runs the IDENTICAL check inside the registration transaction. */
+export function isNarrowing(previous: A01CapabilityManifest, next: A01CapabilityManifest): { ok: boolean; violation?: string } {
   const prevOps = new Set(previous.allowedOperations.map(opKey));
   for (const entry of next.allowedOperations) {
     if (!prevOps.has(opKey(entry))) {

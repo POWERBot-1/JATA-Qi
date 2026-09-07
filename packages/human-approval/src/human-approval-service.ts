@@ -30,6 +30,7 @@ import {
 const ATTESTATIONS_COLLECTION = 'human-approval.reviewer-attestations';
 const REQUESTS_COLLECTION = 'human-approval.requests';
 const VOTES_COLLECTION = 'human-approval.votes';
+const VOTE_SEQ_COLLECTION = 'human-approval.vote-seq';
 const MAX_APPROVALS = 5;
 const MAX_EVIDENCE = 100;
 const MAX_TEXT_LIST = 20;
@@ -72,6 +73,7 @@ export class HumanApprovalService {
   private attestations!: ICollection<HumanReviewerAttestation>;
   private requests!: ICollection<HumanApprovalRequest>;
   private votes!: ICollection<HumanApprovalVote>;
+  private voteSequence!: ICollection<{ id: string; tenantId: string; sequence: number }>;
   private readonly now: () => number;
 
   constructor(config: HumanApprovalConfig = {}) {
@@ -84,6 +86,7 @@ export class HumanApprovalService {
     this.attestations = await storage.collection<HumanReviewerAttestation>(ATTESTATIONS_COLLECTION);
     this.requests = await storage.collection<HumanApprovalRequest>(REQUESTS_COLLECTION);
     this.votes = await storage.collection<HumanApprovalVote>(VOTES_COLLECTION);
+    this.voteSequence = await storage.collection<{ id: string; tenantId: string; sequence: number }>(VOTE_SEQ_COLLECTION);
     this.research = kernel.getModule<ResearchEvidenceModule>('research-evidence').getService();
   }
 
@@ -360,17 +363,54 @@ export class HumanApprovalService {
   }
 
   private async appendVote(input: Omit<HumanApprovalVote, 'id' | 'sequence' | 'previousHash' | 'hash' | 'createdAt'>): Promise<HumanApprovalVote> {
-    const previous = (await this.votes.query({ where: (vote) => vote.tenantId === input.tenantId, orderBy: 'sequence', order: 'desc', limit: 1 }))[0];
-    const draft: Omit<HumanApprovalVote, 'hash'> = {
-      id: randomUUID(),
-      ...copy(input),
-      sequence: (previous?.sequence ?? 0) + 1,
-      previousHash: previous?.hash ?? 'GENESIS',
-      createdAt: this.now(),
-    };
-    const vote: HumanApprovalVote = { ...draft, hash: hashVote({ ...draft, hash: '' }) };
-    await this.votes.put(vote);
-    return vote;
+    // T-18: per-tenant CAS sequence counter (mirrors capability-fabric
+    // audit-seq), replacing query-max+put. Concurrent appends serialize
+    // on the counter CAS; the winner's sequence is additionally verified
+    // unused before the vote commits, so a backfilled counter can never
+    // collide with a concurrently appended vote either.
+    const tenantId = input.tenantId;
+    const counterId = `seq:${tenantId}`;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const current = await this.voteSequence.get(counterId);
+      let base = current?.sequence;
+      if (base === undefined) {
+        // Backfill once: pre-counter votes keep their sequences; the
+        // counter starts at the observed max (verified unused below).
+        const max = await this.votes.query({ where: (vote) => vote.tenantId === tenantId, orderBy: 'sequence', order: 'desc', limit: 1 });
+        base = max[0]?.sequence ?? 0;
+        await this.voteSequence.cas(counterId, (cur) => cur === undefined, () => ({ id: counterId, tenantId, sequence: base as number }));
+        continue;
+      }
+      const nextSequence = base + 1;
+      const advanced = await this.voteSequence.cas(counterId, (cur) => (cur?.sequence ?? -1) === base, () => ({ id: counterId, tenantId, sequence: nextSequence }));
+      if (!advanced.ok) continue;
+      const collision = (await this.votes.query({ where: (vote) => vote.tenantId === tenantId && vote.sequence === nextSequence, limit: 1 }))[0];
+      if (collision) continue;
+      // The previous entry must be committed BEFORE we read its hash
+      // (otherwise the chain has a gap). Poll briefly, then chain.
+      let previousHash = 'GENESIS';
+      if (nextSequence > 1) {
+        for (let i = 0; i < 8; i += 1) {
+          const previous = (await this.votes.query({ where: (vote) => vote.tenantId === tenantId && vote.sequence === nextSequence - 1, limit: 1 }))[0];
+          if (previous) {
+            previousHash = previous.hash;
+            break;
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 5 * (i + 1)));
+        }
+      }
+      const draft: Omit<HumanApprovalVote, 'hash'> = {
+        id: randomUUID(),
+        ...copy(input),
+        sequence: nextSequence,
+        previousHash,
+        createdAt: this.now(),
+      };
+      const vote: HumanApprovalVote = { ...draft, hash: hashVote({ ...draft, hash: '' }) };
+      await this.votes.put(vote);
+      return vote;
+    }
+    throw new HumanApprovalError(`Vote for tenant "${tenantId}" lost the sequence election (fail-closed; retry explicitly).`);
   }
 
   private async expireIfNeeded(request: HumanApprovalRequest): Promise<HumanApprovalRequest> {

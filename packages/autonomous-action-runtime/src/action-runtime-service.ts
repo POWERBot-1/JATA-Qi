@@ -171,7 +171,11 @@ export class ActionRuntimeService {
         // Each attempt is re-decided (fresh envelope); a DENY is
         // deterministic and stops the execution before any external I/O.
         return (async () => {
-          const envelope = gate.decide(this.buildAuthorizationRequest(running, adapter, options.authorization));
+          // R2: a gate with durable security state renders ONLY via
+          // decideAsync (sync decide() throws there by construction); an
+          // R1 gate keeps the exact sync path.
+          const request = this.buildAuthorizationRequest(running, adapter, options.authorization);
+          const envelope = gate.securityStore ? await gate.decideAsync(request) : gate.decide(request);
           if (envelope.decision.decision !== 'ALLOW') {
             throw new AuthorizationDeniedError(envelope.decision.reasonCodes, 'authorization denied before external execution');
           }

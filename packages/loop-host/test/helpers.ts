@@ -52,7 +52,7 @@ import { RegulatoryGateModule } from '@jataqi/regulatory-gates';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
 import { CapabilityFabricModule, type CapabilityLifecycleState } from '@jataqi/capability-fabric';
 import { buildDefaultCapabilities, UnifiedLoopModule } from '@jataqi/unified-loop';
-import { LoopHostModule, LoopHostService, WorkIngressModule, WorkIngressService } from '../src/index.js';
+import { LoopHostModule, LoopHostService, WorkIngressModule, WorkIngressService, type LoopHostConfig } from '../src/index.js';
 import { AuthenticationModule } from '@jataqi/authentication';
 
 export interface Harness {
@@ -84,6 +84,8 @@ export interface HarnessOptions {
   withIngress?: boolean;
   /** T-03: principal record the ingress boundary will verify. */
   ingressRecord?: TestPrincipalRecord;
+  /** R2: extra loop-host config (e.g. the durable session store). */
+  loopHostConfig?: LoopHostConfig;
 }
 
 export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> {
@@ -129,7 +131,7 @@ export async function buildHarness(opts: HarnessOptions = {}): Promise<Harness> 
   kernel.register(new PermanenceFabricModule());
   kernel.register(new CapabilityFabricModule());
   kernel.register(new UnifiedLoopModule());
-  kernel.register(new LoopHostModule({ hostId: opts.hostId, leaseTtlMs: opts.leaseTtlMs, sleepDelayMs: opts.sleepDelayMs, now }));
+  kernel.register(new LoopHostModule({ hostId: opts.hostId, leaseTtlMs: opts.leaseTtlMs, sleepDelayMs: opts.sleepDelayMs, now, ...opts.loopHostConfig }));
   if (opts.withIngress) {
     // T-03: the production-shaped composition — a real boundary plus the
     // ingress that submits through it. Test authority is admitted ONLY because

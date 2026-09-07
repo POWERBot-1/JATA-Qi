@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import pg from 'pg';
 import type {
+  CollectionIndexDef,
   Entry,
   IBlobStore,
   ICollection,
@@ -20,8 +21,8 @@ import type {
   ListResult,
 } from '@jataqi/storage';
 import { StorageModule } from '@jataqi/storage';
-import { PostgresDriverConfig, resolvePoolConfig, STORAGE_POSTGRES_SCHEMA_VERSION } from './config.js';
-import { IncompatibleStorageSchemaError } from './errors.js';
+import { PostgresDriverConfig, resolvePoolConfig, STORAGE_POSTGRES_SCHEMA_VERSION, R2_DEFAULT_LOCK_TIMEOUT_MS, R2_DEFAULT_STATEMENT_TIMEOUT_MS } from './config.js';
+import { IncompatibleStorageSchemaError, PostgresConfigError } from './errors.js';
 import {
   ensureTenantIsolation,
   setSystemTenantContext,
@@ -36,6 +37,19 @@ import { PostgresCollection } from './postgres-collection.js';
 const { Pool } = pg;
 
 const SCHEMA_TABLE = 'jata_qi_schema';
+
+/**
+ * F1 (post-verification remediation): observable pool-degradation state.
+ * `degraded` is set when the pool reports an 'error' (e.g. backends dying
+ * mid-outage) and clears when an operation next completes a live database
+ * round-trip. `poolErrors` is monotonic (a counter, not a latch).
+ */
+export interface PostgresPoolHealth {
+  readonly degraded: boolean;
+  readonly poolErrors: number;
+  readonly lastPoolErrorAt?: number;
+  readonly lastPoolErrorMessage?: string;
+}
 
 function escapeId(identifier: string): string {
   return '"' + identifier.replace(/"/g, '""') + '"';
@@ -247,6 +261,14 @@ export class PostgresDriver implements IStorageDriver {
   private _pool: pg.Pool | undefined;
   private readyPromise: Promise<void> | undefined;
   private closed = false;
+  // F1 (post-verification remediation): pool-level degradation state. A
+  // pool 'error' (idle-client death during a live PostgreSQL
+  // outage/restart) sets `poolDegraded`; the next operation that completes
+  // a live database round-trip clears it. `poolErrorCount` is monotonic.
+  private poolDegraded = false;
+  private poolErrorCount = 0;
+  private lastPoolErrorAt: number | undefined;
+  private lastPoolErrorMessage: string | undefined;
   private readonly tables = new Map<string, string>();
 
   constructor(opts: PostgresDriverConfig = {}) {
@@ -256,6 +278,34 @@ export class PostgresDriver implements IStorageDriver {
   get pool(): pg.Pool {
     if (!this._pool) throw new Error('Postgres driver is not ready; open a resource or call init() first.');
     return this._pool;
+  }
+
+  /** F1: record a pool-level 'error' (never throws; observability only). */
+  private notePoolError(error: unknown): void {
+    this.poolErrorCount += 1;
+    this.poolDegraded = true;
+    this.lastPoolErrorAt = Date.now();
+    this.lastPoolErrorMessage = error instanceof Error ? error.message : String(error);
+  }
+
+  /** F1: a live database round-trip completed — the pool is healthy again. */
+  private notePoolHealthy(): void {
+    this.poolDegraded = false;
+  }
+
+  /**
+   * F1: current pool-degradation state. Operators and tests use this to
+   * observe outage impact; it never gates authorization by itself —
+   * fail-closed behavior comes from operations failing against the
+   * unreachable database (mapped to SECURITY_STATE_UNAVAILABLE above).
+   */
+  getPoolHealth(): PostgresPoolHealth {
+    return {
+      degraded: this.poolDegraded,
+      poolErrors: this.poolErrorCount,
+      ...(this.lastPoolErrorAt !== undefined ? { lastPoolErrorAt: this.lastPoolErrorAt } : {}),
+      ...(this.lastPoolErrorMessage !== undefined ? { lastPoolErrorMessage: this.lastPoolErrorMessage } : {}),
+    };
   }
 
   /** Prepare the connection pool and base schema. Safe to call repeatedly. */
@@ -281,6 +331,19 @@ export class PostgresDriver implements IStorageDriver {
       client
         .query(`SET ${TENANT_RLS_SETTING} = '${TENANT_SYSTEM_SCOPE}'`)
         .catch(() => undefined);
+    });
+    // F1 (post-verification remediation): a pool-level 'error'
+    // (idle-client death during a live PostgreSQL outage/restart) MUST be
+    // handled — an unhandled pool 'error' event throws and terminates the
+    // host. Recording the degradation (observable via getPoolHealth())
+    // keeps the host alive; operations attempted while the database is
+    // unreachable fail closed through the normal query-error path (mapped
+    // to SECURITY_STATE_UNAVAILABLE by the security layers — never ALLOW,
+    // never a memory/process-local fallback). The degraded flag clears on
+    // the next operation that completes a live round-trip, so recovery
+    // needs no restart and no permissive retry.
+    this._pool.on('error', (error: Error) => {
+      this.notePoolError(error);
     });
     const schema = escapeId(SCHEMA_TABLE);
     try {
@@ -480,6 +543,29 @@ export class PostgresDriver implements IStorageDriver {
       client.release();
       throw error;
     }
+    try {
+      // R2 §14: bound statement runtime and lock waits per transaction.
+      // SET LOCAL keeps the setting inside this transaction (reverts on
+      // commit/rollback); other users of a shared pool are unaffected.
+      // Expiry aborts the transaction — callers MUST fail closed.
+      const statementTimeoutMs = this.opts.statementTimeoutMs ?? R2_DEFAULT_STATEMENT_TIMEOUT_MS;
+      const lockTimeoutMs = this.opts.lockTimeoutMs ?? R2_DEFAULT_LOCK_TIMEOUT_MS;
+      assertTimeoutMs(statementTimeoutMs, 'statementTimeoutMs');
+      assertTimeoutMs(lockTimeoutMs, 'lockTimeoutMs');
+      await client.query(`SET LOCAL statement_timeout = ${statementTimeoutMs}`);
+      await client.query(`SET LOCAL lock_timeout = ${lockTimeoutMs}`);
+      // F1: BEGIN + scoping + timeout round-trips succeeded — the pool is
+      // talking to a live database, so any recorded degradation is over.
+      this.notePoolHealthy();
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* preserve the original error */
+      }
+      client.release();
+      throw error;
+    }
     const tx: IStorageTransaction = {
       tenantId,
       collection: <T extends { id: string }>(name: string) => this.collectionOnClient<T>(client, name, tenantId),
@@ -488,6 +574,8 @@ export class PostgresDriver implements IStorageDriver {
         await client.query('COMMIT');
         settled = true;
         client.release();
+        // F1: the commit round-trip succeeded against a live database.
+        this.notePoolHealthy();
       },
       rollback: async () => {
         if (settled) throw new Error('Transaction already settled.');
@@ -497,6 +585,38 @@ export class PostgresDriver implements IStorageDriver {
       },
     };
     return tx;
+  }
+
+  /**
+   * R2 §F: idempotently ensure a reviewed secondary index exists on a
+   * collection table. The table is created first when missing (same
+   * concurrent-boot tolerance as `openCollection`). Index definitions
+   * are strictly validated (fail closed): names and fields are
+   * charset-bound, so no caller input can reach DDL unescaped.
+   *
+   * Indexes are performance-only: PostgreSQL enforces RLS regardless
+   * of index presence, and index absence never changes query results.
+   */
+  async ensureIndex(logicalCollection: string, index: CollectionIndexDef): Promise<void> {
+    assertIndexDef(index);
+    await this.ensureReady();
+    const table = await this.table('collection', logicalCollection);
+    this.tables.set(`collection:${logicalCollection}`, table);
+    const indexName = `ix_${table}_${index.name}`.slice(0, 55);
+    const columns: string[] = [];
+    if (index.includeTenant === true) columns.push(`"${TENANT_ID_COLUMN}"`);
+    for (const key of index.keys) {
+      columns.push(`((body->>'${key.replace(/'/g, "''")}'))`);
+    }
+    const ddl = `CREATE INDEX IF NOT EXISTS "${indexName.replace(/"/g, '""')}" ON "${table.replace(/"/g, '""')}" (${columns.join(', ')})`;
+    try {
+      await this.pool.query(ddl);
+    } catch (error) {
+      // Concurrent first boot can race index creation
+      // (duplicate_object 42710); the index then already exists.
+      if ((error as { code?: string })?.code === '42710') return;
+      throw error;
+    }
   }
 
   async close(): Promise<void> {
@@ -512,6 +632,42 @@ export class PostgresDriver implements IStorageDriver {
     this.readyPromise = undefined;
     this.tables.clear();
     if (pool) await pool.end();
+  }
+}
+
+function assertTimeoutMs(value: unknown, field: string): asserts value is number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 3_600_000) {
+    throw new PostgresConfigError(
+      `Postgres ${field} must be an integer between 0 and 3600000 ms (fail-closed).`,
+    );
+  }
+}
+
+const INDEX_NAME_PATTERN = /^[a-z0-9_]{1,32}$/;
+const INDEX_FIELD_PATTERN = /^[A-Za-z0-9_]{1,64}$/;
+
+/** R2 §F: strictly validate an index definition before it reaches DDL. */
+function assertIndexDef(index: CollectionIndexDef): void {
+  if (!index || typeof index !== 'object') {
+    throw new PostgresConfigError('ensureIndex requires an index definition object (fail-closed).');
+  }
+  if (typeof index.name !== 'string' || !INDEX_NAME_PATTERN.test(index.name)) {
+    throw new PostgresConfigError(
+      'ensureIndex: index name must match [a-z0-9_]{1,32} (fail-closed).',
+    );
+  }
+  if (!Array.isArray(index.keys) || index.keys.length === 0 || index.keys.length > 4) {
+    throw new PostgresConfigError('ensureIndex: keys must be an array of 1 to 4 body fields (fail-closed).');
+  }
+  for (const key of index.keys) {
+    if (typeof key !== 'string' || !INDEX_FIELD_PATTERN.test(key)) {
+      throw new PostgresConfigError(
+        `ensureIndex: index field ${JSON.stringify(key)} is not a safe body field name (fail-closed).`,
+      );
+    }
+  }
+  if (index.includeTenant !== undefined && typeof index.includeTenant !== 'boolean') {
+    throw new PostgresConfigError('ensureIndex: includeTenant must be a boolean when present (fail-closed).');
   }
 }
 

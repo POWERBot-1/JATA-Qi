@@ -11,7 +11,7 @@ import { emitPlainEnveloped } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { StorageWriteScope } from '@jataqi/storage';
 import type { CommercialActor } from '@jataqi/commercial-control-plane';
-import type { AuthenticatedPrincipal } from '@jataqi/authentication';
+import type { AuthenticatedPrincipal, AuthenticationEventStore } from '@jataqi/authentication';
 import {
   UnifiedLoopModule,
   type LoopRunResult,
@@ -83,6 +83,16 @@ export interface LoopHostConfig {
    * through the test authenticator.
    */
   principalPolicy?: PrincipalPolicy;
+  /**
+   * R2 S-8 durable session store. When attached, every dispatch
+   * re-validates the snapshot's authentication event AFTER
+   * `authorizeDispatch` succeeds: a revoked/expired/unknown session HELDs
+   * the record with PRINCIPAL_REVOKED (never dispatched, never resumed
+   * by operator — fresh authenticated enqueue required). Kernel-internal
+   * snapshots bypass the session check (they are not sessions). When
+   * absent, R1 behavior holds exactly (no durable re-validation).
+   */
+  sessionStore?: AuthenticationEventStore;
 }
 
 const DEFAULT_LEASE_TTL_MS = 30_000;
@@ -123,6 +133,8 @@ export class LoopHostService {
   private readonly clock: () => number;
   /** T-02 resolved principal policy (max age + test-method admission). */
   private readonly principalPolicy: ResolvedPrincipalPolicy;
+  /** R2 S-8 session re-validation store (absent ⇒ R1 behavior). */
+  private readonly sessionStore: AuthenticationEventStore | undefined;
   private lifecycle: HostLifecycle = 'IDLE';
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = 0;
@@ -147,6 +159,7 @@ export class LoopHostService {
       throw new LoopHostError('autoTickMs must be an integer between 0 and 3600000.');
     }
     this.clock = config.now ?? (() => Date.now());
+    this.sessionStore = config.sessionStore;
   }
 
   private storage!: StorageModule;
@@ -472,6 +485,37 @@ export class LoopHostService {
           summary: `Work ${leased.id} held before dispatch (${authorized.reason}); authority evidence insufficient — never auto-retried.`,
         });
         return;
+      }
+      // R2 post-authorization session re-validation: the snapshot passed
+      // static checks, but its session may have been revoked/expired since
+      // enqueue. A non-ACTIVE session HELDs with PRINCIPAL_REVOKED — no
+      // checkpoint, no attempt, no dispatch (same guarantees as above).
+      // Kernel-internal snapshots are not sessions and bypass this check.
+      // A session-store FAILURE throws (fail closed): no dispatch happens,
+      // the lease is left to expire, and redispatch re-validates — a
+      // transient outage must not permanently hold work, and dispatch
+      // without verification must not happen.
+      if (this.sessionStore && authorized.snapshot.authenticationMethod !== 'KERNEL_INTERNAL') {
+        const session = await this.sessionStore.assertActive(authorized.snapshot.authenticationEventId, leased.tenantId, at);
+        if (!session.active) {
+          const marker =
+            session.status === 'REVOKED' ? 'session-revoked' : session.status === 'EXPIRED' ? 'session-expired' : 'session-unknown';
+          const detail = `${marker}: ${session.detail}`;
+          await this.queue.holdForAuthority(leased.id, token, 'PRINCIPAL_REVOKED', detail, at);
+          summary.held += 1;
+          void this.emit(LoopHostEvents.Held, {
+            workId: leased.id,
+            tenantId: leased.tenantId,
+            correlationId: leased.correlationId,
+            attempt: leased.attemptCount,
+            status: 'HELD',
+            heldReason: 'PRINCIPAL_REVOKED',
+            reason: `PRINCIPAL_REVOKED: ${detail}`,
+            ...bestEffortProvenance(leased.principal),
+            summary: `Work ${leased.id} held before dispatch (PRINCIPAL_REVOKED); session no longer ACTIVE — fresh authenticated enqueue required.`,
+          });
+          return;
+        }
       }
       const provenance = provenanceOf(authorized.snapshot);
       // 1. Substantive pre-dispatch checkpoint (identities, phase, attempt,

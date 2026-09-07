@@ -30,6 +30,11 @@ import {
   type PresentedCredential,
   type ServerAuthenticator,
 } from './types.js';
+import {
+  assertValidSessionLifetimeMs,
+  DEFAULT_SESSION_LIFETIME_MS,
+  type AuthenticationEventStore,
+} from './authentication-event-store.js';
 
 export interface PrincipalBoundaryConfig {
   /**
@@ -44,6 +49,20 @@ export interface PrincipalBoundaryConfig {
   readonly now?: () => number;
   /** Injectable correlation-id source. Defaults to `randomUUID`. */
   readonly newRequestId?: () => string;
+  /**
+   * R2 S-8: when attached, every successful authentication is durably
+   * recorded in the shared event store BEFORE the principal is
+   * returned, and the store is the SOLE session substrate (no memory
+   * fallback: a record failure rejects the authentication). When
+   * absent, R1 behavior is preserved exactly (no durable session).
+   */
+  readonly eventStore?: AuthenticationEventStore;
+  /**
+   * R2 S-8: session lifetime in ms (default 24h). Must be an integer in
+   * `(0, 30 days]`. The durable row expires at
+   * `min(now + sessionLifetimeMs, credentialExpiresAt ?? +inf)`.
+   */
+  readonly sessionLifetimeMs?: number;
 }
 
 /** A verified principal together with the actor projected from it. */
@@ -99,6 +118,14 @@ function assertWellFormedPrincipal(principal: unknown): asserts principal is Aut
   if (!isNonBlankString(candidate.authenticationEventId)) {
     throw new PrincipalValidationError('Authenticator returned no authentication event id (fail-closed).');
   }
+  if (
+    candidate.credentialExpiresAt !== undefined &&
+    (typeof candidate.credentialExpiresAt !== 'number' ||
+      !Number.isFinite(candidate.credentialExpiresAt) ||
+      candidate.credentialExpiresAt <= 0)
+  ) {
+    throw new PrincipalValidationError('Authenticator returned a malformed credentialExpiresAt timestamp (fail-closed).');
+  }
 }
 
 /**
@@ -114,12 +141,17 @@ export class PrincipalBoundary {
   readonly #policy: ResolvedAuthenticationPolicy;
   readonly #now: () => number;
   readonly #newRequestId: () => string;
+  readonly #eventStore?: AuthenticationEventStore;
+  readonly #sessionLifetimeMs: number;
 
   constructor(config: PrincipalBoundaryConfig = {}) {
     this.#policy = resolveAuthenticationPolicy(config.policy);
     this.#registry = new AuthenticatorRegistry();
     this.#now = config.now ?? ((): number => Date.now());
     this.#newRequestId = config.newRequestId ?? ((): string => randomUUID());
+    this.#eventStore = config.eventStore;
+    this.#sessionLifetimeMs = config.sessionLifetimeMs ?? DEFAULT_SESSION_LIFETIME_MS;
+    assertValidSessionLifetimeMs(this.#sessionLifetimeMs);
 
     for (const authenticator of config.authenticators ?? []) {
       this.#admitAuthenticator(authenticator);
@@ -169,6 +201,9 @@ export class PrincipalBoundary {
    *   4. the returned principal is independently validated;
    *   5. the returned principal's method is re-checked against the policy, so
    *      an authenticator that mislabels itself cannot smuggle test authority.
+   *   6. R2 only: when an event store is attached, the success is recorded
+   *      durably BEFORE the principal is returned; a record failure
+   *      rejects the authentication (no unverifiable session exists).
    */
   async authenticate(credential: PresentedCredential | undefined | null): Promise<AuthenticatedPrincipal> {
     if (!credential || typeof credential !== 'object') {
@@ -194,6 +229,35 @@ export class PrincipalBoundary {
         `Authenticator returned method "${principal.authenticationMethod}", which this composition root's policy ` +
           `does not admit (fail-closed).`,
       );
+    }
+
+    // (6) R2 durable session: record BEFORE returning. The boundary is the
+    // SOLE writer of session rows; no other path may mint sessions.
+    if (this.#eventStore) {
+      const now = this.#now();
+      const lifetimeEnd = now + this.#sessionLifetimeMs;
+      const expiresAt =
+        principal.credentialExpiresAt !== undefined
+          ? Math.min(lifetimeEnd, principal.credentialExpiresAt)
+          : lifetimeEnd;
+      try {
+        await this.#eventStore.recordEvent(
+          {
+            eventId: principal.authenticationEventId,
+            tenantId: principal.tenantId,
+            principalId: principal.id,
+            method: principal.authenticationMethod,
+            verifiedAt: principal.verifiedAt,
+            expiresAt,
+          },
+          now,
+        );
+      } catch (error) {
+        throw new UnauthenticatedRequestError(
+          'Authentication succeeded but the durable session could not be recorded ' +
+            `(${error instanceof Error ? error.message : String(error)}) (fail-closed).`,
+        );
+      }
     }
     return principal;
   }

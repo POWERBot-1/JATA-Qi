@@ -23,9 +23,12 @@
 // caller metadata.
 
 import { randomUUID } from 'node:crypto';
-import { assertEnvelopeIntegrity, envelopeAcceptance, sealEnvelope } from './envelope.js';
+import { assertEnvelopeIntegrity, envelopeAcceptance, sanitizeRequestForEnvelope, sealEnvelope } from './envelope.js';
 import { decideA01, type A01DecisionResult, type A01PolicyContext } from './policy-engine.js';
-import { InMemoryAuditSink } from './audit.js';
+import { buildConsumedAuditRecord, buildDecisionAuditRecord, InMemoryAuditSink } from './audit.js';
+import type { DurableCredentialBroker } from './credential-store.js';
+import { DurableDecider } from './durable-decider.js';
+import type { SecurityRetryStats, SecurityStateStore } from './security-state-store.js';
 import type {
   A01AuditRecord,
   A01AuthorizationEnvelope,
@@ -56,6 +59,20 @@ export interface A01GateConfig {
    * strictly the stricter behaviour.
    */
   readonly verifyKernelPrincipal?: (principal: unknown, scope: string) => boolean;
+  /**
+   * R2: the authoritative durable security-state substrate. When attached,
+   * `decide()` throws (a sync API cannot consult durable state) and
+   * `decideAsync()` + the durable enforcement path are the ONLY decision
+   * paths; the process-local rate/budget/replay/idempotency state below is
+   * NOT consulted. When absent, the exact R1 in-memory path runs.
+   */
+  readonly store?: SecurityStateStore;
+  /**
+   * R2: durable credential broker (required when `store` is attached —
+   * construction throws otherwise). The sync `broker` above is NOT
+   * consulted on the durable path.
+   */
+  readonly durableBroker?: DurableCredentialBroker;
 }
 
 export interface ScopedExecutionContext {
@@ -76,6 +93,8 @@ export class AuthorizationGate {
   private readonly audit: A01AuditSink;
   private readonly policyVersion: string;
   private readonly verifyKernelPrincipal: ((principal: unknown, scope: string) => boolean) | undefined;
+  private readonly store: SecurityStateStore | undefined;
+  private readonly durable: DurableDecider | undefined;
   private auditAvailable: boolean;
 
   private readonly consumedEnvelopes = new Set<string>();
@@ -100,6 +119,24 @@ export class AuthorizationGate {
     // Audit availability is probed lazily per record; a throwing sink turns
     // ALLOW decisions into fail-closed DENYs (AUDIT_UNAVAILABLE).
     this.auditAvailable = true;
+    this.store = config.store;
+    if (this.store && !config.durableBroker) {
+      throw new AuthorizationDeniedError(
+        ['SECURITY_STATE_UNAVAILABLE'],
+        'a gate with durable security state requires a durable credential broker (fail-closed)',
+      );
+    }
+    this.durable = this.store
+      ? new DurableDecider({
+          store: this.store,
+          broker: config.durableBroker as DurableCredentialBroker,
+          audit: this.audit,
+          ...(config.engine ? { engine: config.engine } : {}),
+          policyVersion: this.policyVersion,
+          now: this.now,
+          ...(this.verifyKernelPrincipal ? { verifyKernelPrincipal: this.verifyKernelPrincipal } : {}),
+        })
+      : undefined;
   }
 
   get manifestsRegistry(): CapabilityManifestRegistry {
@@ -109,6 +146,16 @@ export class AuthorizationGate {
   /** The configured credential broker (diagnostics; never grants anything). */
   get credentialBroker(): CredentialBroker | undefined {
     return this.broker;
+  }
+
+  /** R2: the attached durable security-state substrate, if any. */
+  get securityStore(): SecurityStateStore | undefined {
+    return this.store;
+  }
+
+  /** R2: cumulative durable-transaction/retry counters (evidence; zeros when no store). */
+  getSecurityRetryStats(): SecurityRetryStats {
+    return this.store?.getRetryStats() ?? { transactions: 0, retriesSerialization: 0, retriesDeadlock: 0 };
   }
 
   private rateKey(tenantId: string, principalId: string, capabilityId: string): string {
@@ -136,8 +183,18 @@ export class AuthorizationGate {
    * Render the authoritative decision for one invocation and seal it into an
    * envelope. DENY outcomes are returned as sealed DENY envelopes (audited),
    * so every caller can present the decision without re-querying.
+   *
+   * R2: when a durable store is attached this method THROWS — a sync API
+   * cannot consult durable security state, so it MUST NOT render decisions.
+   * Use `decideAsync()`.
    */
   decide(request: A01AuthorizationRequest | null | undefined): A01AuthorizationEnvelope {
+    if (this.store) {
+      throw new AuthorizationDeniedError(
+        ['SECURITY_STATE_UNAVAILABLE'],
+        'sync decide() cannot consult durable security state; use decideAsync() (fail-closed)',
+      );
+    }
     const now = this.now();
     // Rate window usage for this decision (counted across all decisions).
     const maybeRequest = request as A01AuthorizationRequest | null | undefined;
@@ -162,7 +219,7 @@ export class AuthorizationGate {
     const { decision, provenance, credential, manifest } = outcome;
 
     const envelopeId = randomUUID();
-    const safeRequest = this.sanitizeRequestForEnvelope(maybeRequest);
+    const safeRequest = sanitizeRequestForEnvelope(maybeRequest);
     // The sealed envelope carries the request's credential BINDING (id/audience/
     // scopes — never material). `credential` above is the broker CHECK result
     // (a denial reason, if any) and must not be mistaken for the binding.
@@ -191,152 +248,32 @@ export class AuthorizationGate {
     return envelope;
   }
 
-  private sanitizeRequestForEnvelope(request: A01AuthorizationRequest | null | undefined): A01AuthorizationRequest {
-    // The envelope mirrors only the authoritative fields; if the request was
-    // structurally broken the decision is a DENY and the envelope carries the
-    // sanitized (empty) identity fields rather than garbage.
-    const base: A01AuthorizationRequest = {
-      principal: {
-        id: '',
-        tenantId: '',
-        roles: [],
-        authenticationMethod: 'KERNEL_INTERNAL',
-        authenticationEventId: '',
-      },
-      tenantId: '',
-      agent: { agentId: '' },
-      run: { runId: '', correlationId: '' },
-      capability: { capabilityId: '', capabilityVersion: '' },
-      tool: '',
-      operation: '',
-      target: { system: '' },
-      dataClassification: 'INTERNAL',
-      impact: 'EXTERNAL_SIDE_EFFECT',
-      budgetCostUnits: 1,
-    };
-    if (!request || typeof request !== 'object') return base;
-    const r = request as unknown as Record<string, unknown>;
-    const principal = r.principal as Record<string, unknown> | undefined;
-    return {
-      ...base,
-      ...(principal && typeof principal.id === 'string'
-        ? {
-            principal: {
-              id: principal.id,
-              tenantId: typeof principal.tenantId === 'string' ? principal.tenantId : '',
-              roles: Array.isArray(principal.roles) ? principal.roles.filter((x): x is string => typeof x === 'string') : [],
-              authenticationMethod: typeof principal.authenticationMethod === 'string' ? principal.authenticationMethod : 'KERNEL_INTERNAL',
-              authenticationEventId: typeof principal.authenticationEventId === 'string' ? principal.authenticationEventId : '',
-            },
-          }
-        : {}),
-      ...(typeof r.tenantId === 'string' ? { tenantId: r.tenantId } : {}),
-      ...(r.agent && typeof (r.agent as { agentId?: unknown }).agentId === 'string'
-        ? { agent: { agentId: (r.agent as { agentId: string }).agentId } }
-        : {}),
-      ...(r.run && typeof (r.run as { runId?: unknown }).runId === 'string'
-        ? {
-            run: {
-              runId: (r.run as { runId: string }).runId,
-              correlationId: typeof (r.run as { correlationId?: unknown }).correlationId === 'string'
-                ? (r.run as { correlationId: string }).correlationId
-                : (r.run as { runId: string }).runId,
-            },
-          }
-        : {}),
-      ...(r.capability && typeof (r.capability as { capabilityId?: unknown }).capabilityId === 'string'
-        ? {
-            capability: {
-              capabilityId: (r.capability as { capabilityId: string }).capabilityId,
-              capabilityVersion: typeof (r.capability as { capabilityVersion?: unknown }).capabilityVersion === 'string'
-                ? (r.capability as { capabilityVersion: string }).capabilityVersion
-                : '',
-            },
-          }
-        : {}),
-      ...(typeof r.tool === 'string' ? { tool: r.tool } : {}),
-      ...(typeof r.operation === 'string' ? { operation: r.operation } : {}),
-      ...(r.target && typeof (r.target as { system?: unknown }).system === 'string'
-        ? {
-            target: {
-              system: (r.target as { system: string }).system,
-              ...(typeof (r.target as { resource?: unknown }).resource === 'string'
-                ? { resource: (r.target as { resource: string }).resource }
-                : {}),
-              ...(typeof (r.target as { audience?: unknown }).audience === 'string'
-                ? { audience: (r.target as { audience: string }).audience }
-                : {}),
-            },
-          }
-        : {}),
-      ...(typeof r.dataClassification === 'string' ? { dataClassification: r.dataClassification as A01AuthorizationRequest['dataClassification'] } : {}),
-      ...(typeof r.impact === 'string' ? { impact: r.impact as A01AuthorizationRequest['impact'] } : {}),
-      ...(typeof r.idempotencyKey === 'string' ? { idempotencyKey: r.idempotencyKey } : {}),
-      ...(typeof r.budgetCostUnits === 'number' ? { budgetCostUnits: r.budgetCostUnits } : {}),
-      ...(r.approval && typeof (r.approval as { approvalId?: unknown }).approvalId === 'string'
-        ? {
-            approval: {
-              approvalId: (r.approval as { approvalId: string }).approvalId,
-              approverId: typeof (r.approval as { approverId?: unknown }).approverId === 'string'
-                ? (r.approval as { approverId: string }).approverId
-                : '',
-              approvedAt: typeof (r.approval as { approvedAt?: unknown }).approvedAt === 'number'
-                ? (r.approval as { approvedAt: number }).approvedAt
-                : 0,
-              expiresAt: typeof (r.approval as { expiresAt?: unknown }).expiresAt === 'number'
-                ? (r.approval as { expiresAt: number }).expiresAt
-                : Number.MAX_SAFE_INTEGER,
-              approvedActionDigest: typeof (r.approval as { approvedActionDigest?: unknown }).approvedActionDigest === 'string'
-                ? (r.approval as { approvedActionDigest: string }).approvedActionDigest
-                : '',
-            },
-          }
-        : {}),
-      ...(r.credential && typeof (r.credential as { credentialId?: unknown }).credentialId === 'string'
-        ? {
-            credential: {
-              credentialId: (r.credential as { credentialId: string }).credentialId,
-              audience: typeof (r.credential as { audience?: unknown }).audience === 'string'
-                ? (r.credential as { audience: string }).audience
-                : null,
-              scopes: Array.isArray((r.credential as { scopes?: unknown }).scopes)
-                ? ((r.credential as { scopes: unknown[] }).scopes).filter((x): x is string => typeof x === 'string')
-                : [],
-            },
-          }
-        : {}),
-    };
+  /**
+   * R2: render the authoritative DURABLE decision (Tx-bound rate, session,
+   * credential, PDP, and audit) when a store is attached. Without a store
+   * this delegates to the exact R1 sync semantics, additionally awaiting
+   * the decision-audit confirmation (strictly stronger than `decide()`).
+   */
+  async decideAsync(request: A01AuthorizationRequest | null | undefined): Promise<A01AuthorizationEnvelope> {
+    if (this.durable) {
+      return this.durable.decideAsync(request);
+    }
+    const envelope = this.decide(request);
+    const pending = this.decisionAudits.get(envelope.envelopeId);
+    if (pending) {
+      let auditFailed = false;
+      await pending.catch(() => {
+        auditFailed = true;
+      });
+      if (auditFailed || !this.auditAvailable) {
+        throw new AuthorizationDeniedError(['AUDIT_UNAVAILABLE'], 'durable decision audit failed; failing closed');
+      }
+    }
+    return envelope;
   }
 
   private auditDecision(envelope: A01AuthorizationEnvelope, manifest: A01DecisionResult['manifest'] | undefined): void {
-    const record: A01AuditRecord = {
-      id: `decision-${envelope.decision.decisionId}`,
-      kind: 'DECISION',
-      principalId: envelope.principal.id,
-      tenantId: envelope.tenantId,
-      agentId: envelope.agent.agentId,
-      runId: envelope.run.runId,
-      correlationId: envelope.provenance.correlationId,
-      ...(envelope.provenance.causationId ? { causationId: envelope.provenance.causationId } : {}),
-      capabilityId: envelope.capability.capabilityId,
-      capabilityVersion: envelope.capability.capabilityVersion,
-      tool: envelope.tool,
-      operation: envelope.operation,
-      targetSystem: envelope.target.system,
-      ...(envelope.target.resource ? { targetResource: envelope.target.resource } : {}),
-      dataClassification: envelope.dataClassification,
-      impact: envelope.impact,
-      decision: envelope.decision.decision,
-      reasonCodes: [...envelope.decision.reasonCodes],
-      policyVersion: envelope.decision.policyVersion,
-      ...(envelope.approval ? { approvalReference: envelope.approval.approvalId } : {}),
-      ...(envelope.credential
-        ? { credentialReference: { credentialId: envelope.credential.credentialId, audience: envelope.credential.audience, scopes: [...envelope.credential.scopes] } }
-        : {}),
-      envelopeId: envelope.envelopeId,
-      ...(envelope.provenance.idempotencyKey ? { idempotencyKey: envelope.provenance.idempotencyKey } : {}),
-      decidedAt: envelope.decision.decidedAt,
-    };
+    const record: A01AuditRecord = buildDecisionAuditRecord(envelope);
     try {
       const result = this.audit.record(record);
       if (result && typeof (result as Promise<void>).then === 'function') {
@@ -395,6 +332,11 @@ export class AuthorizationGate {
     sideEffect: (scoped: ScopedExecutionContext) => Promise<T>,
     expected: { readonly tool: string; readonly operation: string; readonly targetResource?: string },
   ): Promise<T> {
+    // R2: one enforcement entry point — the attached store selects the
+    // durable Tx-1/Tx-2 path; without a store the exact R1 path runs.
+    if (this.durable) {
+      return this.durable.executeDurable(envelope, sideEffect, expected);
+    }
     if (!this.auditAvailable) {
       throw new AuthorizationDeniedError(['AUDIT_UNAVAILABLE'], 'authorization audit sink is unavailable; failing closed');
     }
@@ -489,36 +431,11 @@ export class AuthorizationGate {
   }
 
   private auditConsumed(envelope: A01AuthorizationEnvelope, sideEffectInvoked: boolean, detail: string): void {
-    const record: A01AuditRecord = {
-      id: `consumed-${envelope.envelopeId}-${detail}`,
-      kind: 'CONSUMED',
-      principalId: envelope.principal.id,
-      tenantId: envelope.tenantId,
-      agentId: envelope.agent.agentId,
-      runId: envelope.run.runId,
-      correlationId: envelope.provenance.correlationId,
-      ...(envelope.provenance.causationId ? { causationId: envelope.provenance.causationId } : {}),
-      capabilityId: envelope.capability.capabilityId,
-      capabilityVersion: envelope.capability.capabilityVersion,
-      tool: envelope.tool,
-      operation: envelope.operation,
-      targetSystem: envelope.target.system,
-      ...(envelope.target.resource ? { targetResource: envelope.target.resource } : {}),
-      dataClassification: envelope.dataClassification,
-      impact: envelope.impact,
-      decision: envelope.decision.decision,
-      reasonCodes: [...envelope.decision.reasonCodes],
-      policyVersion: envelope.decision.policyVersion,
-      ...(envelope.approval ? { approvalReference: envelope.approval.approvalId } : {}),
-      ...(envelope.credential
-        ? { credentialReference: { credentialId: envelope.credential.credentialId, audience: envelope.credential.audience, scopes: [...envelope.credential.scopes] } }
-        : {}),
-      envelopeId: envelope.envelopeId,
-      ...(envelope.provenance.idempotencyKey ? { idempotencyKey: envelope.provenance.idempotencyKey } : {}),
-      decidedAt: envelope.decision.decidedAt,
+    const record: A01AuditRecord = buildConsumedAuditRecord(envelope, {
       consumedAt: this.now(),
       sideEffectInvoked,
-    };
+      detail,
+    });
     try {
       const result = this.audit.record(record);
       if (result && typeof (result as Promise<void>).then === 'function') {
