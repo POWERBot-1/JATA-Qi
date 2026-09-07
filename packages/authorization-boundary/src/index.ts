@@ -11,9 +11,13 @@ export {
   A01_DATA_CLASSIFICATIONS,
   A01_IMPACT_LEVELS,
   A01_DENIAL_REASONS,
+  A01_SESSION_AUDIT_STATUSES,
   isA01DataClassification,
   isA01ImpactLevel,
   isA01DenialReason,
+  isA01SessionAuditStatus,
+  isA01StoredAuditKind,
+  isA01IdempotencyReceipt,
   PermissiveBaselinePolicyEngine,
   AuthorizationDeniedError,
   CredentialDeniedError,
@@ -30,6 +34,7 @@ export type {
   A01AuthorizationRequest,
   A01CapabilityBinding,
   A01CapabilityManifest,
+  A01CredentialAuditRecord,
   A01CredentialBinding,
   A01CredentialCheckView,
   A01CredentialIssueSpec,
@@ -37,11 +42,15 @@ export type {
   A01DecisionOutcome,
   A01DecisionRecord,
   A01DenialReason,
+  A01GcAuditRecord,
+  A01IdempotencyReceipt,
   A01ImpactLevel,
   A01PrincipalBinding,
   A01ProvenanceBinding,
   A01PolicyEngine,
   A01RunBinding,
+  A01SessionAuditStatus,
+  A01StoredAuditRecord,
   A01TargetBinding,
   CredentialBroker,
   ScopedCredential,
@@ -56,11 +65,113 @@ export {
   isEnvelopeIntact,
   envelopeAcceptance,
   envelopeDigestValue,
+  sanitizeRequestForEnvelope,
 } from './envelope.js';
+export type { BuildEnvelopeInput } from './envelope.js';
 
-export { CapabilityManifestRegistry, compareVersion, targetMatches } from './capability-manifests.js';
+export {
+  CapabilityManifestRegistry,
+  compareVersion,
+  isNarrowing,
+  targetMatches,
+  validateManifestShape,
+} from './capability-manifests.js';
 
 export { InMemoryCredentialBroker } from './credential-broker.js';
+
+export {
+  checkCredentialRow,
+  credentialUseId,
+  isCredentialExpired,
+  assertCredentialDocumentShape,
+  DurableCredentialBroker,
+  InMemoryCredentialMaterialProvider,
+} from './credential-store.js';
+export type {
+  CredentialDoc,
+  CredentialStatus,
+  CredentialUseDoc,
+  CredentialMaterialProvider,
+  DurableCredentialBrokerOptions,
+  DurableIssueAttribution,
+} from './credential-store.js';
+
+export {
+  consumeEnvelope,
+  claimIdempotency,
+  completeIdempotency,
+  failIdempotency,
+  extendIdempotencyLease,
+  incrementRateWindow,
+  consumeBudget,
+  idempotencyId,
+  rateWindowId,
+  runBudgetId,
+  IDEMPOTENCY_LEASE_MS,
+  IDEMPOTENCY_HEARTBEAT_MS,
+  FALLBACK_RATE_WINDOW_MS,
+} from './consumption-stores.js';
+export type {
+  ConsumedEnvelopeDoc,
+  IdempotencyDoc,
+  IdempotencyResultRef,
+  IdempotencyStatus,
+  IdempotencyClaim,
+  RateWindowDoc,
+  RunBudgetDoc,
+} from './consumption-stores.js';
+
+export {
+  SecurityStateStore,
+  SecurityTxCollections,
+  SecurityStateError,
+  SecurityStateUnavailableError,
+  ManifestDivergenceError,
+  manifestVersionId,
+  manifestPointerId,
+  manifestRotationApprovalId,
+  manifestDigest,
+  assertManifestDocumentShape,
+  pgCodeOf,
+  isTenantScope,
+  SECURITY_MANIFESTS_COLLECTION,
+  SECURITY_CREDENTIALS_COLLECTION,
+  SECURITY_CREDENTIAL_USES_COLLECTION,
+  SECURITY_CONSUMED_ENVELOPES_COLLECTION,
+  SECURITY_IDEMPOTENCY_COLLECTION,
+  SECURITY_RATE_WINDOWS_COLLECTION,
+  SECURITY_RUN_BUDGETS_COLLECTION,
+  SECURITY_SYSTEM_TENANT,
+  SECURITY_MAINTENANCE_PRINCIPAL,
+  SECURITY_S4_RETENTION_MS,
+  SECURITY_S5_COMPLETED_RETENTION_MS,
+  SECURITY_S5_FAILED_RETENTION_MS,
+  SECURITY_S5_ORPHAN_GRACE_MS,
+  SECURITY_S6_GC_GRACE_MS,
+  SECURITY_S7_RETENTION_MS,
+  SECURITY_GC_DEFAULT_BATCH_SIZE,
+  SECURITY_TX_MAX_ATTEMPTS,
+  SECURITY_TX_BACKOFF_MS,
+  SECURITY_CAS_MAX_ATTEMPTS,
+  R2_SKEW_MS,
+} from './security-state-store.js';
+export type {
+  ManifestVersionDoc,
+  ManifestVersionStatus,
+  ManifestPointerDoc,
+  ManifestRotationApprovalDoc,
+  ManifestDoc,
+  ManifestRegistrar,
+  RegisteredManifest,
+  ActiveManifest,
+  SecurityRetryStats,
+  SecurityStateStoreOptions,
+  TenantScope,
+  GcSummary,
+} from './security-state-store.js';
+
+export { DurableDecider } from './durable-decider.js';
+export type { DurableDeciderDeps } from './durable-decider.js';
 
 export { decideA01 } from './policy-engine.js';
 export type { A01DecisionResult, A01PolicyContext } from './policy-engine.js';
@@ -77,6 +188,9 @@ export {
   InMemoryAuditSink,
   StorageAuditSink,
   CompositeAuditSink,
+  assertAllowedAuditShape,
+  buildDecisionAuditRecord,
+  buildConsumedAuditRecord,
 } from './audit.js';
 
 export {
@@ -103,6 +217,8 @@ export {
   AUTHORIZATION_MANIFESTS_TOKEN,
   AUTHORIZATION_BROKER_TOKEN,
   AUTHORIZATION_AUDIT_TOKEN,
+  AUTHORIZATION_SECURITY_STORE_TOKEN,
+  AUTHORIZATION_DURABLE_BROKER_TOKEN,
   AUTHORIZATION_DECISIONS_COLLECTION,
 } from './module.js';
-export type { AuthorizationBoundaryModuleConfig } from './module.js';
+export type { AuthorizationBoundaryModuleConfig, AuthorizationDurableSecurityConfig } from './module.js';

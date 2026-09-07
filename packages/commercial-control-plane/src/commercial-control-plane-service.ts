@@ -495,13 +495,22 @@ export class CommercialControlPlaneService {
     await this.authorizations.put(authorization);
 
     const nextState = authorizationToDecisionState(authorization.outcome);
-    const updatedDecision: CommercialDecision = {
-      ...decision,
-      requiredApproval,
-      approvalState,
-      executionState: nextState,
-    };
-    await this.decisions.put(updatedDecision);
+    // T-15: never regress the decision lifecycle. A concurrent plan
+    // election loser's authorize runs after the winner's QUEUED marker;
+    // an unconditional put would clobber QUEUED back to AUTHORIZED. The
+    // CAS predicate observes the LIVE row and skips the state write when
+    // the lifecycle already advanced past the authorize verdict (the
+    // verdict itself + its ledger/event records below still stand — the
+    // evaluation happened; only the stale state write is suppressed).
+    await this.decisions.cas(
+      decision.id,
+      // Once the lifecycle reaches QUEUED-or-later (rank >= 4), authorize
+      // verdicts no longer move executionState — only the action
+      // lifecycle does. Pre-planning verdicts (AUTHORIZED/DENIED/…)
+      // always stand, so policy changes still take effect.
+      (cur) => !cur || executionStateRank(cur.executionState) < 4,
+      (cur) => ({ ...(cur ?? decision), requiredApproval, approvalState, executionState: nextState }),
+    );
     const ledger = await this.appendLedger({
       kind: 'AUTHORIZATION_EVALUATED',
       tenantId: decision.tenantId,
@@ -608,8 +617,14 @@ export class CommercialControlPlaneService {
     }
 
     const now = this.now();
+    // T-15: deterministic action id from the owning tenant + the REQUIRED
+    // idempotency key, so two concurrent planners of the same key elect
+    // one winner via insert-if-absent CAS (mirrors WorkQueue.enqueue).
+    // The query-hit fast path above is kept; the CAS below closes the race
+    // the query cannot see. The loser returns the winner's record and
+    // performs no ledger/decision/event writes (exactly-once planning).
     const action: CommercialAction = {
-      id: randomUUID(),
+      id: deterministicActionIdFor(decision.tenantId, input.idempotencyKey),
       tenantId: decision.tenantId,
       ventureId: decision.ventureId,
       productId: decision.productId,
@@ -642,7 +657,23 @@ export class CommercialControlPlaneService {
       updatedAt: now,
       correlationId: decision.provenance.correlationId ?? decision.id,
     };
-    await this.actions.put(action);
+    // Insert-if-absent election. The loser re-reads the winner's committed
+    // record — the CAS result alone cannot see the winner's row.
+    let won = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const res = await this.actions.cas(action.id, (cur) => cur === undefined, () => action);
+      if (res.ok) {
+        won = true;
+        break;
+      }
+      const winner = await this.actions.get(action.id);
+      if (winner) return copy(winner);
+    }
+    if (!won) {
+      throw new CommercialControlPlaneError(
+        `Action "${action.id}" lost a concurrent plan election and no winner is visible (fail-closed).`,
+      );
+    }
     await this.decisions.put({ ...decision, executionState: 'QUEUED' });
     const ledger = await this.appendLedger({
       kind: 'ACTION_QUEUED',
@@ -1702,6 +1733,29 @@ function isCampaignState(state: CommercialLifecycleState): state is CampaignStat
   ].includes(state as CampaignState);
 }
 
+/**
+ * T-15 lifecycle rank. Authorize verdicts own ranks 0–3 (DENIED is a
+ * verdict like AUTHORIZED: a fresh evaluation may move between them as
+ * policy changes). Once the action lifecycle reaches QUEUED-or-later,
+ * authorize no longer moves executionState (rank >= 4 is preserved).
+ */
+function executionStateRank(state: CommercialDecision['executionState']): number {
+  switch (state) {
+    case 'PROPOSED': return 0;
+    case 'AUTHORIZING': return 1;
+    case 'WAITING_FOR_APPROVAL': return 2;
+    case 'AUTHORIZED':
+    case 'DENIED': return 3;
+    case 'QUEUED': return 4;
+    case 'EXECUTING': return 5;
+    case 'VERIFYING': return 6;
+    case 'COMPLETED':
+    case 'EXPIRED':
+    case 'FAILED':
+    case 'CANCELLED': return 7;
+  }
+}
+
 function authorizationToDecisionState(outcome: AuthorizationOutcome): CommercialDecision['executionState'] {
   switch (outcome) {
     case 'ALLOW':
@@ -1757,6 +1811,11 @@ function validatePolicyInput(input: CreateAutonomyPolicyInput, now: number): voi
   }
   if (input.expiresAt !== undefined && input.expiresAt <= now) throw new CommercialControlPlaneError('Policy expiry must be in the future.');
   if (input.maximumSingleActionCost) assertMoney(input.maximumSingleActionCost, 'Policy single-action cost limit');
+}
+
+/** T-15: deterministic action id from owning tenant + idempotency key (concurrency-safe dedup). */
+function deterministicActionIdFor(tenantId: string, key: string): string {
+  return `action:${createHash('sha256').update(`v1:${tenantId}\0${key}`).digest('hex')}`;
 }
 
 function validatePlanActionInput(input: PlanCommercialActionInput): void {

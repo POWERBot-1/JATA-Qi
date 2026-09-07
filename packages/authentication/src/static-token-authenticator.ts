@@ -19,6 +19,7 @@ import {
   type PresentedCredential,
   type ServerAuthenticator,
 } from './types.js';
+import type { TokenRegistryStore } from './token-registry.js';
 
 export interface StaticTokenRecord {
   /** Opaque token material (bearer, API key, etc.). */
@@ -36,13 +37,25 @@ export interface StaticTokenRecord {
   readonly expiresAt?: number;
 }
 
+export interface StaticTokenAuthenticatorOptions {
+  /**
+   * R2 S-9: when attached, verification consults the durable shared
+   * registry (revocation/rotation visible across processes) INSTEAD of
+   * the constructor table. The table is still required (fail-closed
+   * configuration) but is not consulted on the durable path.
+   */
+  readonly registry?: TokenRegistryStore;
+}
+
 export class StaticTokenAuthenticator implements ServerAuthenticator {
   readonly id = 'static-token';
   readonly supports: readonly AuthenticationMethod[] = ['STATIC_TOKEN'];
   private readonly table: ReadonlyMap<string, StaticTokenRecord>;
+  private readonly registry?: TokenRegistryStore;
 
-  constructor(records: readonly StaticTokenRecord[]) {
+  constructor(records: readonly StaticTokenRecord[], options: StaticTokenAuthenticatorOptions = {}) {
     this.table = new Map(records.map((record) => [record.token, record]));
+    this.registry = options.registry;
   }
 
   async verify(credential: PresentedCredential, now: number, requestId: string): Promise<AuthenticatedPrincipal> {
@@ -53,6 +66,10 @@ export class StaticTokenAuthenticator implements ServerAuthenticator {
     }
     if (typeof credential.material !== 'string' || credential.material.length === 0) {
       throw new PrincipalValidationError('A non-empty token is required.');
+    }
+    if (this.registry) {
+      // R2 durable path: shared registry verdict (revocation-aware).
+      return this.registry.verifyByMaterial(credential.material, now, requestId);
     }
     const record = this.table.get(credential.material);
     if (!record) {
@@ -74,6 +91,7 @@ export class StaticTokenAuthenticator implements ServerAuthenticator {
       authenticationMethod: 'STATIC_TOKEN',
       verifiedAt: now,
       authenticationEventId: `${requestId}:${createHash('sha256').update(credential.material).digest('hex').slice(0, 16)}`,
+      ...(record.expiresAt !== undefined ? { credentialExpiresAt: record.expiresAt } : {}),
     };
   }
 }

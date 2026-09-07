@@ -15,14 +15,35 @@ import { StorageModule } from '@jataqi/storage';
 import { AuthorizationGate, type A01GateConfig } from './gate.js';
 import { CapabilityManifestRegistry } from './capability-manifests.js';
 import { CompositeAuditSink, InMemoryAuditSink, StorageAuditSink } from './audit.js';
-import type { A01AuditSink } from './types.js';
+import {
+  DurableCredentialBroker,
+  InMemoryCredentialMaterialProvider,
+  type CredentialMaterialProvider,
+} from './credential-store.js';
+import {
+  SecurityStateStore,
+  type ManifestRegistrar,
+  type SecurityStateStoreOptions,
+} from './security-state-store.js';
+import { AUTHORIZATION_DECISIONS_COLLECTION } from './security-state-store.js';
+import type { A01AuditSink, A01CapabilityManifest } from './types.js';
 
 export const AUTHORIZATION_GATE_TOKEN = 'authorization.gate';
 export const AUTHORIZATION_MANIFESTS_TOKEN = 'authorization.manifests';
 export const AUTHORIZATION_BROKER_TOKEN = 'authorization.broker';
 export const AUTHORIZATION_AUDIT_TOKEN = 'authorization.audit';
+/**
+ * R2: sealed token for the authoritative durable security-state substrate.
+ * The durable repository is exposed ONLY here; durable-path decisions
+ * NEVER consult the in-memory registry behind AUTHORIZATION_MANIFESTS_TOKEN
+ * (which remains as a sealed boot-time mirror for binding checks and
+ * diagnostics on durable deployments).
+ */
+export const AUTHORIZATION_SECURITY_STORE_TOKEN = 'authorization.security-store';
+/** R2: sealed token for the durable credential broker. */
+export const AUTHORIZATION_DURABLE_BROKER_TOKEN = 'authorization.durable-broker';
 
-export const AUTHORIZATION_DECISIONS_COLLECTION = 'authorization.decisions';
+export { AUTHORIZATION_DECISIONS_COLLECTION };
 
 /**
  * R1: the id of the mandatory kernel security invariant that makes the A-01
@@ -94,9 +115,39 @@ export function requireAuthorizationBoundary(kernel: KernelApi): void {
   });
 }
 
+export interface AuthorizationDurableSecurityConfig {
+  /**
+   * Master switch. When true, `init` opens the R2 SecurityStateStore over
+   * the `storage` module (throwing when unreachable or non-transactional
+   * — boot fails closed), records rotation approvals, seeds manifests
+   * (divergence aborts boot), mirrors ACTIVE manifests into the gate's
+   * in-memory registry (binding checks + diagnostics only), and builds
+   * the gate on the durable path. When false/absent, R1 behavior holds.
+   */
+  readonly enabled: boolean;
+  /** Composed seed manifests reconciled against durable ACTIVE policy. */
+  readonly seedManifests?: readonly A01CapabilityManifest[];
+  /** Rotation approvals recorded (idempotently) before seeding. */
+  readonly rotationApprovals?: ReadonlyArray<{
+    readonly capabilityId: string;
+    readonly version: string;
+    readonly manifestDigest: string;
+    readonly approvedBy: { readonly principalId: string; readonly authenticationEventId: string };
+    readonly reason: string;
+  }>;
+  /** Registrar attribution for first-time seed registrations. */
+  readonly seedRegistrar?: ManifestRegistrar;
+  /** Material provider (default: in-memory dev/test — never production). */
+  readonly materialProvider?: CredentialMaterialProvider;
+  /** Security-store options (clock injection for tests). */
+  readonly storeOptions?: SecurityStateStoreOptions;
+}
+
 export interface AuthorizationBoundaryModuleConfig extends A01GateConfig {
   /** Disable the durable storage sink (in-memory only). Default: durable. */
   readonly durableAudit?: boolean;
+  /** R2 durable security substrate (default: disabled — R1 behavior). */
+  readonly durableSecurity?: AuthorizationDurableSecurityConfig;
 }
 
 export class AuthorizationBoundaryModule implements IModule {
@@ -108,6 +159,8 @@ export class AuthorizationBoundaryModule implements IModule {
   private gate: AuthorizationGate | undefined;
   private auditSink!: A01AuditSink;
   private kernelIdentity: KernelInternalIdentity | undefined;
+  private securityStore: SecurityStateStore | undefined;
+  private durableBroker: DurableCredentialBroker | undefined;
 
   constructor(config: AuthorizationBoundaryModuleConfig = {}) {
     this.config = config;
@@ -127,17 +180,57 @@ export class AuthorizationBoundaryModule implements IModule {
     this.kernelIdentity = new KernelInternalIdentity({ now: this.config.now });
     const kernelIdentity = this.kernelIdentity;
 
+    // R2: open the durable substrate BEFORE the gate, so the gate is born
+    // on its final path (no post-hoc attachment exists). Boot order:
+    // reachability → indexes → rotation approvals → seed + divergence
+    // check → mirror → gate. Any failure throws (boot aborts).
+    const durableSecurity = this.config.durableSecurity;
+    const manifestsRegistry = this.config.manifests ?? new CapabilityManifestRegistry();
+    if (durableSecurity?.enabled === true) {
+      const storage = kernel.getModule<StorageModule>('storage');
+      this.securityStore = await SecurityStateStore.open(storage, durableSecurity.storeOptions);
+      const store = this.securityStore;
+      for (const approval of durableSecurity.rotationApprovals ?? []) {
+        await store.approveRotation(approval);
+      }
+      const seeds = durableSecurity.seedManifests ?? [];
+      const registrar = durableSecurity.seedRegistrar ?? {
+        principalId: 'kernel:boot',
+        tenantId: 'system',
+        authenticationEventId: 'boot',
+      };
+      await store.seedManifests(seeds, registrar);
+      // Boot-time mirror: ACTIVE manifests into the in-memory registry for
+      // connector binding checks + diagnostics. Durable decisions NEVER
+      // consult this mirror (they read S-1 per transaction).
+      for (const active of await store.listActiveManifests()) {
+        if (!manifestsRegistry.get(active.capabilityId, active.version)) {
+          manifestsRegistry.register(active.manifest);
+        }
+      }
+      const provider = durableSecurity.materialProvider ?? new InMemoryCredentialMaterialProvider();
+      if (!durableSecurity.materialProvider) {
+        kernel.logger.warn(
+          'authorization boundary: durable security uses the in-memory credential-material provider (dev/test only — production must inject a KMS/HSM provider)',
+        );
+      }
+      this.durableBroker = new DurableCredentialBroker(store, provider, { now: this.config.now });
+    }
+
     this.gate = new AuthorizationGate({
       now: this.config.now,
       // Only principals THIS process actually minted verify. A forged or
       // foreign KERNEL_INTERNAL principal is not a kernel worker.
       verifyKernelPrincipal: (principal, scope) =>
         kernelIdentity.verify(principal, scope as Parameters<KernelInternalIdentity['verify']>[1]),
-      manifests: this.config.manifests ?? new CapabilityManifestRegistry(),
+      manifests: manifestsRegistry,
       broker: this.config.broker,
       engine: this.config.engine,
       policyVersion: this.config.policyVersion,
       audit: this.auditSink,
+      ...(this.securityStore && this.durableBroker
+        ? { store: this.securityStore, durableBroker: this.durableBroker }
+        : {}),
     });
 
     // R1: SEALED bindings. A sealed token cannot be replaced, overridden,
@@ -145,12 +238,23 @@ export class AuthorizationBoundaryModule implements IModule {
     // or a test fixture cannot substitute a different (or absent) boundary.
     kernel.container.registerSealed(AUTHORIZATION_GATE_TOKEN, this.gate);
     kernel.container.registerSealed(KERNEL_INTERNAL_IDENTITY_TOKEN, this.kernelIdentity);
-    kernel.container.registerValue(AUTHORIZATION_MANIFESTS_TOKEN, this.gate.manifestsRegistry);
+    // R2: the manifests token is SEALED (substitution eliminated); on
+    // durable deployments the authoritative repository is exposed via the
+    // NEW sealed security-store token below.
+    kernel.container.registerSealed(AUTHORIZATION_MANIFESTS_TOKEN, this.gate.manifestsRegistry);
+    if (this.securityStore && this.durableBroker) {
+      kernel.container.registerSealed(AUTHORIZATION_SECURITY_STORE_TOKEN, this.securityStore);
+      kernel.container.registerSealed(AUTHORIZATION_DURABLE_BROKER_TOKEN, this.durableBroker);
+    }
     if (this.gate.credentialBroker) {
       kernel.container.registerValue(AUTHORIZATION_BROKER_TOKEN, this.gate.credentialBroker);
     }
     kernel.container.registerValue(AUTHORIZATION_AUDIT_TOKEN, this.auditSink);
-    kernel.logger.info('authorization boundary installed (fail-closed, default deny; durable audit on storage)');
+    kernel.logger.info(
+      'authorization boundary installed (fail-closed, default deny; durable audit on storage' +
+        (this.securityStore ? '; R2 durable security substrate enabled' : '') +
+        ')',
+    );
   }
 
   async start(_kernel: KernelApi): Promise<void> { /* no background work */ }
@@ -176,5 +280,21 @@ export class AuthorizationBoundaryModule implements IModule {
       throw new Error('AuthorizationBoundaryModule: kernel-internal identity is not initialized (fail-closed).');
     }
     return this.kernelIdentity;
+  }
+
+  /** R2: the authoritative durable security-state substrate. Throws when durable security is not enabled. */
+  getSecurityStore(): SecurityStateStore {
+    if (!this.securityStore) {
+      throw new Error('AuthorizationBoundaryModule: durable security is not enabled (fail-closed).');
+    }
+    return this.securityStore;
+  }
+
+  /** R2: the durable credential broker. Throws when durable security is not enabled. */
+  getDurableBroker(): DurableCredentialBroker {
+    if (!this.durableBroker) {
+      throw new Error('AuthorizationBoundaryModule: durable security is not enabled (fail-closed).');
+    }
+    return this.durableBroker;
   }
 }

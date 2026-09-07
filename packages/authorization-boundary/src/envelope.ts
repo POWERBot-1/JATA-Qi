@@ -26,6 +26,17 @@ export interface BuildEnvelopeInput {
   readonly envelopeId: string;
   readonly provenance: A01ProvenanceBinding;
   readonly credential?: A01CredentialBinding;
+  /**
+   * R2 durable citations (`decideAsync` only; covered by the integrity
+   * digest). Absent on R1 sync-path envelopes.
+   */
+  readonly durableCitations?: {
+    readonly manifestId?: string;
+    readonly manifestDigest?: string;
+    readonly sessionEventId?: string;
+    readonly sessionStatus?: A01AuthorizationEnvelope['sessionStatus'];
+    readonly securityStoreTxId?: string;
+  };
 }
 
 /**
@@ -34,7 +45,7 @@ export interface BuildEnvelopeInput {
  * never mint.
  */
 export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelope {
-  const { request, decision, envelopeId, provenance, credential } = input;
+  const { request, decision, envelopeId, provenance, credential, durableCitations } = input;
   const body: Omit<A01AuthorizationEnvelope, 'integrity'> = {
     envelopeId,
     version: 1,
@@ -75,6 +86,11 @@ export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelop
       ...decision,
       reasonCodes: [...decision.reasonCodes],
     },
+    ...(durableCitations?.manifestId !== undefined ? { manifestId: durableCitations.manifestId } : {}),
+    ...(durableCitations?.manifestDigest !== undefined ? { manifestDigest: durableCitations.manifestDigest } : {}),
+    ...(durableCitations?.sessionEventId !== undefined ? { sessionEventId: durableCitations.sessionEventId } : {}),
+    ...(durableCitations?.sessionStatus !== undefined ? { sessionStatus: durableCitations.sessionStatus } : {}),
+    ...(durableCitations?.securityStoreTxId !== undefined ? { securityStoreTxId: durableCitations.securityStoreTxId } : {}),
   };
   const digest = envelopeDigestValue(body);
   return deepFreeze({ ...body, integrity: { algorithm: 'sha256' as const, digest } });
@@ -159,4 +175,127 @@ export function envelopeAcceptance(
     reasons.push('TARGET_SUBSTITUTION');
   }
   return [...new Set(reasons)];
+}
+
+/**
+ * Sanitize a request for envelope mirroring: the envelope carries only the
+ * authoritative fields; structurally broken requests yield sanitized (empty)
+ * identity fields. Shared by the R1 sync path and the R2 durable path
+ * (single implementation — no drift).
+ */
+export function sanitizeRequestForEnvelope(request: A01AuthorizationRequest | null | undefined): A01AuthorizationRequest {
+  // The envelope mirrors only the authoritative fields; if the request was
+  // structurally broken the decision is a DENY and the envelope carries the
+  // sanitized (empty) identity fields rather than garbage.
+  const base: A01AuthorizationRequest = {
+    principal: {
+      id: '',
+      tenantId: '',
+      roles: [],
+      authenticationMethod: 'KERNEL_INTERNAL',
+      authenticationEventId: '',
+    },
+    tenantId: '',
+    agent: { agentId: '' },
+    run: { runId: '', correlationId: '' },
+    capability: { capabilityId: '', capabilityVersion: '' },
+    tool: '',
+    operation: '',
+    target: { system: '' },
+    dataClassification: 'INTERNAL',
+    impact: 'EXTERNAL_SIDE_EFFECT',
+    budgetCostUnits: 1,
+  };
+  if (!request || typeof request !== 'object') return base;
+  const r = request as unknown as Record<string, unknown>;
+  const principal = r.principal as Record<string, unknown> | undefined;
+  return {
+    ...base,
+    ...(principal && typeof principal.id === 'string'
+      ? {
+          principal: {
+            id: principal.id,
+            tenantId: typeof principal.tenantId === 'string' ? principal.tenantId : '',
+            roles: Array.isArray(principal.roles) ? principal.roles.filter((x): x is string => typeof x === 'string') : [],
+            authenticationMethod: typeof principal.authenticationMethod === 'string' ? principal.authenticationMethod : 'KERNEL_INTERNAL',
+            authenticationEventId: typeof principal.authenticationEventId === 'string' ? principal.authenticationEventId : '',
+          },
+        }
+      : {}),
+    ...(typeof r.tenantId === 'string' ? { tenantId: r.tenantId } : {}),
+    ...(r.agent && typeof (r.agent as { agentId?: unknown }).agentId === 'string'
+      ? { agent: { agentId: (r.agent as { agentId: string }).agentId } }
+      : {}),
+    ...(r.run && typeof (r.run as { runId?: unknown }).runId === 'string'
+      ? {
+          run: {
+            runId: (r.run as { runId: string }).runId,
+            correlationId: typeof (r.run as { correlationId?: unknown }).correlationId === 'string'
+              ? (r.run as { correlationId: string }).correlationId
+              : (r.run as { runId: string }).runId,
+          },
+        }
+      : {}),
+    ...(r.capability && typeof (r.capability as { capabilityId?: unknown }).capabilityId === 'string'
+      ? {
+          capability: {
+            capabilityId: (r.capability as { capabilityId: string }).capabilityId,
+            capabilityVersion: typeof (r.capability as { capabilityVersion?: unknown }).capabilityVersion === 'string'
+              ? (r.capability as { capabilityVersion: string }).capabilityVersion
+              : '',
+          },
+        }
+      : {}),
+    ...(typeof r.tool === 'string' ? { tool: r.tool } : {}),
+    ...(typeof r.operation === 'string' ? { operation: r.operation } : {}),
+    ...(r.target && typeof (r.target as { system?: unknown }).system === 'string'
+      ? {
+          target: {
+            system: (r.target as { system: string }).system,
+            ...(typeof (r.target as { resource?: unknown }).resource === 'string'
+              ? { resource: (r.target as { resource: string }).resource }
+              : {}),
+            ...(typeof (r.target as { audience?: unknown }).audience === 'string'
+              ? { audience: (r.target as { audience: string }).audience }
+              : {}),
+          },
+        }
+      : {}),
+    ...(typeof r.dataClassification === 'string' ? { dataClassification: r.dataClassification as A01AuthorizationRequest['dataClassification'] } : {}),
+    ...(typeof r.impact === 'string' ? { impact: r.impact as A01AuthorizationRequest['impact'] } : {}),
+    ...(typeof r.idempotencyKey === 'string' ? { idempotencyKey: r.idempotencyKey } : {}),
+    ...(typeof r.budgetCostUnits === 'number' ? { budgetCostUnits: r.budgetCostUnits } : {}),
+    ...(r.approval && typeof (r.approval as { approvalId?: unknown }).approvalId === 'string'
+      ? {
+          approval: {
+            approvalId: (r.approval as { approvalId: string }).approvalId,
+            approverId: typeof (r.approval as { approverId?: unknown }).approverId === 'string'
+              ? (r.approval as { approverId: string }).approverId
+              : '',
+            approvedAt: typeof (r.approval as { approvedAt?: unknown }).approvedAt === 'number'
+              ? (r.approval as { approvedAt: number }).approvedAt
+              : 0,
+            expiresAt: typeof (r.approval as { expiresAt?: unknown }).expiresAt === 'number'
+              ? (r.approval as { expiresAt: number }).expiresAt
+              : Number.MAX_SAFE_INTEGER,
+            approvedActionDigest: typeof (r.approval as { approvedActionDigest?: unknown }).approvedActionDigest === 'string'
+              ? (r.approval as { approvedActionDigest: string }).approvedActionDigest
+              : '',
+          },
+        }
+      : {}),
+    ...(r.credential && typeof (r.credential as { credentialId?: unknown }).credentialId === 'string'
+      ? {
+          credential: {
+            credentialId: (r.credential as { credentialId: string }).credentialId,
+            audience: typeof (r.credential as { audience?: unknown }).audience === 'string'
+              ? (r.credential as { audience: string }).audience
+              : null,
+            scopes: Array.isArray((r.credential as { scopes?: unknown }).scopes)
+              ? ((r.credential as { scopes: unknown[] }).scopes).filter((x): x is string => typeof x === 'string')
+              : [],
+          },
+        }
+      : {}),
+  };
 }

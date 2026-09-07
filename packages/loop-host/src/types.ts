@@ -365,7 +365,8 @@ export type AuthorityHoldReason =
   | 'PRINCIPAL_VERSION' // snapshot version unsupported
   | 'PRINCIPAL_MISMATCH' // snapshot/item/actor tenant or identity mismatch
   | 'PRINCIPAL_ROLE_ESCALATION' // execution roles exceed the verified set
-  | 'PRINCIPAL_TEST_METHOD'; // test authentication under a production-only policy
+  | 'PRINCIPAL_TEST_METHOD' // test authentication under a production-only policy
+  | 'PRINCIPAL_REVOKED'; // R2: durable session revoked/expired/unknown at dispatch
 
 /** T-02: closed set of authority-hold reasons (operator resume refuses these). */
 export const AUTHORITY_HELD_REASONS: ReadonlySet<string> = new Set<string>([
@@ -377,6 +378,7 @@ export const AUTHORITY_HELD_REASONS: ReadonlySet<string> = new Set<string>([
   'PRINCIPAL_MISMATCH',
   'PRINCIPAL_ROLE_ESCALATION',
   'PRINCIPAL_TEST_METHOD',
+  'PRINCIPAL_REVOKED',
 ]);
 
 /**

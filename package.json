@@ -2,7 +2,7 @@
   "name": "jataqi",
   "version": "0.1.0",
   "private": true,
-  "description": "JATA Qi — Modular AI Operating System",
+  "description": "JATA Qi \u2014 Modular AI Operating System",
   "workspaces": [
     "packages/*"
   ],
@@ -14,7 +14,9 @@
     "test": "node scripts/run-workspaces.mjs test",
     "lint": "eslint packages scripts eslint.config.mjs",
     "clean": "npm run clean --workspaces --if-present && rm -rf node_modules",
-    "lint:fix": "eslint packages scripts --fix"
+    "lint:fix": "eslint packages scripts --fix",
+    "perf:r2": "node scripts/r2-perf.mjs",
+    "scan:r2": "node scripts/r2-secret-scan.mjs"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -219,9 +219,48 @@ export interface IStorageDriver {
    * or writes tenant-owned documents.
    */
   beginTransaction?(options?: { tenantId?: string }): Promise<IStorageTransaction>;
+  /**
+   * R2: idempotently ensure a reviewed secondary index exists on a
+   * collection table. Optional: drivers without index support (memory,
+   * filesystem) leave it undefined. Callers MUST treat a missing
+   * implementation as "no index" (queries still correct, possibly
+   * slower) — never as authorization-relevant state.
+   */
+  ensureIndex?(collection: string, index: CollectionIndexDef): Promise<void>;
 }
 
-/** Events published on the kernel event bus. */
+/**
+ * R2: the minimal structural surface a SecurityStateStore needs from a
+ * storage composition. `StorageModule` satisfies this interface; tests
+ * may supply lighter harnesses. Repositories MUST refuse sources whose
+ * driver is non-transactional (`supportsTransactions() === false`) —
+ * a non-transactional store is never authoritative security state.
+ */
+export interface SecurityCollectionSource {
+  collection<T extends { id: string }>(name: string): Promise<ICollection<T>>;
+  getDriver(): IStorageDriver;
+  supportsTransactions(): boolean;
+  atomically<T>(fn: (scope: StorageWriteScope) => Promise<T>, options?: { tenantId?: string }): Promise<T>;
+}
+
+/**
+ * R2: reviewed secondary-index declaration for collection tables.
+ *
+ * Indexes are PERFORMANCE ONLY: they never bypass row-level security,
+ * never authorize, and never change query semantics. Enforcement hot
+ * paths in R2 are primary-key lookups; indexes cover operational/GC
+ * queries (rotation scans, revocation audits, retention sweeps,
+ * reconciliation). Creation is idempotent (`IF NOT EXISTS`) and
+ * concurrent-boot safe.
+ */
+export interface CollectionIndexDef {
+  /** Short deterministic name fragment ([a-z0-9_], ≤32 chars). */
+  readonly name: string;
+  /** JSON body fields to index (`body->>'field'`, btree). */
+  readonly keys: readonly string[];
+  /** When true, the leading index column is the `tenant_id` column. */
+  readonly includeTenant?: boolean;
+}
 export const StorageEvents = Object.freeze({
   NamespaceCreated: 'storage.namespace.created',
   CollectionCreated: 'storage.collection.created',

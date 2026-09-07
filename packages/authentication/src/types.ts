@@ -64,6 +64,29 @@ export function isAuthenticationMethod(value: unknown): value is AuthenticationM
 }
 
 /**
+ * R2: closed, machine-readable form of the `CommercialActorRole` union.
+ * Durable credential/session repositories check membership here instead
+ * of re-declaring the role set.
+ */
+export const RECOGNIZED_COMMERCIAL_ACTOR_ROLES: readonly CommercialActorRole[] = Object.freeze([
+  'observer',
+  'agent',
+  'operator',
+  'approver',
+  'admin',
+  'global_admin',
+  'system',
+]);
+
+/** R2: true when `value` is a recognized commercial actor role. */
+export function isCommercialActorRole(value: unknown): value is CommercialActorRole {
+  return (
+    typeof value === 'string' &&
+    (RECOGNIZED_COMMERCIAL_ACTOR_ROLES as readonly string[]).includes(value)
+  );
+}
+
+/**
  * A presented credential. The request boundary is responsible for collecting
  * these from the wire (HTTP headers, mTLS peer certs, OAuth bearer tokens,
  * etc.) and handing them to the authenticator. The principal boundary never
@@ -108,6 +131,13 @@ export interface AuthenticatedPrincipal {
    * real one.
    */
   readonly authenticationEventId: string;
+  /**
+   * R2: when the underlying credential itself expires (epoch ms), if the
+   * authenticator knows. The durable session lifetime is additionally
+   * capped by this value (min) so a session can never outlive the
+   * credential that verified it.
+   */
+  readonly credentialExpiresAt?: number;
   /**
    * Optional underlying subject metadata (issuer, subject, claims subset).
    * Authenticators decide what is safe to expose; downstream code MUST NOT
