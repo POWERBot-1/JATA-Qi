@@ -249,8 +249,16 @@ both untouched. No historical F3–F12 material reconstructed.)
 - **O-3**: directly measured pre/post (58 dirs / 2.4 GB → 0). Strong, repo-wide.
 - These results are self-reported on this sandbox and not canonical-CI determinations.
 
+## Canonical CI / PR (2026-09-08)
+- Branch pushed: `arena/01a08164-jata-qi` (commit `4456bcd`).
+- **PR #26** opened (base `main`): https://github.com/POWERBot-1/JATA-Qi/pull/26
+- Canonical GitHub Actions `build · lint · test`: **PASS** (10 m 59 s; run 34242701785) —
+  corroborates the local 50/50 green sweep.
+
 ## Merge gate (per directive §12)
-**MERGE NOT AUTHORIZED.** Code is committed/pushed and a PR is created only. A
-separate, explicit merge authorization is mandatory before any merge. Independent
-verification and explicit merge authorization remain outstanding. Production is NOT
-authorized. P2 is NOT authorized by this directive.
+**MERGE NOT AUTHORIZED.** Code is committed/pushed and PR #26 created and left OPEN
+(mergeable, CI green). A separate **explicit merge authorization** plus independent
+verification by a distinct verifier remain mandatory before any merge. Production is
+NOT authorized. P2 is NOT authorized by this directive. Governance position after this
+milestone: REMEDIATION COMPLETE → INDEPENDENT VERIFICATION (separate verifier) → STOP
+→ AWAIT EXPLICIT MERGE AUTHORIZATION.
