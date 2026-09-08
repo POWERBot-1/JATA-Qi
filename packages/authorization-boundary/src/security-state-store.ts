@@ -68,6 +68,33 @@ export const AUTHORIZATION_DECISIONS_COLLECTION = 'authorization.decisions';
  */
 export const R2_SKEW_MS = 300_000;
 
+/**
+ * P1 (R2-OBS-01 follow-up): the minimum manifest lifetime the DURABLE path can
+ * honor. Durable enforcement deny-earlies freshness by the R2 skew bound, so a
+ * manifest with `maxLifetimeMs <= R2_SKEW_MS` can NEVER execute durably — its
+ * envelope is expired the moment it is sealed. Registering such a manifest
+ * into the durable authority is a configuration defect (a capability that can
+ * never be used), so the durable registration paths reject it fail-closed.
+ *
+ * NOTE: this floor applies to the DURABLE authority only. The R1 in-memory
+ * registry has no skew-strict freshness check, and existing R1 callers (kernel
+ * worker manifests default to 60s) keep their exact semantics. The production
+ * posture (P1) makes the durable path mandatory, so production compositions
+ * cannot register sub-skew lifetimes at all.
+ */
+export const MIN_DURABLE_MANIFEST_LIFETIME_MS = R2_SKEW_MS;
+
+/** P1: reject durable registration of a manifest whose lifetime cannot survive the skew window. */
+export function assertDurableManifestLifetime(manifest: A01CapabilityManifest): void {
+  if (manifest.maxLifetimeMs <= MIN_DURABLE_MANIFEST_LIFETIME_MS) {
+    throw new ManifestRejectedError(
+      `manifest: maxLifetimeMs (${manifest.maxLifetimeMs}) must exceed the durable skew bound ` +
+        `(${MIN_DURABLE_MANIFEST_LIFETIME_MS} ms) — a shorter lifetime can never execute on the durable path ` +
+        '(deny-early freshness; R2-OBS-01; fail-closed)',
+    );
+  }
+}
+
 /** Body tenant marker for explicitly system-scoped S-1 rows. */
 export const SECURITY_SYSTEM_TENANT = 'system';
 
@@ -433,6 +460,7 @@ export class SecurityStateStore {
     registrar: ManifestRegistrar,
   ): Promise<RegisteredManifest> {
     validateManifestShape(manifest);
+    assertDurableManifestLifetime(manifest);
     assertRegistrar(registrar);
     const digest = manifestDigest(manifest);
     const versionId = manifestVersionId(manifest.capabilityId, manifest.version);
@@ -595,6 +623,7 @@ export class SecurityStateStore {
       }
       try {
         validateManifestShape(row.manifest);
+        assertDurableManifestLifetime(row.manifest);
       } catch (error) {
         throw new SecurityStateUnavailableError(
           `S-1 ACTIVE manifest for "${capabilityId}" fails shape validation: ${error instanceof Error ? error.message : String(error)} (fail-closed).`,
@@ -685,6 +714,7 @@ export class SecurityStateStore {
     const results: RegisteredManifest[] = [];
     for (const seed of seeds) {
       validateManifestShape(seed);
+      assertDurableManifestLifetime(seed);
       const digest = manifestDigest(seed);
       const active = await this.getActiveManifest(seed.capabilityId);
       if (!active) {
@@ -733,6 +763,7 @@ export class SecurityStateStore {
           throw new SecurityStateUnavailableError(`S-1 ACTIVE pointer "${pointer.id}" dangles (fail-closed).`);
         }
         validateManifestShape(row.manifest);
+        assertDurableManifestLifetime(row.manifest);
         out.push({
           manifestId: row.id,
           capabilityId: row.capabilityId,

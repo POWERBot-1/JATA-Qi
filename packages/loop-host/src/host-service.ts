@@ -134,7 +134,7 @@ export class LoopHostService {
   /** T-02 resolved principal policy (max age + test-method admission). */
   private readonly principalPolicy: ResolvedPrincipalPolicy;
   /** R2 S-8 session re-validation store (absent ⇒ R1 behavior). */
-  private readonly sessionStore: AuthenticationEventStore | undefined;
+  private sessionStore: AuthenticationEventStore | undefined;
   private lifecycle: HostLifecycle = 'IDLE';
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = 0;
@@ -169,6 +169,21 @@ export class LoopHostService {
     this.storage = kernel.getModule<StorageModule>('storage');
     await this.queue.init(kernel);
     await this.journal.init(kernel);
+    // P1 (S2): when the composition provides a durable session store (the
+    // authentication module registers it whenever durable sessions are
+    // enabled) and the host was not given one explicitly, bind it so every
+    // dispatch re-validates the session durably (HELD PRINCIPAL_REVOKED on
+    // revoked/expired sessions; store outage throws — fail-closed). A
+    // composition without durable sessions keeps its exact prior behavior.
+    if (this.sessionStore === undefined && kernel.container.has('authentication.session-store')) {
+      const store = kernel.container.resolveSync<AuthenticationEventStore>('authentication.session-store');
+      if (store && typeof store.assertActive === 'function') {
+        this.sessionStore = store;
+        kernel.logger.info(
+          'loop host: bound the durable session store — every dispatch re-validates the session (R2 S-8 / P1)',
+        );
+      }
+    }
   }
 
   /**

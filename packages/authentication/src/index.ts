@@ -75,4 +75,14 @@ export type {
   PrincipalBoundaryConfig,
 } from './principal-boundary.js';
 export { AuthenticationModule } from './authentication-module.js';
+export type {
+  ProductionAuthenticatorContract,
+  SessionLifecycleContract,
+  TokenLifecycleContract,
+  StepUpRequirement,
+  StepUpCapableAuthenticator,
+  IdentityProviderHealth,
+  PrincipalLifecycleHooks,
+  PrivilegedIdentityBoundary,
+} from './contracts.js';
 export type { AuthenticationDurableSessionsConfig, AuthenticationModuleConfig } from './authentication-module.js';

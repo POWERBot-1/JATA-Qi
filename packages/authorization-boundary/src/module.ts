@@ -167,8 +167,18 @@ export class AuthorizationBoundaryModule implements IModule {
   }
 
   async init(kernel: KernelApi): Promise<void> {
+    // P1-DEF-01 fix: on the DURABLE path, S-10 (`authorization.decisions`
+    // receipts written INSIDE the decision transaction by the DurableDecider)
+    // is the SOLE durable audit channel — "S-10 holds exactly the committed
+    // receipt". Adding a StorageAuditSink over the same collection made every
+    // durable decision double-write the receipt id (the sink committed it
+    // out-of-transaction, the in-tx receipt then hit the duplicate and failed
+    // closed with SECURITY_STATE_UNAVAILABLE). The storage-backed sink is
+    // therefore an R1-path mechanism only (R1 has no S-10); the durable path
+    // audits in-memory + S-10.
+    const durableSecurity = this.config.durableSecurity;
     const sinks: A01AuditSink[] = [new InMemoryAuditSink()];
-    if (this.config.durableAudit !== false) {
+    if (this.config.durableAudit !== false && durableSecurity?.enabled !== true) {
       const storage = kernel.getModule<StorageModule>('storage');
       const durable = await storage.collection<{ id: string }>(AUTHORIZATION_DECISIONS_COLLECTION);
       sinks.push(new StorageAuditSink(durable));
@@ -184,7 +194,6 @@ export class AuthorizationBoundaryModule implements IModule {
     // on its final path (no post-hoc attachment exists). Boot order:
     // reachability → indexes → rotation approvals → seed + divergence
     // check → mirror → gate. Any failure throws (boot aborts).
-    const durableSecurity = this.config.durableSecurity;
     const manifestsRegistry = this.config.manifests ?? new CapabilityManifestRegistry();
     if (durableSecurity?.enabled === true) {
       const storage = kernel.getModule<StorageModule>('storage');

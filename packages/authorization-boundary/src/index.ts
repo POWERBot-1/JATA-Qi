@@ -86,12 +86,15 @@ export {
   assertCredentialDocumentShape,
   DurableCredentialBroker,
   InMemoryCredentialMaterialProvider,
+  DEV_CREDENTIAL_MATERIAL_PROVIDER_IDS,
+  isDevelopmentCredentialMaterialProvider,
 } from './credential-store.js';
 export type {
   CredentialDoc,
   CredentialStatus,
   CredentialUseDoc,
   CredentialMaterialProvider,
+  CredentialMaterialProviderKind,
   DurableCredentialBrokerOptions,
   DurableIssueAttribution,
 } from './credential-store.js';
@@ -154,6 +157,8 @@ export {
   SECURITY_TX_BACKOFF_MS,
   SECURITY_CAS_MAX_ATTEMPTS,
   R2_SKEW_MS,
+  MIN_DURABLE_MANIFEST_LIFETIME_MS,
+  assertDurableManifestLifetime,
 } from './security-state-store.js';
 export type {
   ManifestVersionDoc,

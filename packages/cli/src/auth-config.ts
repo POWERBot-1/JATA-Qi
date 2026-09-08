@@ -67,6 +67,12 @@ const FORBIDDEN_EXTERNAL_ROLES: readonly CommercialActorRole[] = ['system'];
 export interface ResolvedCliAuthentication {
   readonly mode: CliAuthMode;
   readonly authenticators: readonly ServerAuthenticator[];
+  /**
+   * P1: the parsed static-token records (present only in static-token mode).
+   * Used by the production posture's durable import path (S-9 fingerprints);
+   * never logged, never persisted as material.
+   */
+  readonly staticTokenRecords?: readonly StaticTokenRecord[];
   readonly policy: AuthenticationPolicyInput;
   /** True when no credential can possibly verify in this process. */
   readonly admitsNothing: boolean;
@@ -244,6 +250,7 @@ export function resolveCliAuthentication(env: NodeJS.ProcessEnv = process.env): 
   return {
     mode,
     authenticators: [new StaticTokenAuthenticator(records)],
+    staticTokenRecords: records,
     policy: { mode: 'production' },
     admitsNothing: false,
     description:
