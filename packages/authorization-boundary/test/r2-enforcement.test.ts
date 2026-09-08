@@ -123,20 +123,37 @@ describe('R2 enforcement binding over real PostgreSQL', () => {
     const key = `idem-${process.pid}-2`;
     const first = await decidedEnvelope(capabilityId, `run-conf-a-${process.pid}`, key);
     const second = await decidedEnvelope(capabilityId, `run-conf-b-${process.pid}`, key);
+    // Deterministic ordering (O-1 remediation): Tx-1 — which durably claims the
+    // S-5 idempotency lease (INSERT IN_PROGRESS + lease) — COMMITS before the
+    // side effect is invoked (executeDurable: renderTx1 -> commit -> sideEffect).
+    // So the first side effect reaching its first await is deterministic
+    // evidence that `first` holds a LIVE lease. Awaiting that signal before
+    // launching the second attempt removes the former race, in which whichever
+    // of the two concurrent executes reached claimIdempotency first won the
+    // lease and the OTHER (often the awaited `inFlight`) was rejected with
+    // IDEMPOTENCY_CONFLICT — a false failure of this exact assertion. The
+    // assertions below are unchanged (second must conflict, calls === 1).
     let release!: () => void;
+    let firstHoldsLease!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
+    });
+    const leaseHeld = new Promise<void>((resolve) => {
+      firstHoldsLease = resolve;
     });
     let calls = 0;
     const inFlight = world.gate.executeAuthorized(
       first,
       async () => {
         calls += 1;
+        // Post-Tx-1: `first` now durably owns the live idempotency lease.
+        firstHoldsLease();
         await gate;
         return 'first-result';
       },
       { ...EXPECTED },
     );
+    await leaseHeld;
     await assert.rejects(
       () => world.gate.executeAuthorized(second, async () => 'second-result', { ...EXPECTED }),
       (error: unknown) => {

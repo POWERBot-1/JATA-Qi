@@ -4,6 +4,7 @@
 // When a real PostgreSQL cannot start, pgAvailable() is false and suites skip.
 
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
@@ -12,11 +13,22 @@ import { PostgresDriver } from '@jataqi/storage-postgres';
 import type { PostgresDriverConfig } from '@jataqi/storage-postgres';
 import EmbeddedPostgres from 'embedded-postgres';
 
+/** O-3 lifecycle hygiene: remove the pid-named cluster dir (never deleted by
+ * `persistent: true` embedded-postgres) on stop/boot-failure. Best-effort. */
+async function removeClusterDir(databaseDir: string): Promise<void> {
+  try {
+    await fs.rm(databaseDir, { recursive: true, force: true });
+  } catch {
+    // Best-effort — never fail the suite over teardown.
+  }
+}
+
 let server: {
   pg: EmbeddedPostgres;
   port: number;
   user: string;
   password: string;
+  databaseDir: string;
   started: boolean;
 } | undefined;
 
@@ -25,8 +37,9 @@ async function ensureServer(): Promise<typeof server> {
   const port = 56000 + Math.floor(Math.random() * 1200);
   const user = 'postgres';
   const password = 'postgres';
+  const databaseDir = path.join(os.tmpdir(), `jataqi-loophost-pg-${process.pid}`);
   const pg = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-loophost-pg-${process.pid}`),
+    databaseDir,
     port,
     user,
     password,
@@ -43,10 +56,13 @@ async function ensureServer(): Promise<typeof server> {
     await pg.start();
   } catch (error) {
     console.warn('[loophost-pg] PostgreSQL unavailable; suites will SKIP:', String((error as Error)?.message ?? error));
-    server = { pg, port, user, password, started: false };
+    server = { pg, port, user, password, databaseDir, started: false };
+    // A failed boot may have left a partial cluster behind.
+    await pg.stop().catch(() => undefined);
+    await removeClusterDir(databaseDir);
     return server;
   }
-  server = { pg, port, user, password, started: true };
+  server = { pg, port, user, password, databaseDir, started: true };
   return server;
 }
 
@@ -57,8 +73,9 @@ export async function pgAvailable(): Promise<boolean> {
 
 export async function stopPg(): Promise<void> {
   if (!server) return;
-  const { pg, started } = server;
+  const { pg, started, databaseDir } = server;
   if (started) await pg.stop().catch(() => undefined);
+  await removeClusterDir(databaseDir);
   server = undefined;
 }
 

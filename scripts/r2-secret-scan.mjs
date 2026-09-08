@@ -4,7 +4,7 @@
 //
 // Usage: node scripts/r2-secret-scan.mjs
 
-import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -99,120 +99,158 @@ for (const rel of DURABLE_SOURCES) {
 }
 
 // -- Part B: live PostgreSQL dump scan --------------------------------------
+// O-3 lifecycle hygiene (repo-wide embedded-PG cleanup gap): this script
+// allocates a persistent, pid-named embedded-PostgreSQL data directory
+// (`persistent: true`, so embedded-postgres never removes it itself). The
+// whole PostgreSQL lifecycle is wrapped in try/finally so the harness-owned
+// directory is removed on SUCCESS and on any BOOT/RUNTIME failure — scoped
+// strictly to this process's own `jataqi-r2scan-<pid>` allocation; it never
+// touches unrelated /tmp content. Cleanup is best-effort so it can never mask
+// the scan's real result; a removal error is logged (observable), and the
+// scan's own pass/fail/exit semantics are preserved unchanged.
 const port = 60800 + Math.floor(Math.random() * 300);
-const server = new EmbeddedPostgres({
-  databaseDir: join(tmpdir(), `jataqi-r2scan-${process.pid}`),
-  port,
-  user: 'postgres',
-  password: 'postgres',
-  authMethod: 'password',
-  persistent: true,
-  createPostgresUser: false,
-  initdbFlags: ['--no-locale', '--encoding=UTF8'],
-  postgresFlags: [],
-  onLog: () => {},
-  onError: () => {},
-});
-await server.initialise();
-await server.start();
-const database = `r2scan_${process.pid}_${randomUUID().slice(0, 8)}`;
-await server.createDatabase(database);
-const connectionString = `postgres://postgres:postgres@127.0.0.1:${port}/${database}`;
-
-const driver = new PostgresDriver({ connectionString, requireExplicitConfig: true, max: 10 });
-const kernel = createTestKernel();
-const storage = new StorageModule({ driverInstance: driver });
-kernel.register(storage);
-await kernel.boot();
-const store = await SecurityStateStore.open(storage);
-const sessions = await AuthenticationEventStore.open(storage);
-const broker = new DurableCredentialBroker(store, new InMemoryCredentialMaterialProvider());
-const gate = new AuthorizationGate({ store, durableBroker: broker, audit: new InMemoryAuditSink() });
-
-const now = Date.now();
-await store.registerManifestVersion(
-  manifest({
-    capabilityId: 'scan.cap',
-    maxLifetimeMs: 3_600_000,
-    requiredCredentialScopes: ['read'],
-    rateLimit: { windowMs: 3_600_000, max: 1000 },
-    budgetPerRunCostUnits: 1000,
-  }),
-  { principalId: 'user:registrar', tenantId: 'acme', authenticationEventId: 'evt-scan-registrar' },
-);
-
+const databaseDir = join(tmpdir(), `jataqi-r2scan-${process.pid}`);
+let server;
+let driver;
+let database = '';
 const markers = [];
-const record = { id: 'user:alice', tenantId: 'acme', roles: ['operator'] };
-const presented = testCredential(record);
-markers.push(presented.material);
-const boundary = new PrincipalBoundary({
-  policy: { mode: 'test-only', allowTestMethod: true },
-  authenticators: [new DeterministicTestAuthenticator([record])],
-  eventStore: sessions,
-  sessionLifetimeMs: 3_600_000,
-  now: () => now,
-});
-const authed = await boundary.authenticate(presented);
-const issued = await broker.issue(
-  {
-    credentialId: `cred-scan-${process.pid}`,
-    principalId: authed.id,
-    tenantId: authed.tenantId,
-    capabilityId: 'scan.cap',
-    tool: 'test-tool',
-    operation: 'do',
-    audience: 'aud-1',
-    scopes: ['read'],
-    lifetimeMs: 3_600_000,
-    issuedBy: 'user:registrar',
-  },
-  { principalId: 'user:registrar', authenticationEventId: 'evt-scan-registrar' },
-);
-markers.push(issued.material);
-markers.push('r2-material-');
+let dump;
 
-const sessionRow = await sessions.recordEvent(
-  {
-    eventId: `evt-scan-${process.pid}`,
-    tenantId: 'acme',
-    principalId: 'user:alice',
-    method: 'STATIC_TOKEN',
-    verifiedAt: now,
-    expiresAt: now + 3_600_000,
-  },
-  now,
-);
-const request = baseRequest({
-  principal: principal({ authenticationEventId: sessionRow.id }),
-  capability: { capabilityId: 'scan.cap', capabilityVersion: '1' },
-  credential: { credentialId: issued.credentialId, audience: 'aud-1', scopes: ['read'] },
-  run: { runId: `scan-run-${process.pid}`, correlationId: `scan-corr-${process.pid}` },
-});
-const envelope = await gate.decideAsync(request);
-if (envelope.decision.decision !== 'ALLOW') throw new Error('scan exercise denied');
-await gate.executeAuthorized(envelope, async () => 'scan', { tool: 'test-tool', operation: 'do' });
-await broker.revoke(issued.credentialId, 'acme', 'scan');
-await sessions.revokeEvent(sessionRow.id, 'acme', 'scan', now);
-await store.runGarbageCollection(now + 1);
-
-const dump = await store.transact({ system: true }, async (collections) => {
-  const out = [];
-  for (const name of [
-    SECURITY_MANIFESTS_COLLECTION,
-    SECURITY_CREDENTIALS_COLLECTION,
-    SECURITY_CREDENTIAL_USES_COLLECTION,
-    SECURITY_CONSUMED_ENVELOPES_COLLECTION,
-    SECURITY_IDEMPOTENCY_COLLECTION,
-    SECURITY_RATE_WINDOWS_COLLECTION,
-    SECURITY_RUN_BUDGETS_COLLECTION,
-    AUTHORIZATION_DECISIONS_COLLECTION,
-    AUTHENTICATION_EVENTS_COLLECTION,
-  ]) {
-    const handle = await collections.scope.collection(name);
-    for (const row of await handle.query({})) out.push({ collection: name, row });
+function removeOwnedDataDir() {
+  try {
+    rmSync(databaseDir, { recursive: true, force: true });
+  } catch (error) {
+    // Cleanup is best-effort and orthogonal to the scan result. Never mask
+    // the scan's real outcome; log the residual for observability.
+    console.error(
+      `[r2-secret-scan] cleanup warning: could not remove ${databaseDir}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-  return out;
-});
+}
+
+try {
+  server = new EmbeddedPostgres({
+    databaseDir,
+    port,
+    user: 'postgres',
+    password: 'postgres',
+    authMethod: 'password',
+    persistent: true,
+    createPostgresUser: false,
+    initdbFlags: ['--no-locale', '--encoding=UTF8'],
+    postgresFlags: [],
+    onLog: () => {},
+    onError: () => {},
+  });
+  await server.initialise();
+  await server.start();
+  database = `r2scan_${process.pid}_${randomUUID().slice(0, 8)}`;
+  await server.createDatabase(database);
+  const connectionString = `postgres://postgres:postgres@127.0.0.1:${port}/${database}`;
+
+  driver = new PostgresDriver({ connectionString, requireExplicitConfig: true, max: 10 });
+  const kernel = createTestKernel();
+  const storage = new StorageModule({ driverInstance: driver });
+  kernel.register(storage);
+  await kernel.boot();
+  const store = await SecurityStateStore.open(storage);
+  const sessions = await AuthenticationEventStore.open(storage);
+  const broker = new DurableCredentialBroker(store, new InMemoryCredentialMaterialProvider());
+  const gate = new AuthorizationGate({ store, durableBroker: broker, audit: new InMemoryAuditSink() });
+
+  const now = Date.now();
+  await store.registerManifestVersion(
+    manifest({
+      capabilityId: 'scan.cap',
+      maxLifetimeMs: 3_600_000,
+      requiredCredentialScopes: ['read'],
+      rateLimit: { windowMs: 3_600_000, max: 1000 },
+      budgetPerRunCostUnits: 1000,
+    }),
+    { principalId: 'user:registrar', tenantId: 'acme', authenticationEventId: 'evt-scan-registrar' },
+  );
+
+  const record = { id: 'user:alice', tenantId: 'acme', roles: ['operator'] };
+  const presented = testCredential(record);
+  markers.push(presented.material);
+  const boundary = new PrincipalBoundary({
+    policy: { mode: 'test-only', allowTestMethod: true },
+    authenticators: [new DeterministicTestAuthenticator([record])],
+    eventStore: sessions,
+    sessionLifetimeMs: 3_600_000,
+    now: () => now,
+  });
+  const authed = await boundary.authenticate(presented);
+  const issued = await broker.issue(
+    {
+      credentialId: `cred-scan-${process.pid}`,
+      principalId: authed.id,
+      tenantId: authed.tenantId,
+      capabilityId: 'scan.cap',
+      tool: 'test-tool',
+      operation: 'do',
+      audience: 'aud-1',
+      scopes: ['read'],
+      lifetimeMs: 3_600_000,
+      issuedBy: 'user:registrar',
+    },
+    { principalId: 'user:registrar', authenticationEventId: 'evt-scan-registrar' },
+  );
+  markers.push(issued.material);
+  markers.push('r2-material-');
+
+  const sessionRow = await sessions.recordEvent(
+    {
+      eventId: `evt-scan-${process.pid}`,
+      tenantId: 'acme',
+      principalId: 'user:alice',
+      method: 'STATIC_TOKEN',
+      verifiedAt: now,
+      expiresAt: now + 3_600_000,
+    },
+    now,
+  );
+  const request = baseRequest({
+    principal: principal({ authenticationEventId: sessionRow.id }),
+    capability: { capabilityId: 'scan.cap', capabilityVersion: '1' },
+    credential: { credentialId: issued.credentialId, audience: 'aud-1', scopes: ['read'] },
+    run: { runId: `scan-run-${process.pid}`, correlationId: `scan-corr-${process.pid}` },
+  });
+  const envelope = await gate.decideAsync(request);
+  if (envelope.decision.decision !== 'ALLOW') throw new Error('scan exercise denied');
+  await gate.executeAuthorized(envelope, async () => 'scan', { tool: 'test-tool', operation: 'do' });
+  await broker.revoke(issued.credentialId, 'acme', 'scan');
+  await sessions.revokeEvent(sessionRow.id, 'acme', 'scan', now);
+  await store.runGarbageCollection(now + 1);
+
+  dump = await store.transact({ system: true }, async (collections) => {
+    const out = [];
+    for (const name of [
+      SECURITY_MANIFESTS_COLLECTION,
+      SECURITY_CREDENTIALS_COLLECTION,
+      SECURITY_CREDENTIAL_USES_COLLECTION,
+      SECURITY_CONSUMED_ENVELOPES_COLLECTION,
+      SECURITY_IDEMPOTENCY_COLLECTION,
+      SECURITY_RATE_WINDOWS_COLLECTION,
+      SECURITY_RUN_BUDGETS_COLLECTION,
+      AUTHORIZATION_DECISIONS_COLLECTION,
+      AUTHENTICATION_EVENTS_COLLECTION,
+    ]) {
+      const handle = await collections.scope.collection(name);
+      for (const row of await handle.query({})) out.push({ collection: name, row });
+    }
+    return out;
+  });
+} finally {
+  if (driver) await driver.close().catch(() => undefined);
+  if (server) {
+    if (database) await server.dropDatabase(database).catch(() => undefined);
+    await server.stop().catch(() => undefined);
+  }
+  removeOwnedDataDir();
+}
 
 const serialized = JSON.stringify(dump);
 for (const marker of markers) {
@@ -238,10 +276,6 @@ for (const entry of dump) {
     }
   }
 }
-
-await driver.close().catch(() => undefined);
-await server.dropDatabase(database).catch(() => undefined);
-await server.stop().catch(() => undefined);
 
 const report = {
   generatedAt: new Date().toISOString(),

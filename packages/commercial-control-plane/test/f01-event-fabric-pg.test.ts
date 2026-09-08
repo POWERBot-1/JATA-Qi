@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import EmbeddedPostgres from 'embedded-postgres';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { isEventEnvelope, type EventEnvelope, type Kernel } from '@jataqi/core-kernel';
@@ -34,6 +35,17 @@ let kernel: Kernel;
 let service: CommercialControlPlaneService;
 let admin: CommercialActor;
 let now: number;
+let clusterDir: string;
+
+/** O-3 lifecycle hygiene: remove the pid-named cluster dir on teardown
+ * (`persistent: true` embedded-postgres never removes it). Best-effort. */
+async function removeClusterDir(dir: string): Promise<void> {
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch {
+    // Best-effort — never fail the suite over teardown.
+  }
+}
 
 function eventInput(overrides: Partial<PublishCommercialEventInput> = {}): PublishCommercialEventInput {
   return {
@@ -52,8 +64,9 @@ before(async () => {
   const port = 56100 + Math.floor(Math.random() * 800);
   const user = 'postgres';
   const password = 'postgres';
+  clusterDir = path.join(os.tmpdir(), `jataqi-f01-pg-${process.pid}`);
   const server = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-f01-pg-${process.pid}`),
+    databaseDir: clusterDir,
     port,
     user,
     password,
@@ -89,6 +102,7 @@ after(async () => {
     await pg.server.stop().catch(() => undefined);
     pg = undefined;
   }
+  await removeClusterDir(clusterDir);
 });
 
 describe('F-01 event fabric over real PostgreSQL', () => {

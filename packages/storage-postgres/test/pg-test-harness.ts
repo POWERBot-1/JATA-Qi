@@ -7,17 +7,29 @@
 // rather than a fabricated pass.
 
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import EmbeddedPostgres from 'embedded-postgres';
 import type { PostgresDriverConfig } from '../src/index.js';
 import { PostgresDriver } from '../src/index.js';
 
+/** O-3 lifecycle hygiene: remove the pid-named cluster dir (never deleted by
+ * `persistent: true` embedded-postgres) on stop/boot-failure. Best-effort. */
+async function removeClusterDir(databaseDir: string): Promise<void> {
+  try {
+    await fs.rm(databaseDir, { recursive: true, force: true });
+  } catch {
+    // Best-effort — never fail the suite over teardown.
+  }
+}
+
 let serverState: {
   pg: EmbeddedPostgres;
   port: number;
   user: string;
   password: string;
+  databaseDir: string;
   started: boolean;
 } | undefined;
 
@@ -26,8 +38,9 @@ async function ensureServer(): Promise<typeof serverState> {
   const port = 55000 + Math.floor(Math.random() * 1000);
   const user = 'postgres';
   const password = 'postgres';
+  const databaseDir = path.join(os.tmpdir(), `jataqi-pg-p01-${process.pid}`);
   const pg = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-pg-p01-${process.pid}`),
+    databaseDir,
     port,
     user,
     password,
@@ -46,17 +59,21 @@ async function ensureServer(): Promise<typeof serverState> {
     await pg.start();
   } catch (error) {
     console.warn('[pg-test] PostgreSQL integration unavailable; tests will SKIP:', String((error as Error)?.message ?? error));
-    serverState = { pg, port, user, password, started: false };
+    serverState = { pg, port, user, password, databaseDir, started: false };
+    // A failed boot may have left a partial cluster behind.
+    await pg.stop().catch(() => undefined);
+    await removeClusterDir(databaseDir);
     return serverState;
   }
-  serverState = { pg, port, user, password, started: true };
+  serverState = { pg, port, user, password, databaseDir, started: true };
   return serverState;
 }
 
 export async function stopServer(): Promise<void> {
   if (!serverState) return;
-  const { pg, started } = serverState;
+  const { pg, started, databaseDir } = serverState;
   if (started) await pg.stop().catch(() => undefined);
+  await removeClusterDir(databaseDir);
   serverState = undefined;
 }
 
