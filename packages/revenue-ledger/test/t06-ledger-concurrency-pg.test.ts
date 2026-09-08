@@ -46,11 +46,23 @@ import { RevenueLedgerModule, type RevenueLedgerEntry, type RevenueLedgerService
 
 let pg: { server: EmbeddedPostgres; port: number; started: boolean } | undefined;
 let dbCounter = 0;
+let clusterDir: string;
+
+/** O-3 lifecycle hygiene: remove the pid-named cluster dir on teardown
+ * (`persistent: true` embedded-postgres never removes it). Best-effort. */
+function removeClusterDir(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // Best-effort — never fail the suite over teardown.
+  }
+}
 
 before(async () => {
   const port = 59400 + Math.floor(Math.random() * 500);
+  clusterDir = path.join(os.tmpdir(), `jataqi-t06-ledger-pg-${process.pid}`);
   const server = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-t06-ledger-pg-${process.pid}`),
+    databaseDir: clusterDir,
     port,
     user: 'postgres',
     password: 'postgres',
@@ -75,6 +87,7 @@ before(async () => {
 after(async () => {
   if (pg?.started) await pg.server.stop().catch(() => undefined);
   pg = undefined;
+  removeClusterDir(clusterDir);
 });
 
 const WORKER = new URL('./t06-ledger-worker.mjs', import.meta.url).pathname;

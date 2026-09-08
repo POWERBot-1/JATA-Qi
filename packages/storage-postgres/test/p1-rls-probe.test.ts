@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import EmbeddedPostgres from 'embedded-postgres';
 import pg from 'pg';
 import { PostgresDriver, verifyRlsPosture, P1_SECURITY_COLLECTIONS, deriveTableName, ensureTenantIsolation } from '../src/index.js';
@@ -22,11 +23,23 @@ import { PostgresDriver, verifyRlsPosture, P1_SECURITY_COLLECTIONS, deriveTableN
 let server: EmbeddedPostgres;
 let port: number;
 let adminPool: pg.Pool;
+let clusterDir: string;
+
+/** O-3 lifecycle hygiene: remove the pid-named cluster dir on teardown
+ * (`persistent: true` embedded-postgres never removes it). Best-effort. */
+async function removeClusterDir(dir: string): Promise<void> {
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch {
+    // Best-effort — never fail the suite over teardown.
+  }
+}
 
 before(async () => {
   port = 55900 + Math.floor(Math.random() * 400);
+  clusterDir = path.join(os.tmpdir(), `jataqi-p1-probe-${process.pid}`);
   server = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-p1-probe-${process.pid}`),
+    databaseDir: clusterDir,
     port,
     user: 'postgres',
     password: 'postgres',
@@ -46,6 +59,7 @@ before(async () => {
 after(async () => {
   if (adminPool) await adminPool.end().catch(() => undefined);
   if (server) await server.stop().catch(() => undefined);
+  await removeClusterDir(clusterDir);
 });
 
 async function freshDatabase(): Promise<string> {

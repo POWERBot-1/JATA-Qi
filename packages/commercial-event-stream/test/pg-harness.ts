@@ -10,6 +10,7 @@
 // skipping, because T-05 acceptance depends on real transactional evidence.
 
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import EmbeddedPostgres from 'embedded-postgres';
@@ -19,15 +20,28 @@ import { PostgresDriver, type PostgresDriverConfig } from '@jataqi/storage-postg
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import { CommercialEventStreamModule, type CommercialEventStreamModuleConfig } from '../src/index.js';
 
-let server: { pg: EmbeddedPostgres; port: number; user: string; password: string; started: boolean } | undefined;
+/** O-3 lifecycle hygiene: remove the pid-named cluster dir (never deleted by
+ * `persistent: true` embedded-postgres) on stop/boot-failure. Best-effort. */
+async function removeClusterDir(databaseDir: string): Promise<void> {
+  try {
+    await fs.rm(databaseDir, { recursive: true, force: true });
+  } catch {
+    // Best-effort — never fail the suite over teardown.
+  }
+}
+
+let server:
+  | { pg: EmbeddedPostgres; port: number; user: string; password: string; databaseDir: string; started: boolean }
+  | undefined;
 
 async function ensureServer(): Promise<NonNullable<typeof server>> {
   if (server) return server;
   const port = 57000 + Math.floor(Math.random() * 900);
   const user = 'postgres';
   const password = 'postgres';
+  const databaseDir = path.join(os.tmpdir(), `jataqi-t05-pg-${process.pid}`);
   const pg = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-t05-pg-${process.pid}`),
+    databaseDir,
     port,
     user,
     password,
@@ -42,10 +56,13 @@ async function ensureServer(): Promise<NonNullable<typeof server>> {
   try {
     await pg.initialise();
     await pg.start();
-    server = { pg, port, user, password, started: true };
+    server = { pg, port, user, password, databaseDir, started: true };
   } catch (error) {
     console.warn('[t05-pg] PostgreSQL unavailable:', String((error as Error)?.message ?? error));
-    server = { pg, port, user, password, started: false };
+    server = { pg, port, user, password, databaseDir, started: false };
+    // A failed boot may have left a partial cluster behind.
+    await pg.stop().catch(() => undefined);
+    await removeClusterDir(databaseDir);
   }
   return server;
 }
@@ -56,9 +73,10 @@ export async function pgAvailable(): Promise<boolean> {
 
 export async function stopPg(): Promise<void> {
   if (!server) return;
-  const { pg, started } = server;
+  const { pg, started, databaseDir } = server;
   server = undefined;
   if (started) await pg.stop().catch(() => undefined);
+  await removeClusterDir(databaseDir);
 }
 
 let dbCounter = 0;

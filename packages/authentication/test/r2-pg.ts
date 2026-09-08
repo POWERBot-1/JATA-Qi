@@ -1,10 +1,11 @@
-// R2 fail-hard embedded-PostgreSQL helper for the authorization-boundary
-// durable-security suites. Unlike the canonical storage-postgres harness
-// (which skips when PostgreSQL is unavailable), this helper THROWS: an R2
-// suite that cannot obtain a real PostgreSQL backend FAILS — it must never
-// silently pass without exercising the durable store.
+// R2 fail-hard embedded-PostgreSQL helper for the durable-security suites.
+// Unlike the canonical storage-postgres harness (which skips when PostgreSQL
+// is unavailable), this helper THROWS: an R2 suite that cannot obtain a real
+// PostgreSQL backend FAILS — it must never silently pass without exercising
+// the durable store.
 
 import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import EmbeddedPostgres from 'embedded-postgres';
@@ -23,12 +24,30 @@ export interface R2Postgres {
   stop(): Promise<void>;
 }
 
+/**
+ * Deterministic lifecycle hygiene for the dedicated per-process cluster data
+ * directory. Every `bootR2Postgres` allocates a private, pid-named directory
+ * (`persistent: true`, so embedded-postgres will never remove it itself).
+ * Removing it on stop/boot-failure prevents unbounded `/tmp` accumulation
+ * across runs (each process ~40–50 MB) while never touching content we did
+ * not create. Cleanup is best-effort: a teardown failure must never turn a
+ * green suite red, and a leftover directory on an abnormal exit is bounded.
+ */
+async function removeClusterDir(databaseDir: string): Promise<void> {
+  try {
+    await fs.rm(databaseDir, { recursive: true, force: true });
+  } catch {
+    // Best-effort ops hygiene — never fail the suite over teardown.
+  }
+}
+
 export async function bootR2Postgres(label: string, portBase: number): Promise<R2Postgres> {
   const port = portBase + Math.floor(Math.random() * 250);
   const user = 'postgres';
   const password = 'postgres';
+  const databaseDir = path.join(os.tmpdir(), `jataqi-${label}-${process.pid}`);
   const server = new EmbeddedPostgres({
-    databaseDir: path.join(os.tmpdir(), `jataqi-${label}-${process.pid}`),
+    databaseDir,
     port,
     user,
     password,
@@ -40,24 +59,52 @@ export async function bootR2Postgres(label: string, portBase: number): Promise<R
     onLog: () => {},
     onError: () => {},
   });
-  // Fail-hard: any failure here rejects and fails the suite (no skip).
-  await server.initialise();
-  await server.start();
-  const database = `${label.replace(/[^a-z0-9]/gi, '_')}_${process.pid}_${randomUUID().slice(0, 8)}`;
-  await server.createDatabase(database);
-  const connectionString = `postgres://${user}:${password}@127.0.0.1:${port}/${database}`;
-  return {
-    server,
-    port,
-    user,
-    password,
-    database,
-    connectionString,
-    stop: async () => {
-      await server.dropDatabase(database).catch(() => undefined);
-      await server.stop().catch(() => undefined);
-    },
-  };
+  try {
+    // Fail-hard: any failure here rejects and fails the suite (no skip).
+    await server.initialise();
+    await server.start();
+    const database = `${label.replace(/[^a-z0-9]/gi, '_')}_${process.pid}_${randomUUID().slice(0, 8)}`;
+    // Startup-readiness retry (O-2): embedded-postgres resolves `start()` at
+    // the postmaster's "ready to accept connections" log line, which can
+    // precede the TCP listener actually accepting; a fresh server occasionally
+    // refuses the first CREATE DATABASE connect (ECONNREFUSED). This step was
+    // previously unguarded — the only post-boot connection without the bounded
+    // retry that `bootR2StorageKernel` already applies. Retry it the same way,
+    // then FAIL (never skip; never mask a real outage).
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await server.createDatabase(database);
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/ECONNREFUSED|connection refused|not accepting|terminated/i.test(message) || attempt === 3) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 750 * attempt));
+      }
+    }
+    const connectionString = `postgres://${user}:${password}@127.0.0.1:${port}/${database}`;
+    return {
+      server,
+      port,
+      user,
+      password,
+      database,
+      connectionString,
+      stop: async () => {
+        await server.dropDatabase(database).catch(() => undefined);
+        await server.stop().catch(() => undefined);
+        await removeClusterDir(databaseDir);
+      },
+    };
+  } catch (error) {
+    // Boot (initialise/start/CREATE DATABASE) failed: best-effort stop and
+    // remove the partial cluster so a failed boot does not leak a data
+    // directory, then rethrow (the suite still FAILS — never skips).
+    await server.stop().catch(() => undefined);
+    await removeClusterDir(databaseDir);
+    throw error;
+  }
 }
 
 /** Boot a storage kernel over the given connection string (fail-hard). */
