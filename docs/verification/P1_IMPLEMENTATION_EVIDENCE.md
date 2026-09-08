@@ -12,7 +12,7 @@
 | Branch | `arena/01a07f88-jata-qi` (dedicated implementation branch from canonical `main`) |
 | Parent SHA | `10fc9baffbc432eb1ec92cec9cd1f4c86d810a64` (= canonical `main`, verified before modification; working tree held only the two untracked governance docs now included in this PR) |
 | Baseline build/test at parent (recorded) | build CLEAN; `npm test` 50/50 workspaces, 1151/1151 tests, 0 skipped (R2 record, PR #24 head) |
-| Post-implementation verification (this pass, 2026-09-08) | build CLEAN (0 TS errors); `npm test` **50/50 workspaces, 249 suites, 1193/1193 pass, 0 fail, 0 skipped, 0 todo** (= baseline 1151 + **42 new P1 tests**, none removed or weakened); `npm run lint` 0 errors / 62 warnings (pre-existing, unchanged); `npm run scan:r2` PASS (0 findings); `npm run check:workspaces` PASS |
+| Post-implementation verification (this pass, 2026-09-08) | build CLEAN (0 TS errors); `npm test` **50/50 workspaces, 249 suites, 1194 tests — 1194/1194 pass, 0 fail, 0 skipped, 0 todo** (= baseline 1151 + **43 new P1 tests**: posture 19 + posture-pg 5 + rls-probe 6 + manifest-lifetime 9 + auth-factory 4; none removed or weakened); `npm run lint` 0 errors / 62 warnings (pre-existing, unchanged); `npm run scan:r2` PASS (0 findings); `npm run check:workspaces` PASS. **V-1 correction (2026-09-08 remediation pass):** this row originally reported "1193/1193 … 42 new P1 tests" — an undercount of exactly one. Authoritative count: 43 new P1 tests / 1194 total (sources: per-file `node --test` standalone counts 19+5+6+9+4; clean-room baseline at `10fc9ba` = 1151 ×2 runs; full-sweep aggregation on `cf23236` = 249 suites / 1194 tests, green sweep 1194/1194 re-executed 2026-09-08). See `P1_REMEDIATION_V1_V2.md` §V-1. |
 | Readiness artifact | `docs/P1_READINESS_AUDIT_AND_SPECIFICATION.md` (986 lines, read-only audit + spec) |
 | Score | **FROZEN at 9.484375%** — no capability/evidence credit claimed by this pass |
 | G10 / G19 | OPEN / UNRECOVERED — untouched by this work (no CI-log retrieval, no F3–F12 reconstruction) |
@@ -27,7 +27,8 @@
   both included in this PR as P1 record artifacts.
 - All work on the dedicated session branch `arena/01a07f88-jata-qi`; canonical
   `main` not modified; no rebase/squash/force-push; R2 behavior and evidence
-  history preserved (all R2 suites re-ran green inside the 1193/1193 sweep).
+  history preserved (all R2 suites re-ran green inside the 1194/1194 sweep —
+  V-1-corrected count, see the verification summary row above).
 
 ## 2. Slice record (S1–S10)
 
@@ -101,7 +102,8 @@ deny; start server ⇒ decisions resume; degradation observable).
 no P2 implementation** (no OIDC/OAuth/SSO/SAML/MFA/recovery/deprovisioning).
 
 ### S9 — Integrated qualification harness
-Five new suites (42 tests, fail-hard real PostgreSQL, 0 skipped):
+Five new suites (43 tests, fail-hard real PostgreSQL, 0 skipped — V-1-corrected
+count, originally recorded as 42):
 `p1-posture.test.ts` (19), `p1-posture-pg.test.ts` (5),
 `p1-rls-probe.test.ts` (6), `p1-manifest-lifetime.test.ts` (9),
 `p1-auth-factory.test.ts` (4 — includes factory fail-closed cases) +
@@ -166,7 +168,7 @@ This document + `docs/verification/p1-adversarial-matrix.md`.
 | --- | --- | --- |
 | Workspace/lockfile integrity | `npm run check:workspaces` | PASS |
 | Build (type check) | `npm run build` | 50/50 workspaces, 0 TS errors |
-| Full test suite | `npm test` | 50/50 workspaces; 249 suites; **1193 pass / 0 fail / 0 skipped / 0 todo** (~289 s wall) |
+| Full test suite | `npm test` | 50/50 workspaces; 249 suites; **1194 tests — 1194 pass / 0 fail / 0 skipped / 0 todo** on a green sweep (~289 s wall). **V-1 correction:** originally recorded here as "1193 pass"; the artifact contains 43 new P1 tests over the 1151 baseline = 1194 total; a green full sweep re-executed 2026-09-08 aggregates 249 suites / 1194 tests / 1194 pass (see `P1_REMEDIATION_V1_V2.md` §V-1) |
 | Lint | `npm run lint` | **0 errors**, 62 warnings (all pre-existing; warning count identical to baseline) |
 | Secret scan | `npm run scan:r2` | PASS — 8 files, 13 dump rows, 0 findings (negative control verified historically) |
 | Adversarial campaign | §`p1-adversarial-matrix.md` | 30/30 PASS (17 newly executed P1 cases + 13 regression-covered) |
@@ -185,7 +187,7 @@ R2 suite exercised).
   only a subsequent evidence-based assessment under JATA-P0-95-v1.1 may award
   credit. 95% remains mandatory and unreached.
 - **G10 (OPEN — unattributable canonical CI failure) and G19 (UNRECOVERED)
-  are untouched.** The 1193/1193 result above is a local verification run, not
+  are untouched.** The 1194/1194 result above (V-1-corrected count) is a local verification run, not
   a canonical-CI determination, and must not be represented as resolving G10.
 - **Independent verification: NOT PERFORMED — required next.** Critical P1
   controls require E4+ under JATA-P0-95-v1.1 (rubric V3/V4/V5 honored: these

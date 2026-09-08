@@ -5,7 +5,8 @@ Executed against the P1 implementation on branch `arena/01a07f88-jata-qi`
 Status vocabulary: **EXECUTED** (a fail-hard test with exact assertions ran and
 passed in this campaign) / **REGRESSION-COVERED** (the case is proven by an
 existing R2/A-01 suite that re-ran green in the full P1 regression sweep —
-1193/1193, 0 skipped). No case is reported as PASS on design alone.
+1194/1194, 0 skipped; V-1-corrected count: 43 new P1 tests over the 1151
+baseline — see `P1_REMEDIATION_V1_V2.md` §V-1). No case is reported as PASS on design alone.
 
 | # | Case | Status | Result | Evidence | Residual risk |
 |---|---|---|---|---|---|
