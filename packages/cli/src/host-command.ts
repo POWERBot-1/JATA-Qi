@@ -131,6 +131,17 @@ export async function runHostCommand(options: HostCommandOptions = {}): Promise<
     }),
   );
 
+  // P1: the non-durable-storage escape hatch is development-only. Under the
+  // production posture it is refused before anything boots (INV-16).
+  if (options.allowNonDurableStorage === true) {
+    const { resolveSecurityPosture } = await import('./security-posture.js');
+    if (resolveSecurityPosture() === 'production') {
+      log(
+        'jataqi host: REFUSED — --allow-non-durable-storage cannot be used under the production security posture (fail-closed).',
+      );
+      return 1;
+    }
+  }
   let instance: Awaited<ReturnType<typeof createJataQiFromEnv>>;
   try {
     instance = await createJataQiFromEnv({ loopHost: { enabled: true } });

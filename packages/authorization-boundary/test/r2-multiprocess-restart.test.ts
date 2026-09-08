@@ -94,6 +94,29 @@ describe('R2 multiprocess + restart over real PostgreSQL', () => {
     );
     const session = await mintSession(world);
     const request = durableRequest(capabilityId, session);
+    // V-2 stabilization (2026-09-08 remediation): each worker buckets its
+    // decision into the epoch-anchored fixed window floor(now / windowMs) —
+    // the exact S-6 fixed-window semantics the product guarantees. This
+    // test's precondition is that all 32 decisions land in ONE window; when
+    // the burst straddles a window boundary the (correct) limiter admits max
+    // in EACH window and the exact-5 assertion fails spuriously (verified
+    // 2026-09-08: on-demand reproduction at launch offsets ~56.6 s in-minute
+    // yields exactly 10 = 5+5 allows, deterministically, on this branch AND
+    // on canonical 10fc9ba — pre-existing, not a product defect). Align the
+    // burst to a fresh window instead of hoping for one: if the current
+    // window has less than ALIGNMENT_MARGIN_MS left, wait until just past
+    // the boundary. Measured on this 2-vCPU runner: decide burst spans
+    // [subtest start + 1.2 s, + 2.6 s] (spread 1.1–1.4 s; whole subtest
+    // ≤ 3.1 s under full-suite load), so the 15 s margin is ~5x the worst
+    // observed burst; a post-alignment straddle would require a >15 s burst,
+    // never observed. This changes WHEN the burst starts — never WHAT it
+    // asserts: 32 OS processes, one durable window, exactly max ALLOW.
+    const WINDOW_MS = 60_000;
+    const ALIGNMENT_MARGIN_MS = 15_000;
+    const remainingInWindow = WINDOW_MS - (Date.now() % WINDOW_MS);
+    if (remainingInWindow < ALIGNMENT_MARGIN_MS) {
+      await new Promise((resolve) => setTimeout(resolve, remainingInWindow + 100));
+    }
     const results = await Promise.all(
       Array.from({ length: 32 }, () => runWorker('decide', request)),
     );

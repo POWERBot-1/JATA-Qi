@@ -17,6 +17,7 @@ import type { SecurityCollectionSource } from '@jataqi/storage';
 import { PrincipalBoundary, type PrincipalBoundaryConfig } from './principal-boundary.js';
 import { AuthenticationEventStore } from './authentication-event-store.js';
 import { TokenRegistryStore } from './token-registry.js';
+import type { ServerAuthenticator } from './types.js';
 
 export interface AuthenticationDurableSessionsConfig {
   /**
@@ -39,6 +40,18 @@ export interface AuthenticationModuleConfig extends PrincipalBoundaryConfig {
    * registry wins; otherwise this one is published (if present).
    */
   readonly tokenRegistry?: TokenRegistryStore;
+  /**
+   * P1 (S2): factory invoked at init, AFTER the durable session/token
+   * stores have opened, so production authenticators can be constructed
+   * against the durable registry (e.g. registry-verified static tokens)
+   * instead of a process-local constructor table. Used only when no
+   * explicit `authenticators` array is supplied — an explicit array keeps
+   * its exact meaning (fail-closed: never both).
+   */
+  readonly authenticatorFactory?: (stores: {
+    readonly sessionStore?: AuthenticationEventStore;
+    readonly tokenRegistry?: TokenRegistryStore;
+  }) => readonly ServerAuthenticator[] | Promise<readonly ServerAuthenticator[]>;
 }
 
 export class AuthenticationModule implements IModule {
@@ -77,11 +90,32 @@ export class AuthenticationModule implements IModule {
       this.#tokenRegistry = await TokenRegistryStore.open(storage);
     }
     if (!this.#tokenRegistry) this.#tokenRegistry = this.#config.tokenRegistry;
+    // P1 (S2): construct authenticators through the factory when supplied, so
+    // production verification paths are built against the DURABLE registry
+    // (revocation visible cross-process) rather than a process-local table.
+    // Fail-closed: the factory is never combined with an explicit array, and
+    // a factory that cannot operate durably must throw (boot aborts).
+    let authenticators = this.#config.authenticators;
+    if (this.#config.authenticatorFactory) {
+      if (authenticators !== undefined) {
+        throw new Error(
+          'Authentication module: authenticatorFactory cannot be combined with an explicit authenticators array (fail-closed).',
+        );
+      }
+      authenticators = await this.#config.authenticatorFactory({
+        ...(eventStore ? { sessionStore: eventStore } : {}),
+        ...(this.#tokenRegistry ? { tokenRegistry: this.#tokenRegistry } : {}),
+      });
+      if (!Array.isArray(authenticators)) {
+        throw new Error('Authentication module: authenticatorFactory must return an array of authenticators (fail-closed).');
+      }
+    }
     // Construction is fail-closed: an unusable policy or an authenticator that
     // could produce an inadmissible method throws here, before boot completes.
     this.#eventStore = eventStore;
     this.#boundary = new PrincipalBoundary({
       ...this.#config,
+      ...(authenticators !== undefined ? { authenticators } : {}),
       ...(eventStore ? { eventStore } : {}),
       ...(this.#config.durableSessions?.sessionLifetimeMs !== undefined
         ? { sessionLifetimeMs: this.#config.durableSessions.sessionLifetimeMs }

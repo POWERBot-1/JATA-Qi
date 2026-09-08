@@ -23,6 +23,7 @@ import type {
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriverConfig, resolvePoolConfig, STORAGE_POSTGRES_SCHEMA_VERSION, R2_DEFAULT_LOCK_TIMEOUT_MS, R2_DEFAULT_STATEMENT_TIMEOUT_MS } from './config.js';
 import { IncompatibleStorageSchemaError, PostgresConfigError } from './errors.js';
+import { verifyRlsPosture, type RlsProbeResult } from './rls-probe.js';
 import {
   ensureTenantIsolation,
   setSystemTenantContext,
@@ -306,6 +307,31 @@ export class PostgresDriver implements IStorageDriver {
       ...(this.lastPoolErrorAt !== undefined ? { lastPoolErrorAt: this.lastPoolErrorAt } : {}),
       ...(this.lastPoolErrorMessage !== undefined ? { lastPoolErrorMessage: this.lastPoolErrorMessage } : {}),
     };
+  }
+
+  /** P1 (INV-14): the most recent RLS posture probe result, if one ran. */
+  private rlsPosture: RlsProbeResult | undefined;
+
+  /** P1 (INV-14): last RLS posture probe (observability; grants nothing). */
+  getLastRlsPosture(): RlsProbeResult | undefined {
+    return this.rlsPosture;
+  }
+
+  /**
+   * P1 (INV-11/INV-12): verify the production RLS posture of this driver's
+   * pool — the role is neither superuser nor BYPASSRLS, every expected
+   * security collection table has RLS + FORCE ROW LEVEL SECURITY enabled,
+   * and a canary exercise proves cross-tenant read/write refusal plus
+   * no-context blindness. The result is cached for observability
+   * (`getLastRlsPosture()`); the caller decides policy (the production
+   * posture treats `ok === false` as a boot failure). Diagnostics contain
+   * table/role names only — never credentials or connection strings.
+   */
+  async verifyRlsPosture(options: { readonly extraCollections?: readonly string[] } = {}): Promise<RlsProbeResult> {
+    await this.ensureReady();
+    const result = await verifyRlsPosture(this.pool, options);
+    this.rlsPosture = result;
+    return result;
   }
 
   /** Prepare the connection pool and base schema. Safe to call repeatedly. */

@@ -121,10 +121,20 @@ export async function ensureTenantIsolation(
       `Failed to create RLS policy on ${table} (fail-closed): ${(err as Error).message}`,
     );
   });
-  // Force RLS even for the table owner (otherwise the owner bypasses
-  // the policy; in production we always use a non-superuser
+  // P1 (R2-OBS follow-up): Force RLS even for the table owner (otherwise the
+  // owner bypasses the policy; in production we always use a non-superuser
   // application role, but the FORCE keeps the contract honest).
-  await client.query(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY`).catch(() => undefined);
+  // SECURITY-CRITICAL DDL — fail closed: a database where FORCE ROW LEVEL
+  // SECURITY cannot be established (privileges, managed-PostgreSQL
+  // restrictions, migration damage) must NOT be silently treated as an
+  // RLS-enforced database. The owner-bypass posture is exactly what FORCE
+  // exists to prevent, so swallowing this error would make the production
+  // RLS contract unverifiable (P1-GAP-06).
+  await client.query(`ALTER TABLE ${t} FORCE ROW LEVEL SECURITY`).catch((err) => {
+    throw new PostgresDriverError(
+      `Failed to FORCE ROW LEVEL SECURITY on ${table} (fail-closed): ${(err as Error).message}`,
+    );
+  });
 }
 
 /**

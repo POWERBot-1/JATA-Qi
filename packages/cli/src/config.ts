@@ -36,6 +36,24 @@ export interface EnvConfig {
    * shell history.
    */
   JATAQI_AUTH_TOKEN?: string;
+  /**
+   * P1 security posture: 'development' (DEFAULT — today's behavior) or
+   * 'production' (enforced production security composition; unknown values
+   * fail closed at boot).
+   */
+  JATAQI_SECURITY_POSTURE?: 'production' | 'development';
+  /**
+   * P1: optional JSON file of seed capability manifests for the durable
+   * security authority (production posture). Boot aborts on divergence from
+   * durable ACTIVE policy without an approved rotation record.
+   */
+  JATAQI_SEED_MANIFESTS?: string;
+  /**
+   * P1 (owner decision D1): explicit opt-in required before static bearer
+   * tokens are admissible under the production posture (registry-verified
+   * only; the plaintext constructor table is never the production path).
+   */
+  JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION?: string;
 }
 
 /** Parse a .env file into an object (KEY=VALUE lines, ignores comments/blanks). */
@@ -89,5 +107,8 @@ export function readConfig(): EnvConfig {
       ? Number(process.env.JATAQI_MAX_PRINCIPAL_AGE_MS)
       : undefined,
     JATAQI_AUTH_TOKEN: process.env.JATAQI_AUTH_TOKEN,
+    JATAQI_SECURITY_POSTURE: process.env.JATAQI_SECURITY_POSTURE as EnvConfig['JATAQI_SECURITY_POSTURE'],
+    JATAQI_SEED_MANIFESTS: process.env.JATAQI_SEED_MANIFESTS,
+    JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION: process.env.JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION,
   };
 }

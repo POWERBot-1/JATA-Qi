@@ -157,19 +157,54 @@ export function checkCredentialRow(
 // ---------------------------------------------------------------------------
 
 /**
- * R2 material-provider seam. Implementations hold secret material OUTSIDE
- * durable state and deliver it ONLY at acquire time. Production KMS/HSM
- * integrations implement this interface; R2 ships the in-memory dev/test
- * implementation only.
+ * R2 material-provider seam, formalized as the P1 production contract (S3).
+ * Implementations hold secret material OUTSIDE durable state and deliver it
+ * ONLY at acquire time. Production KMS/HSM integrations implement this
+ * interface; R2 ships the in-memory dev/test implementation only.
  *
- * Contract: `createMaterial` SHOULD be idempotent on credentialId (same id
- * ⇒ same material) so issuance retries after a crash between row-commit
- * and material-creation converge instead of stranding the credential.
+ * P1 production contract (KMP):
+ *  - `kind: 'external'` providers are the ONLY ones admissible under the
+ *    production posture (a dev provider is a boot failure there);
+ *  - `createMaterial` MUST be deterministic per credentialId (same id
+ *    ⇒ same material) so issuance retries after a crash between row-commit
+ *    and material-creation converge instead of stranding the credential;
+ *  - `getMaterial` MUST fail closed (throw) when material cannot be
+ *    retrieved — an unavailable provider is never "no credential required";
+ *  - material MUST never be persisted in JATA Qi durable state, never
+ *    logged, and never returned outside the acquire-time scoped context;
+ *  - `keyId` (optional) identifies the provider-side key/version so audit
+ *    records can cite key provenance without exposing material.
+ *
+ * NOTE: `kind` is a DECLARATION. The platform can refuse known development
+ * providers by id/kind, but it cannot cryptographically verify that a
+ * declared-'external' provider is backed by a real KMS/HSM — the operator
+ * remains accountable for that (residual risk recorded in the P1 evidence).
  */
+export type CredentialMaterialProviderKind = 'dev-inmemory' | 'external';
+
 export interface CredentialMaterialProvider {
   readonly id: string;
+  /** P1: explicit classification. Production posture requires `'external'`. */
+  readonly kind: CredentialMaterialProviderKind;
+  /** P1 (KMP-4): optional provider-side key/version identifier for audit. */
+  readonly keyId?: string;
   createMaterial(credentialId: string): Promise<string>;
   getMaterial(credentialId: string, envelopeId: string): Promise<string>;
+}
+
+/** P1: provider ids that are known development/test implementations. */
+export const DEV_CREDENTIAL_MATERIAL_PROVIDER_IDS: readonly string[] = Object.freeze([
+  'r2-inmemory-material-provider',
+]);
+
+/** P1: true when the provider is a known/declared development implementation. */
+export function isDevelopmentCredentialMaterialProvider(
+  provider: CredentialMaterialProvider,
+): boolean {
+  if (!provider || typeof provider !== 'object') return true;
+  if (provider.kind === 'dev-inmemory') return true;
+  if ((DEV_CREDENTIAL_MATERIAL_PROVIDER_IDS as readonly string[]).includes(provider.id)) return true;
+  return false;
 }
 
 /**
@@ -177,10 +212,12 @@ export interface CredentialMaterialProvider {
  * material survives only in this process, and a restart strands issued
  * credentials (their S-2 rows persist; their material does not — acquires
  * then fail closed with CREDENTIAL_MISSING, which is the honest posture
- * for a dev seam).
+ * for a dev seam). Explicitly classified `kind: 'dev-inmemory'` so the
+ * production posture can refuse it (P1 INV-09).
  */
 export class InMemoryCredentialMaterialProvider implements CredentialMaterialProvider {
   readonly id = 'r2-inmemory-material-provider';
+  readonly kind = 'dev-inmemory' as const;
   private readonly materials = new Map<string, string>();
 
   async createMaterial(credentialId: string): Promise<string> {

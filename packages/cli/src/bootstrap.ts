@@ -65,8 +65,28 @@ import {
 import { readConfig } from './config.js';
 import { resolveStorageDriver } from './storage-driver.js';
 import { hostAllowsTestMethod, resolveCliAuthentication } from './auth-config.js';
+import {
+  declareProductionSecurityInvariants,
+  resolveSecurityPosture,
+  validateProductionSecurityConfig,
+  type SecurityPosture,
+  ProductionPostureViolation,
+} from './security-posture.js';
+import type { A01CapabilityManifest } from '@jataqi/authorization-boundary';
+import { StaticTokenAuthenticator, type StaticTokenRecord, type TokenRegistryStore } from '@jataqi/authentication';
+import { readFileSync } from 'node:fs';
 
 export interface JataQiConfig {
+  /**
+   * P1 security posture. `development` (DEFAULT) preserves today's behavior
+   * exactly. `production` enforces the P1 production security composition:
+   * the configuration is validated BEFORE boot, and kernel security
+   * invariants (durable security, durable transactional storage, durable
+   * sessions, external credential provider, verified RLS posture, health)
+   * abort boot unless every one holds. There is no runtime path that relaxes
+   * the posture after boot.
+   */
+  securityPosture?: SecurityPosture;
   /** Kernel-level overrides. */
   kernel?: KernelOptions;
   /** Storage driver: 'memory' (default) or development-only single-process 'filesystem'. */
@@ -128,8 +148,126 @@ export interface JataQiInstance {
   shutdown: () => Promise<void>;
 }
 
+/**
+ * P1: production wiring for `createJataQiFromEnv`. Under the production
+ * posture the durable security substrate and durable sessions are wired
+ * automatically (unless the caller supplies an explicit override, which is
+ * then validated like any other production configuration). Static-token
+ * verification goes through the durable S-9 fingerprint registry (the
+ * plaintext constructor table is never the production verification path).
+ */
+function productionAuthorizationConfig(
+  env: ReturnType<typeof readConfig>,
+  override?: { readonly durableSecurity?: { readonly enabled?: boolean } & Record<string, unknown> } & Record<string, unknown>,
+) {
+  let seedManifests: readonly A01CapabilityManifest[] | undefined;
+  const seedPath = env.JATAQI_SEED_MANIFESTS?.trim();
+  if (seedPath) {
+    let raw: string;
+    try {
+      raw = readFileSync(seedPath, 'utf8');
+    } catch (error) {
+      throw new ProductionPostureViolation(
+        'P1_CFG_DURABLE_SECURITY_REQUIRED',
+        `JATAQI_SEED_MANIFESTS="${seedPath}" could not be read: ${(error as Error).message} (fail-closed).`,
+      );
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (error) {
+      throw new ProductionPostureViolation(
+        'P1_CFG_DURABLE_SECURITY_REQUIRED',
+        `JATAQI_SEED_MANIFESTS="${seedPath}" is not valid JSON: ${(error as Error).message} (fail-closed).`,
+      );
+    }
+    if (!Array.isArray(parsed)) {
+      throw new ProductionPostureViolation(
+        'P1_CFG_DURABLE_SECURITY_REQUIRED',
+        `JATAQI_SEED_MANIFESTS="${seedPath}" must contain a JSON array of capability manifests (fail-closed).`,
+      );
+    }
+    seedManifests = parsed as readonly A01CapabilityManifest[];
+  }
+  return {
+    ...override,
+    durableSecurity: {
+      enabled: true as const,
+      ...(seedManifests && seedManifests.length > 0 ? { seedManifests } : {}),
+      // An operator override merges on top (materialProvider, storeOptions,
+      // explicit seedManifests). An explicit `enabled: false` ALSO surfaces
+      // here and is REJECTED by the production validator (fail-closed):
+      // production cannot opt out of durable security.
+      ...(override?.durableSecurity as Record<string, unknown> | undefined),
+    },
+  };
+}
+
+/**
+ * P1: production authentication wiring. `none` keeps protected ingress
+ * closed (admits nothing — honest fail-closed). `static-token` requires the
+ * explicit production opt-in and verifies ONLY through the durable S-9
+ * fingerprint registry (constructor tables are refused); the principal file
+ * is imported once per boot as fingerprints — material is never persisted.
+ */
+function productionAuthenticationConfig(
+  env: NodeJS.ProcessEnv,
+  resolved: ReturnType<typeof resolveCliAuthentication>,
+) {
+  const durableSessions = { enabled: true as const };
+  if (resolved.mode === 'test-only') {
+    throw new ProductionPostureViolation(
+      'P1_CFG_TEST_AUTH_REFUSED',
+      'JATAQI_AUTH_MODE="test-only" is never admissible under the production security posture (fail-closed).',
+    );
+  }
+  if (resolved.mode === 'static-token') {
+    if (env.JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION?.trim().toLowerCase() !== 'true') {
+      throw new ProductionPostureViolation(
+        'P1_CFG_STATIC_TOKEN_REQUIRES_OPT_IN',
+        'JATAQI_AUTH_MODE="static-token" under the production posture additionally requires '
+          + 'JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION=true (owner decision D1): static bearer tokens are the weakest '
+          + 'admitted method and must be an explicit, auditable choice. Production identity (OIDC/mTLS) is P2 (fail-closed).',
+      );
+    }
+    const records: readonly StaticTokenRecord[] = resolved.staticTokenRecords ?? [];
+    return {
+      durableSessions,
+      policy: { mode: 'production' as const },
+      authenticatorFactory: async (stores: { tokenRegistry?: TokenRegistryStore }) => {
+        const registry = stores.tokenRegistry;
+        if (!registry) {
+          throw new Error(
+            'static-token production verification requires the durable token registry (S-9); durableSessions must be enabled (fail-closed).',
+          );
+        }
+        // One-shot import per boot: fingerprints only (SHA-256); material is
+        // never persisted; re-import of an identical binding is idempotent;
+        // a fingerprint bound to a different principal/tenant is refused.
+        await registry.importRecords(records, 'cli:boot', Date.now());
+        return [new StaticTokenAuthenticator([], { registry })];
+      },
+    };
+  }
+  return {
+    durableSessions,
+    policy: { mode: 'production' as const },
+  };
+}
+
 /** Build and boot a fully-wired JATA Qi kernel using explicit config. */
 export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstance> {
+  // P1: the production posture validates its configuration BEFORE anything is
+  // registered or booted, and declares its invariants on the kernel (checked
+  // at the end of init, before any module starts).
+  if (cfg.securityPosture === 'production') {
+    validateProductionSecurityConfig({
+      storageDriverName: cfg.storage?.driver,
+      authorization: cfg.authorization,
+      authentication: cfg.authentication,
+      allowNonDurableStorage: false,
+    });
+  }
   const kernel = new Kernel(cfg.kernel);
 
   const storageCfg: StorageModuleConfig = {
@@ -145,6 +283,13 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // deterministic BOOT FAILURE rather than a silent fail-open runtime.
   kernel.register(new AuthorizationBoundaryModule(cfg.authorization ?? {}));
   requireAuthorizationBoundary(kernel);
+  // P1: production posture — fail-closed composition invariants (INV-01…16).
+  if (cfg.securityPosture === 'production') {
+    declareProductionSecurityInvariants(kernel);
+    kernel.container.registerValue('security.posture', 'production');
+  } else {
+    kernel.container.registerValue('security.posture', 'development');
+  }
   kernel.register(new CommercialControlPlaneModule(cfg.commercialControlPlane));
   kernel.register(new AutonomousActionRuntimeModule());
   kernel.register(new ExternalConnectorModule());
@@ -255,6 +400,9 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
 /** Build JATA Qi using environment variables / .env (see .env.example). */
 export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise<JataQiInstance> {
   const env = readConfig();
+  // P1: resolve the security posture (default development). Unknown values
+  // fail closed; production triggers the enforced composition below.
+  const posture: SecurityPosture = resolveSecurityPosture(process.env);
   // T-03: resolve the process's authentication posture up front. Throws for an
   // unusable configuration (unknown mode, unreadable or malformed principal
   // file, test mode without its redundant opt-in), so a misconfigured process
@@ -272,6 +420,7 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
       ? new OpenAILLM({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_CHAT_MODEL })
       : new EchoLLM());
   return createJataQi({
+    securityPosture: overrides.securityPosture ?? posture,
     storage: {
       driver: (driverName as any) ?? 'memory',
       fsRoot: env.STORAGE_FS_ROOT,
@@ -295,14 +444,26 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
     kernel: overrides.kernel,
     // R1: forwarded for policy/manifest configuration only; the boundary
     // itself is mandatory and cannot be switched off from the environment.
-    authorization: overrides.authorization,
+    // P1: under the production posture the durable security substrate is
+    // wired automatically (an explicit override is validated like any other
+    // production configuration — durableSecurity:false fails closed there).
+    authorization:
+      posture === 'production'
+        ? (productionAuthorizationConfig(env, overrides.authorization as never) as never)
+        : overrides.authorization,
     // T-03: resolve the authentication posture from the environment. This
     // throws on an unusable configuration rather than booting a process that
     // silently trusts nothing or, worse, silently trusts test authority.
-    authentication: overrides.authentication ?? {
-      authenticators: resolved.authenticators,
-      policy: resolved.policy,
-    },
+    // P1: production additionally requires durable sessions and routes
+    // static-token verification through the durable S-9 registry.
+    authentication:
+      overrides.authentication ??
+      (posture === 'production'
+        ? (productionAuthenticationConfig(process.env, resolved) as never)
+        : {
+            authenticators: resolved.authenticators,
+            policy: resolved.policy,
+          }),
     // R-01: forward the host opt-in. Still disabled unless a caller explicitly
     // sets it (the `jataqi host` command does); default remains off.
     // T-03: the authority policy is derived from the resolved authentication

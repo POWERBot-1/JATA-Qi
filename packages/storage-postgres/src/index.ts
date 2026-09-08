@@ -23,5 +23,12 @@ export {
   TENANT_RLS_SETTING,
   TenantIsolationDriverError,
 } from './tenant-isolation.js';
+export {
+  verifyRlsPosture,
+  P1_SECURITY_COLLECTIONS,
+  type RlsProbeResult,
+  type RlsProbeTableStatus,
+  type RlsProbeFailureCode,
+} from './rls-probe.js';
 export { runWithTenant } from './tenant-context.js';
 export type { TenantBoundCollection, TenantContextOptions } from './tenant-context.js';
