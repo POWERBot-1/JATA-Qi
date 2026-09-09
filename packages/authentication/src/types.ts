@@ -16,14 +16,17 @@
 //   * The role set returned by the authenticator is the authoritative set:
 //     callers may only narrow (filter to a subset they declare they need),
 //     never widen.
-//   * Live identity provider activation is explicitly gated. The
-//     authentication module ships only with a `DeterministicTestAuthenticator`
-//     and a `StaticTokenAuthenticator`; an `OidcAuthenticator` exists as a
-//     type-only contract and a future-milestone delivery — wiring one is a
-//     separate authorization gate and is NOT performed by T-01.
+//   * Live identity provider activation is explicitly gated. The P2-S1
+//     delivery installs the provider-neutral `OidcAuthenticator` (pinned-
+//     JWKS verification against the durable identity core — spec §5.1) as a
+//     first-class production authenticator. It is NOT a live identity
+//     provider: no external IdP is activated or required by this package;
+//     operating against a real issuer (a real `jwks_uri` pin + enrolled
+//     subjects) is a separate operational authorization.
 //
-// No live identity provider is required by T-01. The architectural boundary
-// is what is being installed; provider activation is out of scope.
+// No live identity provider is required. The architectural boundary and the
+// provider-neutral verification path are what this package installs; live
+// provider activation is out of scope.
 
 import type { CommercialActor, CommercialActorRole } from '@jataqi/commercial-control-plane';
 

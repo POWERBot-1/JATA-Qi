@@ -72,6 +72,16 @@ export const P1_SECURITY_COLLECTIONS: readonly string[] = Object.freeze([
   'authorization.decisions',
   'authentication.events',
   'authentication.token-registry',
+  // P2-S1: the durable identity core (identity state, membership, roles,
+  // recovery, federation bindings, jti replay, identity events) — security
+  // state, so its RLS posture is part of the verified production contract.
+  'identity.principals',
+  'identity.memberships',
+  'identity.role-assignments',
+  'identity.recovery',
+  'identity.subject-bindings',
+  'identity.jti-replay',
+  'identity.events',
 ]);
 
 function fail(

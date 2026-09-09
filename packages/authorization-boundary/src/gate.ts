@@ -23,6 +23,7 @@
 // caller metadata.
 
 import { randomUUID } from 'node:crypto';
+import type { IdentityStateAuthority } from '@jataqi/authentication';
 import { assertEnvelopeIntegrity, envelopeAcceptance, sanitizeRequestForEnvelope, sealEnvelope } from './envelope.js';
 import { decideA01, type A01DecisionResult, type A01PolicyContext } from './policy-engine.js';
 import { buildConsumedAuditRecord, buildDecisionAuditRecord, InMemoryAuditSink } from './audit.js';
@@ -73,6 +74,15 @@ export interface A01GateConfig {
    * consulted on the durable path.
    */
   readonly durableBroker?: DurableCredentialBroker;
+  /**
+   * P2-S1: the identity-state authority resolver for the durable decision
+   * path (spec §24-S1). Lazy (resolved at first decision, when the kernel is
+   * fully booted). Absent ⇒ the exact pre-P2 decision behavior. Present ⇒
+   * every decision re-reads identity state + ACTIVE role assignments inside
+   * its Phase-B transaction (deny on non-ACTIVATED identity / tenant
+   * mismatch; narrow roles to the active set).
+   */
+  readonly identityAuthorityResolver?: () => IdentityStateAuthority | undefined | Promise<IdentityStateAuthority | undefined>;
 }
 
 export interface ScopedExecutionContext {
@@ -126,7 +136,7 @@ export class AuthorizationGate {
         'a gate with durable security state requires a durable credential broker (fail-closed)',
       );
     }
-    this.durable = this.store
+      this.durable = this.store
       ? new DurableDecider({
           store: this.store,
           broker: config.durableBroker as DurableCredentialBroker,
@@ -135,6 +145,9 @@ export class AuthorizationGate {
           policyVersion: this.policyVersion,
           now: this.now,
           ...(this.verifyKernelPrincipal ? { verifyKernelPrincipal: this.verifyKernelPrincipal } : {}),
+          // P2-S1: the identity-state re-read rides the DURABLE decision
+          // path only (the R1 in-memory path is unchanged by design).
+          ...(config.identityAuthorityResolver ? { identityAuthorityResolver: config.identityAuthorityResolver } : {}),
         })
       : undefined;
   }

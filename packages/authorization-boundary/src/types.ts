@@ -111,6 +111,10 @@ export type A01DenialReason =
   | 'OVER_PRIVILEGED_CONNECTOR'
   | 'IDEMPOTENCY_CONFLICT'
   | 'PRINCIPAL_REVOKED'
+  /** P2-S1: the identity lifecycle state is not ACTIVE (suspended / deactivated / deprovisioned). */
+  | 'IDENTITY_STATE_INACTIVE'
+  /** P2-S1: the request tenant does not match the identity's tenant (tenant substitution). */
+  | 'IDENTITY_TENANT_MISMATCH'
   | 'SECURITY_STATE_UNAVAILABLE';
 
 export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
@@ -167,6 +171,8 @@ export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
   'OVER_PRIVILEGED_CONNECTOR',
   'IDEMPOTENCY_CONFLICT',
   'PRINCIPAL_REVOKED',
+  'IDENTITY_STATE_INACTIVE',
+  'IDENTITY_TENANT_MISMATCH',
   'SECURITY_STATE_UNAVAILABLE',
 ]);
 

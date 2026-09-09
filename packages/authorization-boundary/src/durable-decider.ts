@@ -22,7 +22,11 @@
 //     the committed receipt — the authoritative channel).
 
 import { randomUUID } from 'node:crypto';
-import { assessSessionRow, type AuthenticationEventDoc } from '@jataqi/authentication';
+import {
+  assessSessionRow,
+  type AuthenticationEventDoc,
+  type IdentityStateAuthority,
+} from '@jataqi/authentication';
 import { StorageModule, type ICollection } from '@jataqi/storage';
 import { buildConsumedAuditRecord, buildDecisionAuditRecord } from './audit.js';
 import { CapabilityManifestRegistry } from './capability-manifests.js';
@@ -72,6 +76,19 @@ export interface DurableDeciderDeps {
   readonly policyVersion: string;
   readonly now: () => number;
   readonly verifyKernelPrincipal?: (principal: unknown, scope: string) => boolean;
+  /**
+   * P2-S1: the identity-state authority consulted INSIDE the Phase-B tenant
+   * transaction (spec §24-S1 "identity-state check inside the Phase-B
+   * transaction"). Absent (undefined) ⇒ the exact pre-P2 decision behavior
+   * (no identity gate, no role re-read) — the P1/R2 substrate is unchanged.
+   * Present ⇒ every decision re-reads the principal's identity state and
+   * ACTIVE role assignments (no role set is cached across decisions); a
+   * non-ACTIVATED identity or a tenant mismatch renders a DENY; the request
+   * role set is NARROWED to the ACTIVE assignments before the PDP runs.
+   * The resolver is lazy (the decision-time kernel is fully booted) and
+   * fail-closed: a resolver/lookup failure is a storage-failure DENY.
+   */
+  readonly identityAuthorityResolver?: () => IdentityStateAuthority | undefined | Promise<IdentityStateAuthority | undefined>;
 }
 
 /** Internal: a COMPLETED S-5 row was found — roll back Tx-1 and return the receipt. */
@@ -96,6 +113,25 @@ function isValidTenantId(value: unknown): value is string {
   }
 }
 
+/**
+ * P2-S1: narrow a request's principal role set to the intersection with the
+ * ACTIVE role assignments re-read in the decision transaction (spec §4.1 —
+ * the role set at decision time is asserted ∩ assigned, never cached).
+ * Pure narrowing: a role without an ACTIVE assignment is dropped; no role
+ * is ever added. Returns the same object when nothing changed.
+ */
+function narrowRequestRoles(
+  request: A01AuthorizationRequest,
+  activeRoles: readonly string[],
+): A01AuthorizationRequest {
+  const principal = request.principal;
+  if (!principal || !Array.isArray(principal.roles)) return request;
+  const allowed = new Set(activeRoles);
+  const narrowed = principal.roles.filter((role) => allowed.has(role));
+  if (narrowed.length === principal.roles.length) return request;
+  return { ...request, principal: { ...principal, roles: narrowed } };
+}
+
 export class DurableDecider {
   private readonly store: SecurityStateStore;
   private readonly broker: DurableCredentialBroker;
@@ -104,6 +140,9 @@ export class DurableDecider {
   private readonly policyVersion: string;
   private readonly now: () => number;
   private readonly verifyKernelPrincipal: ((principal: unknown, scope: string) => boolean) | undefined;
+  private readonly identityAuthorityResolver: DurableDeciderDeps['identityAuthorityResolver'];
+  private identityAuthorityCache: IdentityStateAuthority | undefined;
+  private identityAuthorityResolved = false;
 
   constructor(deps: DurableDeciderDeps) {
     this.store = deps.store;
@@ -113,6 +152,27 @@ export class DurableDecider {
     this.policyVersion = deps.policyVersion;
     this.now = deps.now;
     this.verifyKernelPrincipal = deps.verifyKernelPrincipal;
+    this.identityAuthorityResolver = deps.identityAuthorityResolver;
+  }
+
+  /**
+   * P2-S1: lazily resolve the identity-state authority (once; the kernel is
+   * fully booted by decision time). Fail-closed: a resolver failure re-throws
+   * (the Phase-B catch turns it into a storage-failure DENY) and is NOT
+   * cached as "resolved" — a broken resolver must keep failing closed.
+   */
+  private async resolveIdentityAuthority(): Promise<IdentityStateAuthority | undefined> {
+    if (this.identityAuthorityResolved) return this.identityAuthorityCache;
+    this.identityAuthorityResolved = true;
+    try {
+      this.identityAuthorityCache = this.identityAuthorityResolver
+        ? await this.identityAuthorityResolver()
+        : undefined;
+    } catch (error) {
+      this.identityAuthorityResolved = false;
+      throw error;
+    }
+    return this.identityAuthorityCache;
   }
 
   // -- decideAsync ----------------------------------------------------------
@@ -193,6 +253,19 @@ export class DurableDecider {
       return this.renderSessionDenyTx(collections, txId, maybeRequest, envelopeId, active, now, session);
     }
 
+    // 2.5 P2-S1: the identity-state + role re-read INSIDE this transaction
+    // (spec §24-S1). Fail-closed: a lookup failure rolls back the
+    // transaction (storage-failure DENY). Absent authority ⇒ the exact
+    // pre-P2 behavior (unlinked principals keep their pre-S1 decisions).
+    let requestForPdp = maybeRequest;
+    const identity = await this.assessIdentityClaim(collections, maybeRequest, now);
+    if (identity.denial) {
+      return this.renderIdentityDenyTx(collections, txId, maybeRequest, envelopeId, active, now, session, identity.denial);
+    }
+    if (identity.narrowedRequest !== undefined) {
+      requestForPdp = identity.narrowedRequest;
+    }
+
     // 3. Credential preload for the PDP adapter (checks run inside PDP).
     let credentialRow: CredentialDoc | undefined;
     const presentedId = maybeRequest?.credential?.credentialId;
@@ -233,10 +306,12 @@ export class DurableDecider {
       rateWindowUsage: () => usage,
       ...(this.verifyKernelPrincipal ? { verifyKernelPrincipal: this.verifyKernelPrincipal } : {}),
     };
-    const outcome = decideA01(maybeRequest, context);
+    const outcome = decideA01(requestForPdp, context);
 
     // 5. Seal with durable citations → sink audit (first, in-tx) → S-10.
-    const safeRequest = sanitizeRequestForEnvelope(maybeRequest);
+    // The sealed request is the (possibly identity-narrowed) request that
+    // the PDP actually evaluated.
+    const safeRequest = sanitizeRequestForEnvelope(requestForPdp);
     const envelopeCredential = safeRequest.credential
       ? {
           credentialId: safeRequest.credential.credentialId,
@@ -300,6 +375,115 @@ export class DurableDecider {
       return { verdict: false, eventId, status: assessment.status };
     }
     return { verdict: true, eventId, status: 'ACTIVE' };
+  }
+
+  /**
+   * P2-S1: the identity-state re-read (spec §4.1: no role set or membership
+   * state is cached across decisions). Runs INSIDE the Phase-B tenant
+   * transaction through the passed scope (one consistent snapshot).
+   *
+   *   * no identity authority configured          ⇒ pre-P2 passthrough;
+   *   * KERNEL_INTERNAL principal                 ⇒ skipped (cryptographic
+   *     kernel verification is the authority — same rule as the session
+   *     stage);
+   *   * no identity record for (tenant, principal) ⇒ passthrough (the
+   *     pre-P2 decision behavior for unlinked principals is preserved
+   *     exactly — only EXISTING identities are gated);
+   *   * identity tenant ≠ request tenant          ⇒ DENY
+   *     IDENTITY_TENANT_MISMATCH (tenant substitution);
+   *   * identity state ≠ ACTIVATED                ⇒ DENY
+   *     IDENTITY_STATE_INACTIVE (ENROLLED/SUSPENDED/DEACTIVATED/
+   *     DEPROVISIONED — a suspended or terminal identity cannot hold a
+   *     privilege, stale or not);
+   *   * ACTIVATED                                 ⇒ the request role set is
+   *     NARROWED to the ACTIVE role assignments (intersection; never
+   *     widened) and the narrowed request is what the PDP evaluates.
+   *
+   * Any storage failure propagates (the Phase-B catch ⇒ storage-failure
+   * DENY — uncertainty never produces ALLOW).
+   */
+  private async assessIdentityClaim(
+    collections: SecurityTxCollections,
+    maybeRequest: A01AuthorizationRequest | null | undefined,
+    now: number,
+  ): Promise<{
+    readonly denial?: {
+      readonly code: 'IDENTITY_STATE_INACTIVE' | 'IDENTITY_TENANT_MISMATCH';
+      readonly state?: string;
+      readonly identityTenant?: string;
+    };
+    readonly narrowedRequest?: A01AuthorizationRequest;
+  }> {
+    const authority = await this.resolveIdentityAuthority();
+    if (!authority) return {};
+    const principal = maybeRequest?.principal as
+      | { id?: unknown; tenantId?: unknown; authenticationMethod?: unknown }
+      | undefined;
+    if (!principal || typeof principal !== 'object') return {};
+    if (principal.authenticationMethod === 'KERNEL_INTERNAL') return {};
+    const tenantId = typeof maybeRequest?.tenantId === 'string' ? maybeRequest.tenantId : '';
+    const principalId = typeof principal.id === 'string' ? principal.id : '';
+    if (!tenantId || !principalId) return {};
+    const lookup = await authority.lookupInTx(collections.scope, tenantId, principalId, now);
+    if (!lookup) return {};
+    if (lookup.tenantId !== tenantId) {
+      return { denial: { code: 'IDENTITY_TENANT_MISMATCH', state: lookup.state, identityTenant: lookup.tenantId } };
+    }
+    if (lookup.state !== 'ACTIVATED') {
+      return { denial: { code: 'IDENTITY_STATE_INACTIVE', state: lookup.state } };
+    }
+    if (maybeRequest) {
+      const narrowed = narrowRequestRoles(maybeRequest, lookup.activeRoles);
+      if (narrowed !== maybeRequest) return { narrowedRequest: narrowed };
+    }
+    return {};
+  }
+
+  /**
+   * Short-circuit DENY for a failed identity-state re-read (still fully
+   * audited in-tx; the sealed request is the PRE-narrowing request, since
+   * the denial precedes the PDP).
+   */
+  private async renderIdentityDenyTx(
+    collections: SecurityTxCollections,
+    txId: string,
+    maybeRequest: A01AuthorizationRequest | null | undefined,
+    envelopeId: string,
+    active: ActiveManifest | undefined,
+    now: number,
+    session: { eventId: string; status: A01SessionAuditStatus },
+    denial: { readonly code: 'IDENTITY_STATE_INACTIVE' | 'IDENTITY_TENANT_MISMATCH'; readonly state?: string; readonly identityTenant?: string },
+  ): Promise<A01AuthorizationEnvelope> {
+    const safeRequest = sanitizeRequestForEnvelope(maybeRequest);
+    const decision: A01DecisionRecord = {
+      decisionId: `dec-${now}-${randomUUID().slice(0, 8)}`,
+      decision: 'DENY',
+      reasonCodes: Object.freeze([denial.code] as const),
+      policyVersion: this.policyVersion,
+      decidedAt: now,
+      expiresAt: now,
+      budgetCostUnits: 1,
+    };
+    const run = safeRequest.run;
+    const provenance: A01ProvenanceBinding = Object.freeze({
+      source: 'authorization-boundary',
+      correlationId: run.correlationId || run.runId,
+      createdAt: now,
+    });
+    const envelope = sealEnvelope({
+      request: safeRequest,
+      decision,
+      envelopeId,
+      provenance,
+      durableCitations: {
+        ...(active ? { manifestId: active.manifestId, manifestDigest: active.digest } : {}),
+        ...(session.eventId ? { sessionEventId: session.eventId } : {}),
+        sessionStatus: session.status,
+        securityStoreTxId: txId,
+      },
+    });
+    await this.recordDecisionTx(collections, envelope);
+    return envelope;
   }
 
   /** Short-circuit DENY for a failed session claim (still fully audited in-tx). */

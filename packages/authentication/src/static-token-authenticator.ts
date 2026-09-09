@@ -20,6 +20,7 @@ import {
   type ServerAuthenticator,
 } from './types.js';
 import type { TokenRegistryStore } from './token-registry.js';
+import type { IdentityStore } from './identity-store.js';
 
 export interface StaticTokenRecord {
   /** Opaque token material (bearer, API key, etc.). */
@@ -93,5 +94,49 @@ export class StaticTokenAuthenticator implements ServerAuthenticator {
       authenticationEventId: `${requestId}:${createHash('sha256').update(credential.material).digest('hex').slice(0, 16)}`,
       ...(record.expiresAt !== undefined ? { credentialExpiresAt: record.expiresAt } : {}),
     };
+  }
+}
+
+/**
+ * P2-S1 — auto-linked static-token authenticator (spec §21.1).
+ *
+ * Wraps a durable-registry `StaticTokenAuthenticator`: on every SUCCESSFUL
+ * registry verification, the verified (principalId, tenantId, roles) triple
+ * is idempotently auto-linked into the durable identity core
+ * (`IdentityStore.autoLinkTokenPrincipal`) BEFORE the principal is returned.
+ *
+ * The link is fail-closed: if the identity is terminal (DEACTIVATED /
+ * DEPROVISIONED), or the principal id is already bound to another tenant,
+ * the authentication is REFUSED — a static credential bound to a dead or
+ * foreign identity cannot authenticate. Repeat verification of the same
+ * binding is idempotent (one stable relationship, no new records).
+ */
+export class AutoLinkedStaticTokenAuthenticator implements ServerAuthenticator {
+  readonly id = 'static-token:auto-linked';
+  readonly supports: readonly AuthenticationMethod[] = ['STATIC_TOKEN'];
+
+  constructor(
+    private readonly inner: StaticTokenAuthenticator,
+    private readonly identityStore: IdentityStore,
+    private readonly importedBy: string,
+  ) {
+    if (!identityStore) {
+      throw new PrincipalValidationError('AutoLinkedStaticTokenAuthenticator requires a durable IdentityStore (fail-closed).');
+    }
+  }
+
+  async verify(credential: PresentedCredential, now: number, requestId: string): Promise<AuthenticatedPrincipal> {
+    // 1. Verify against the durable registry (revocation/rotation-aware).
+    const principal = await this.inner.verify(credential, now, requestId);
+    // 2. Idempotent auto-link into the identity core (fail-closed: a
+    //    terminal/foreign identity refuses the credential).
+    await this.identityStore.autoLinkTokenPrincipal(
+      principal.id,
+      principal.tenantId,
+      principal.roles,
+      this.importedBy,
+      now,
+    );
+    return principal;
   }
 }

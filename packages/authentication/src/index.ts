@@ -22,7 +22,7 @@ export {
   tokenFor,
 } from './deterministic-test-authenticator.js';
 export type { TestPrincipalRecord } from './deterministic-test-authenticator.js';
-export { StaticTokenAuthenticator } from './static-token-authenticator.js';
+export { StaticTokenAuthenticator, AutoLinkedStaticTokenAuthenticator } from './static-token-authenticator.js';
 export type { StaticTokenAuthenticatorOptions, StaticTokenRecord } from './static-token-authenticator.js';
 
 // R2 durable credential/session lifecycle (S-8/S-9): the ONLY session and
@@ -86,3 +86,83 @@ export type {
   PrivilegedIdentityBoundary,
 } from './contracts.js';
 export type { AuthenticationDurableSessionsConfig, AuthenticationModuleConfig } from './authentication-module.js';
+
+// P2-S1 — production identity core: types, state machine, and the durable
+// repositories (principals, memberships, role-assignments, recovery,
+// subject-bindings, jti-replay, identity events).
+export {
+  IDENTITY_PRINCIPALS_COLLECTION,
+  IDENTITY_MEMBERSHIPS_COLLECTION,
+  IDENTITY_ROLE_ASSIGNMENTS_COLLECTION,
+  IDENTITY_RECOVERY_COLLECTION,
+  IDENTITY_SUBJECT_BINDINGS_COLLECTION,
+  IDENTITY_JTI_REPLAY_COLLECTION,
+  IDENTITY_EVENTS_COLLECTION,
+  P2_S1_IDENTITY_COLLECTIONS,
+  RECOGNIZED_IDENTITY_STATES,
+  IDENTITY_LIFECYCLE_TRANSITIONS,
+  isIdentityState,
+  isPermittedIdentityTransition,
+  IdentityStoreError,
+  IdentityLifecycleError,
+  IdentityRebindRefusedError,
+  JtiReplayError,
+  assertIdentityDocumentShape,
+  identityPairKey,
+  subjectBindingKey,
+} from './identity-types.js';
+export type {
+  IdentityState,
+  IdentityMembershipStatus,
+  IdentityPrincipalDoc,
+  IdentityMembershipDoc,
+  IdentityRoleAssignmentDoc,
+  IdentityRoleAssignmentStatus,
+  IdentityRecoveryDoc,
+  IdentityRecoveryStatus,
+  IdentitySubjectBindingDoc,
+  IdentityJtiReplayDoc,
+  IdentityEventKind,
+  IdentityEventDoc,
+  IdentityStateLookup,
+  IdentityStateAuthority,
+} from './identity-types.js';
+export { RECOGNIZED_IDENTITY_EVENT_KINDS } from './identity-types.js';
+export { IdentityStore } from './identity-store.js';
+export type {
+  EnrollIdentityInput,
+  DeprovisionResult,
+  AutoLinkResult,
+  RecoveryCreateInput,
+} from './identity-store.js';
+export { JtiReplayStore, JTI_REPLAY_GC_GRACE_MS } from './jti-replay.js';
+
+// P2-S1 — pinned-JWKS JWT core (node:crypto; RS256/ES256 only; no new deps).
+export {
+  DEFAULT_OIDC_ALGORITHMS,
+  OIDC_CLOCK_SKEW_MS,
+  OIDC_CLOCK_SKEW_SECONDS,
+  JwtError,
+  decodeJwtSections,
+  ecRawSignatureToDer,
+  resolveJwksPin,
+  verifyJwt,
+  assessOidcClaims,
+  assertStepUpRecency,
+} from './jwt.js';
+export type {
+  JwtAlgorithm,
+  JwtFailureCode,
+  Jwk,
+  JwksSource,
+  ResolvedJwksPin,
+  JwtVerifyOptions,
+  OidcClaimOptions,
+  OidcClaimFailureCode,
+  OidcVerifiedClaims,
+  OidcClaimAssessment,
+} from './jwt.js';
+
+// P2-S1 — the provider-neutral OIDC production authenticator (spec §5.1).
+export { OidcAuthenticator, OidcAuthenticatorError } from './oidc-authenticator.js';
+export type { OidcAuthenticatorOptions } from './oidc-authenticator.js';
