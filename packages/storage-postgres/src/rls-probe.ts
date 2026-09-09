@@ -286,11 +286,13 @@ export async function verifyRlsPosture(
     } catch (error) {
       fail(failures, 'P1_RLS_PROBE_ERROR', `canary exercise failed: ${(error as Error).message}`);
     } finally {
-      // Scratch cleanup: system scope, best effort (never masks a failure).
+      // Scratch cleanup, best effort (never masks a failure). INV-15/GAP-07:
+      // the drop does NOT acquire a session-level system scope — the
+      // historical `set_config(..., false)` here was itself a session-scope
+      // grant on a pooled client. DROP TABLE is DDL and is not row-filtered
+      // by RLS, so the scratch table is dropped with no scope at all.
       try {
-        await client.query(`SELECT set_config('${TENANT_RLS_SETTING}', '${TENANT_SYSTEM_SCOPE}', false)`);
         await client.query(`DROP TABLE IF EXISTS "${canary}"`);
-        await client.query(`RESET ${TENANT_RLS_SETTING}`);
       } catch {
         /* best effort only */
       }

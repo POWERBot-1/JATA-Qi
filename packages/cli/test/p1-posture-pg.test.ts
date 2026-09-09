@@ -121,6 +121,7 @@ describe('P1 production composition qualification (real PostgreSQL)', () => {
         'p1.production.durable-sessions',
         'p1.production.credential-material-provider',
         'p1.production.rls-posture',
+        'p1.production.ambient-scope-minimization',
         'p1.production.security-state-health',
       ]) {
         assert.ok(invariantIds.includes(id), `invariant ${id} declared`);
@@ -139,6 +140,25 @@ describe('P1 production composition qualification (real PostgreSQL)', () => {
       assert.equal(probe.ok, true, `probe failures: ${JSON.stringify(probe.failures)}`);
       assert.equal(probe.role, pg.appRole);
       assert.equal(probe.isSuperuser, false);
+      // INV-15/GAP-07: the production boot itself demonstrates the
+      // minimization — sessions are blind by default, and every system-scope
+      // use performed during the secure boot (R2 reachability/seed via
+      // transaction:system, S-8/S-9 pre-tenant lookups and the R1 sink via
+      // enumerated poolpath labels, isolation DDL via schema:isolation) is
+      // counted, declared, and free of undeclared labels. A fresh checkout
+      // carries no ambient scope.
+      assert.equal(await driver.hasAmbientConnectScope(), false,
+        'production composition must hand out scope-blind pooled sessions');
+      const scopeAudit = driver.getSystemScopeAudit();
+      assert.equal(scopeAudit.ambientConnectScopePresent, false);
+      assert.deepEqual(scopeAudit.undeclaredLabels, [],
+        'every system-scope use observed during production boot must be enumerated');
+      assert.ok(scopeAudit.totalSystemScopeOperations > 0,
+        'the labeled enumeration must observe the boot system flows');
+      for (const label of Object.keys(scopeAudit.uses)) {
+        assert.ok(['poolpath:', 'transaction:system', 'schema:isolation'].some((prefix) => label.startsWith(prefix)),
+          `boot label ${label} falls under a declared exception prefix`);
+      }
       // Durable sessions + registry-based static-token verification.
       const auth = jq.kernel.getModule('authentication') as unknown as {
         getService: () => { authenticate: (c: { method: string; material: string }) => Promise<{ id: string }> };

@@ -16,10 +16,11 @@
 //   5. Non-superuser database access is actually subject to RLS (policy is
 //      enforced for a real application role without BYPASSRLS).
 //   6. FORCE ROW LEVEL SECURITY remains effective on every collection.
-//   7. Driver/session restart still establishes the system-safe default
-//      ('*' session scope) and tenant contexts correctly.
-//   8. The explicit system scope ('*') remains supported where intended
-//      (unscoped composed writes span tenants exactly like pre-RLS).
+//   7. Driver/session restart starts pooled sessions BLIND (no ambient
+//      scope, INV-15/GAP-07) and tenant contexts still establish correctly.
+//   8. The explicit system scope ('*') remains supported ONLY as an
+//      explicit per-transaction SET LOCAL grant; unscoped composed writes
+//      span tenants exactly like pre-RLS, with no session-level residue.
 //   9. Invalid tenant ids fail closed before any write.
 //  10. No T-01/T-04 transaction-ownership guarantees regress (single
 //      BEGIN/COMMIT per composed scope; CAS participates in the caller's
@@ -44,15 +45,24 @@ after(async () => {
 
 type TenantDoc = { id: string; tenantId?: string; payload: string };
 
-/** Capture every SQL statement (text + parameter values) issued through the pool. */
-function instrumentedPool(connectionString: string, statements: Array<{ text: string; values?: unknown[] }>): pg.Pool {
+/** Capture every SQL statement (text + parameter values + issuing pooled
+ *  client id) through the pool. `cid` lets ownership assertions attribute
+ *  statements to the composed transaction's own client — required since
+ *  INV-15/GAP-07, because schema-isolation grants now run as separate,
+ *  explicit system-scope transactions on OTHER pooled clients (they are
+ *  separately enumerated in the driver audit; they must never appear
+ *  inside the caller's transaction). */
+function instrumentedPool(connectionString: string, statements: Array<{ text: string; values?: unknown[]; cid: number }>): pg.Pool {
   const pool = new pg.Pool({ connectionString, max: 4 });
+  let clientSeq = 0;
   pool.on('connect', (client) => {
+    const cid = ++clientSeq;
+    (client as unknown as { __cid: number }).__cid = cid;
     const originalQuery = client.query.bind(client);
     (client as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) => {
       const text = typeof args[0] === 'string' ? args[0] : (args[0] as { text?: string })?.text;
       const values = (Array.isArray(args[1]) ? args[1] : undefined) as unknown[] | undefined;
-      if (text) statements.push({ text, values });
+      if (text) statements.push({ text, values, cid: (client as unknown as { __cid: number }).__cid });
       return (originalQuery as (...a: unknown[]) => unknown)(...args);
     };
   });
@@ -79,7 +89,7 @@ describe('T-06 production-path RLS (real PostgreSQL)', async () => {
   it('atomically({tenantId}) sets the tenant context inside the transaction (statement-level)', async () => {
     const db = await newTestDb();
     if (!db) { assert.fail('newTestDb returned undefined'); return; }
-    const statements: Array<{ text: string; values?: unknown[] }> = [];
+    const statements: Array<{ text: string; values?: unknown[]; cid: number }> = [];
     const driver = new PostgresDriver({ pool: instrumentedPool(db.config.connectionString!, statements), requireExplicitConfig: true });
     const { storage, shutdown } = await bootStorage(driver);
     try {
@@ -101,15 +111,23 @@ describe('T-06 production-path RLS (real PostgreSQL)', async () => {
         'tenant context must be established inside the transaction (SET LOCAL semantics)');
 
       // Context is transaction-local and does NOT leak between transactions on
-      // the SAME driver: after COMMIT the pooled session reverts to the system
-      // default '*' (the connect-time session scope), never to 'acme'.
+      // the SAME driver: after COMMIT the pooled session reverts to NO scope at
+      // all — INV-15/GAP-07 removed the ambient connect-time '*'. Neither the
+      // tenant value NOR a system default may be observable on a fresh
+      // checkout: any non-empty GUC is now a fail-closed posture violation.
       const probe = await driver.pool.connect();
       try {
         const g = await probe.query("SELECT current_setting('app.tenant_id', true) AS v");
-        assert.equal(g.rows[0]?.v, '*', 'tenant context must not leak past COMMIT (session reverts to system default)');
+        const leaked = g.rows[0]?.v;
+        assert.ok(
+          leaked === null || leaked === undefined || leaked === '',
+          `tenant context must not leak past COMMIT and no ambient scope may exist (INV-15); observed ${JSON.stringify(leaked)}`,
+        );
       } finally {
         probe.release();
       }
+      assert.equal(await driver.hasAmbientConnectScope(), false,
+        'INV-15: the driver pool must not hand out sessions with ambient scope');
       // Sequential tenant scopes on the same driver stay isolated: a globex
       // scope opened AFTER the committed acme scope cannot see acme's row.
       await storage.atomically(async (scope) => {
@@ -392,13 +410,24 @@ describe('T-06 production-path RLS (real PostgreSQL)', async () => {
       assert.deepEqual(seen, ['a1', 'b1'], 'system scope sees all tenants (server-side plumbing)');
       assert.equal(await (await storage.collection<TenantDoc>('t06-sys')).count(), 2);
 
-      // Raw session with GUC '*' also spans tenants.
+      // Explicit system scope spans tenants — and only in the INV-15 form:
+      // transaction-local SET LOCAL with no session-level residue. The
+      // pre-INV-15 pattern (session-level set_config(..., false) on a pooled
+      // client) is itself forbidden: it leaks broad authority across checkouts.
+      const tableName = deriveTableName('collection', 't06-sys');
       const c = await driver.pool.connect();
       try {
-        await c.query(`SELECT set_config('app.tenant_id', '*', false)`);
-        const tableName = deriveTableName('collection', 't06-sys');
+        await c.query('BEGIN');
+        await c.query(`SELECT set_config('app.tenant_id', '*', true)`);
         const res = await c.query(`SELECT count(*)::int AS n FROM "${tableName}"`);
         assert.equal(res.rows[0]?.n, 2, 'explicit "*" scope reads every tenant row');
+        await c.query('COMMIT');
+        const after = await c.query("SELECT current_setting('app.tenant_id', true) AS v");
+        const residue = after.rows[0]?.v;
+        assert.ok(
+          residue === null || residue === undefined || residue === '',
+          `SET LOCAL scope must not survive COMMIT on the pooled client; observed ${JSON.stringify(residue)}`,
+        );
       } finally {
         c.release();
       }
@@ -442,7 +471,7 @@ describe('T-06 production-path RLS (real PostgreSQL)', async () => {
   it('T-01/T-04 ownership: one transaction per composed scope; rollback hides entry AND sequence allocation', async () => {
     const db = await newTestDb();
     if (!db) { assert.fail('newTestDb returned undefined'); return; }
-    const statements: Array<{ text: string; values?: unknown[] }> = [];
+    const statements: Array<{ text: string; values?: unknown[]; cid: number }> = [];
     const driver = new PostgresDriver({ pool: instrumentedPool(db.config.connectionString!, statements), requireExplicitConfig: true });
     const { storage, shutdown } = await bootStorage(driver);
     try {
@@ -466,10 +495,33 @@ describe('T-06 production-path RLS (real PostgreSQL)', async () => {
         assert.fail('counter CAS did not converge');
       }, { tenantId: 'acme' });
 
-      const txStatements = statements.filter((s) => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(s.text.trim().split(/\s+/)[0]!.toUpperCase()));
+      // Ownership is asserted ON THE COMPOSED TRANSACTION'S OWN CLIENT:
+      // exactly one BEGIN/COMMIT pair and no ROLLBACK. (INV-15/GAP-07: the
+      // first-open isolation grants are separate explicit system-scope
+      // transactions on other pooled clients — enumerated and cross-checked
+      // below against the driver audit, never embedded in the caller's tx.)
+      const txBegin = statements.find((s) => s.text.trim() === 'BEGIN');
+      assert.ok(txBegin, 'composed scope must open a transaction');
+      const txCid = txBegin!.cid;
+      const txStatements = statements.filter((s) => s.cid === txCid
+        && ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(s.text.trim().split(/\s+/)[0]!.toUpperCase()));
       assert.equal(txStatements.filter((s) => s.text === 'BEGIN').length, 1, 'one BEGIN for the composed scope');
       assert.equal(txStatements.filter((s) => s.text === 'COMMIT').length, 1, 'one COMMIT for the composed scope');
       assert.equal(txStatements.filter((s) => s.text === 'ROLLBACK').length, 0, 'no inner rollback');
+      // The composed transaction never acquires system scope: exactly one
+      // explicit scope grant, parameterized to the tenant's own id.
+      const txScoped = statements.filter((s) => s.cid === txCid && s.text.includes("set_config('app.tenant_id'"));
+      assert.equal(txScoped.length, 1, 'the composed transaction sets exactly one explicit scope');
+      assert.notEqual((txScoped[0] as { values?: unknown[] }).values?.[0], '*',
+        'a tenant-scoped composed write must not run in system scope');
+      // INV-15 enumeration cross-check: every BEGIN on a NON-tx pooled client
+      // is an explicit, counted schema-isolation grant — the statement ledger
+      // and the driver's boot-audit ledger must agree exactly.
+      const grants = statements.filter((s) => s.text.trim() === 'BEGIN' && s.cid !== txCid);
+      const auditGrants = driver.getSystemScopeAudit().uses['schema:isolation'] ?? 0;
+      assert.equal(grants.length, auditGrants,
+        `explicit system-scope transactions observed (${grants.length}) must equal the enumerated audit count (${auditGrants})`);
+      assert.ok(auditGrants > 0, 'first-open isolation path must be enumerated');
 
       // Failure path: a throw after the counter CAS + entry put rolls back BOTH.
       await assert.rejects(

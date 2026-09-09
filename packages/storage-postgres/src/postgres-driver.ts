@@ -30,10 +30,14 @@ import {
   setTenantContext,
   TENANT_ID_COLUMN,
   TENANT_RLS_SETTING,
-  TENANT_SYSTEM_SCOPE,
 } from './tenant-isolation.js';
 import { deriveTableName } from './naming.js';
 import { PostgresCollection } from './postgres-collection.js';
+import {
+  SystemScopeCounter,
+  type SystemScopeAudit,
+  type SystemScopeRunner,
+} from './system-scope-audit.js';
 
 const { Pool } = pg;
 
@@ -318,6 +322,75 @@ export class PostgresDriver implements IStorageDriver {
   }
 
   /**
+   * INV-15/GAP-07: per-driver ledger of every explicit system-scope grant
+   * issued through this driver's choke points. Machine-readable boot-audit
+   * artifact; `undeclaredLabels` non-empty means an undocumented broad-scope
+   * pattern appeared (the production posture refuses to boot in that case).
+   */
+  private readonly systemScopeAudit = new SystemScopeCounter();
+
+  getSystemScopeAudit(): SystemScopeAudit {
+    return this.systemScopeAudit.snapshot();
+  }
+
+  /**
+   * INV-15/GAP-07: live negative test for the minimization itself — checks a
+   * freshly checked-out pooled session for ANY ambient tenant scope. Returns
+   * true only if a session-level GUC value is present without an explicit
+   * transaction (i.e. the ambient model regressed).
+   */
+  async hasAmbientConnectScope(): Promise<boolean> {
+    await this.ensureReady();
+    const client = await this.pool.connect();
+    try {
+      const res = await client.query(`SELECT current_setting('${TENANT_RLS_SETTING}', true) AS v`);
+      const value = res.rows[0]?.v as string | null | undefined;
+      return value !== undefined && value !== null && value !== '';
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * INV-15/GAP-07: THE system-scope choke point. Runs `fn` on a pooled client
+   * inside an explicit, labeled `BEGIN` + `SET LOCAL app.tenant_id = '*'` +
+   * `COMMIT` transaction (ROLLBACK on any failure — the grant never leaks and
+   * never becomes session state). The scope acquisition is fail-closed: if
+   * `SET LOCAL` fails, no work runs. Every use is counted under `label` for
+   * the boot-audit enumeration.
+   */
+  async withSystemScope<T>(label: string, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
+    await this.ensureReady();
+    this.systemScopeAudit.note(label);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Fail-closed scoping: a failure here aborts before any statement.
+      await setSystemTenantContext(client);
+      const out = await fn(client);
+      await client.query('COMMIT');
+      // F1: a live round-trip completed — clear any recorded degradation.
+      this.notePoolHealthy();
+      return out;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* preserve the original error */
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** Runner view handed to unscoped pool-path collection handles. */
+  private readonly systemScopeRunner: SystemScopeRunner = {
+    run: <T>(label: string, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> =>
+      this.withSystemScope(label, fn),
+  };
+
+  /**
    * P1 (INV-11/INV-12): verify the production RLS posture of this driver's
    * pool — the role is neither superuser nor BYPASSRLS, every expected
    * security collection table has RLS + FORCE ROW LEVEL SECURITY enabled,
@@ -347,17 +420,16 @@ export class PostgresDriver implements IStorageDriver {
   private async doInit(): Promise<void> {
     if (this.closed) throw new Error('Postgres storage driver is closed.');
     this._pool = this.opts.pool ?? new Pool(resolvePoolConfig(this.opts));
-    // T-06: every pooled session starts in the explicit SYSTEM scope ('*') so
-    // unscoped (system) reads/writes behave exactly like the pre-RLS driver.
-    // Tenant-scoped transactions override the GUC per-transaction with
-    // `SET LOCAL` (see beginTransaction), so the two scopes never bleed into
-    // each other. Sessions without ANY scope (unset GUC) fail closed — they
-    // can see and write no tenant-scoped rows.
-    this._pool.on('connect', (client: pg.PoolClient) => {
-      client
-        .query(`SET ${TENANT_RLS_SETTING} = '${TENANT_SYSTEM_SCOPE}'`)
-        .catch(() => undefined);
-    });
+    // INV-15/GAP-07 (PG-5 system-scope minimization): pooled sessions start
+    // WITHOUT any tenant scope — the historical T-06 ambient
+    // `SET app.tenant_id = '*'` on 'connect' has been REMOVED. A session that
+    // carries no scope is blind under RLS: it sees and writes no tenant-scoped
+    // row (fail-closed by default). System scope is now acquired ONLY inside
+    // explicit per-transaction `SET LOCAL` grants (see `withSystemScope`, the
+    // unscoped branch of `beginTransaction`, and the labeled schema-isolation
+    // path), and every grant is counted for the boot audit
+    // (`getSystemScopeAudit()`). No 'connect' listener is registered on the
+    // pool — including caller-supplied (external) pools.
     // F1 (post-verification remediation): a pool-level 'error'
     // (idle-client death during a live PostgreSQL outage/restart) MUST be
     // handled — an unhandled pool 'error' event throws and terminates the
@@ -486,7 +558,18 @@ export class PostgresDriver implements IStorageDriver {
       );
       const g = guard.rows[0] as { relrowsecurity?: boolean; has_col?: boolean; has_pol?: boolean } | undefined;
       if (!g || !g.relrowsecurity || !g.has_col || !g.has_pol) {
-        await ensureTenantIsolation(exec, table);
+        if (exec === this._pool) {
+          // INV-15/GAP-07: the idempotent legacy backfill inside
+          // `ensureTenantIsolation` (`UPDATE ... SET tenant_id =
+          // body->>'tenantId'`) must span tenants to migrate pre-column rows.
+          // That visibility is acquired EXPLICITLY, per table, through the
+          // labeled system-scope choke point — it no longer rides on an
+          // ambient session scope. When already inside a caller transaction
+          // (client exec), the transaction's own explicit scope applies.
+          await this.withSystemScope('schema:isolation', (client) => ensureTenantIsolation(client, table));
+        } else {
+          await ensureTenantIsolation(exec, table);
+        }
       }
     }
     return table;
@@ -500,10 +583,14 @@ export class PostgresDriver implements IStorageDriver {
   async openCollection<T extends { id: string }>(name: string): Promise<ICollection<T>> {
     await this.ensureReady();
     const table = await this.table('collection', name);
-    // Ensured on the pool (autocommit, visible to every session): transaction-
-    // bound handles for the same collection can skip the DDL round trips.
+    // Ensured on the pool (autocommit DDL, catalog-visible to every session):
+    // transaction-bound handles for the same collection can skip the DDL
+    // round trips. INV-15/GAP-07: unscoped pool-path handles receive their
+    // system-scope authority through the driver's labeled, counted
+    // `withSystemScope` runner — an explicit per-operation transaction, never
+    // an ambient session property.
     this.tables.set(`collection:${name}`, table);
-    return new PostgresCollection<T>(name, table, this.pool);
+    return new PostgresCollection<T>(name, table, this.pool, undefined, undefined, this.systemScopeRunner);
   }
 
   async openTenantNamespace(name: string, tenantId: string): Promise<INamespace> {
@@ -563,6 +650,10 @@ export class PostgresDriver implements IStorageDriver {
       if (tenantId !== undefined) {
         await setTenantContext(client, tenantId);
       } else {
+        // INV-15/GAP-07: the SYSTEM scope here is an explicit per-transaction
+        // `SET LOCAL` grant (never ambient) and is counted for the boot-audit
+        // enumeration of system-scope users.
+        this.systemScopeAudit.note('transaction:system');
         await setSystemTenantContext(client);
       }
     } catch (error) {
