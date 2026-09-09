@@ -3,7 +3,7 @@
 - **Repository:** POWERBot-1/JATA-Qi
 - **Branch:** `arena/01a085d8-jata-qi`
 - **Base (canonical main at implementation start):** `3e43dc664ee7156f5cfd0c0322e4a4bef209e07b`
-- **Head commit:** recorded in the completion report (this document ships inside the commit; see §11)
+- **Head commit:** recorded in the completion report (this document ships inside the commit; see §12)
 - **Milestone:** INV-15/GAP-07 — reduce unnecessary ambient security authority represented by the broad system scope `'*'` across the affected storage/pool paths. Governance: implementation explicitly authorized; no P2/R3/production work included.
 - **Tested artifact/configuration:** Node v22.22.3, npm 10.9.8, Linux (2 vCPU), real embedded PostgreSQL 18.x beta (`@embedded-postgres/linux-x64` 60 MB binaries), TypeScript 5.x, `node --test`. Full-suite wall evidence: `/tmp/full-test.log` captured during this session (2026-09-09, 50/50 workspaces passed).
 
@@ -17,7 +17,7 @@
 
 ## 2. PHASE 1 — complete inventory (before any code change)
 
-Search basis: repo-wide `grep` for `'*'` scope construction, ambient scope creation/propagation, storage/pool scope defaults, tenant-scope inference, system-scope consumers, implicit `'*'` fallbacks for missing tenant context, and tests depending on ambient `'*'`. Census: **167** pool-path `.collection(…)` call sites in `src` + **84** in `test` across all packages; **44** transaction-bound `scope.collection(…)` uses; **11** packages boot embedded PostgreSQL (30 PG-booting test files).
+Search basis: repo-wide `grep` for `'*'` scope construction, ambient scope creation/propagation, storage/pool scope defaults, tenant-scope inference, system-scope consumers, implicit `'*'` fallbacks for missing tenant context, and tests depending on ambient `'*'`. Census methodology (reproducible): count of matching LINES for `\.collection[<(]` across `packages/**/*.ts` excluding `dist/` — the generic-call `<` is essential because product consumers overwhelmingly call `.collection<T>(…)`; a plain `.collection(` pattern undercounts (an earlier draft of this document cited 167 src / 84 test / 44 tx-bound / 30 files from such a pattern — superseded, retained here only as labeled history). Measured at base `3e43dc6`: **199** call-site lines in `src` — all outside `@jataqi/storage-postgres` (whose own `src` exposes `openCollection` and matches 0), split **45** transaction-bound (`(tx|scope)\.collection[<(]`) / **154** pool-path-or-wrapper — and **130** in `test` (77 outside storage-postgres); **11** packages boot embedded PostgreSQL (**31** test files). At head: `src` remains **199** (the diff touches no consumer file — consumers literally unchanged, only their authority layer), `test` grows to **147** solely via migrated/new storage-postgres tests (t06 edits + the new INV-15 suite file; non-storage-postgres test count unchanged at 77). Reproduce: `git grep -E '\.collection[<(]' 3e43dc6 | grep '\.ts:' | grep -v '/dist/' | grep '/src/' | wc -l` ⇒ 199, and the same against the working tree.
 
 ### 2.1 Ambient / system-scope sites (engine)
 
@@ -44,7 +44,7 @@ Search basis: repo-wide `grep` for `'*'` scope construction, ambient scope creat
 
 ## 3. Design decisions
 
-1. **Centralize the migration in the storage scope layer** rather than editing 167+84 call sites across ~20 packages (the “broad architectural redesign” the P1-CLOSURE §3.6 declined). The engine’s ambient mechanism (#1) is deleted; every consumer of `StorageModule.collection()` / the driver’s pool-path handles transparently receives its system scope through ONE labeled choke point — the behavior each consumer needs, the authority shape INV-15 demands (per-transaction `SET LOCAL`, never session state).
+1. **Centralize the migration in the storage scope layer** rather than editing the 199 src + 130 test consumer lines (base census, §2) across ~20 packages (the “broad architectural redesign” the P1-CLOSURE §3.6 declined). The engine’s ambient mechanism (#1) is deleted; every consumer of `StorageModule.collection()` / the driver’s pool-path handles transparently receives its system scope through ONE labeled choke point — the behavior each consumer needs, the authority shape INV-15 demands (per-transaction `SET LOCAL`, never session state).
 2. **Fail-closed on the removed path.** A pool-path unscoped handle constructed without the driver’s `SystemScopeRunner` (the shape that used to inherit ambient `'*'`) now REJECTS every operation — proving “former ambient `'*'` path requires explicit authority” structurally, not by convention.
 3. **Enumeration is mechanical.** Every grant counts a label (`poolpath:<collection>`, `transaction:system`, `schema:isolation`) in a per-driver ledger; `undeclaredLabels` computes registry violations; the production posture invariant (`p1.production.ambient-scope-minimization`) fails boot on (a) any ambient scope observed on a fresh checkout (LIVE probe: `hasAmbientConnectScope()` executes a real pooled-session read of `current_setting`, so a re-introduced ambient is caught behaviorally, not via a flag) or (b) any observed label outside `ENUMERATED_SYSTEM_SCOPE_EXCEPTIONS`. New broad-scope patterns cannot appear silently.
 4. **System-scope grants remain available, explicitly** — legitimate system operations were NOT eliminated: unscoped `beginTransaction()` keeps its `SET LOCAL '*'`; the canary probe keeps its form; S-8/S-9/R1 pre-tenant lookups keep their visibility through the counted runner. Multi-statement legacy flows (`put` guard+insert, `replaceAll`, standalone `cas`) moved from “several autocommit statements riding session state” into one explicit transaction per operation — atomicity strictly improved (a side benefit; the guard-race window is narrowed to one transaction, the documented first-create election is unchanged).
@@ -58,7 +58,7 @@ Search basis: repo-wide `grep` for `'*'` scope construction, ambient scope creat
 | `packages/storage-postgres/src/postgres-driver.ts` | **Removed** the ambient `pool.on('connect')` → `SET app.tenant_id='*'` (the GAP-07 site). **Added** `withSystemScope(label, fn)` (BEGIN + fail-closed `SET LOCAL '*'` + work + COMMIT/ROLLBACK/release + pool-health parity), `getSystemScopeAudit()`, `hasAmbientConnectScope()`, per-driver `SystemScopeCounter`; `openCollection` hands unscoped handles the labeled runner; `beginTransaction()` unscoped branch counts `transaction:system`; `ensureResource` runs `ensureTenantIsolation` (backfill included) via `schema:isolation` when on the pool, inline (inheriting the tx’s explicit scope) when transaction-bound; comments record the new contract; unused `TENANT_SYSTEM_SCOPE` import dropped. |
 | `packages/storage-postgres/src/postgres-collection.ts` | Optional 6th constructor parameter `systemScope?: SystemScopeRunner`. All ops route through `scoped()`: tx-bound handles unchanged (run on the caller’s scoped transaction); pool-path handles run inside the explicit labeled transaction; **unscoped pool-path without authority fails closed** (reject, count nothing, write nothing). `put` guard+insert, `replaceAll`, `cas`, `clear` execute their full multi-statement sequence inside one explicit transaction. Header contract updated. |
 | `packages/storage-postgres/src/system-scope-audit.ts` | **New.** `SystemScopeException`, frozen `ENUMERATED_SYSTEM_SCOPE_EXCEPTIONS` (3 entries with justifications), `isDeclaredSystemScopeLabel`, `SystemScopeAudit` (machine-readable, JSON-stable), `SystemScopeCounter`, `SystemScopeRunner`. |
-| `packages/storage-postgres/src/tenant-isolation.ts` | Documentation contract updated (no ambient state; marker only inside explicit `SET LOCAL`; pointer to the audit). No behavioral change to the policy, charset rules, `setTenantContext` validation (`'*'`/blank/whitespace remain refused), `assertTenantId`, or the fail-closed FORCE RLS DDL. |
+| `packages/storage-postgres/src/tenant-isolation.ts` | Not changed by the implementation commit (an earlier draft of this table claimed a documentation update here — incorrect; corrected by the findings-remediation pass, which then ACTUALLY refreshed three stale comments: the header's SYSTEM-marker description, the marker's, and `setTenantContext`'s — to the explicit `SET LOCAL`-only model, replacing the removed ambient "driver's own pool" wording). Comment-only diff; no behavioral change to the policy, charset rules, `setTenantContext` validation (`'*'`/blank/whitespace remain refused), `assertTenantId`, or the fail-closed FORCE RLS DDL. |
 | `packages/storage-postgres/src/rls-probe.ts` | **Removed** the session-level `set_config(…,'*',false)` + `RESET` cleanup; scratch DROP is scopeless (DDL is not row-filtered). Canary logic (cross-tenant read/write refusal, no-context blindness, owner+FORCE) unchanged. |
 | `packages/storage-postgres/src/index.ts` | Exports the audit surface (`ENUMERATED_SYSTEM_SCOPE_EXCEPTIONS`, `isDeclaredSystemScopeLabel`, types) and `PostgresCollection` (already exported) for the adversarial authority test. |
 | `packages/cli/src/security-posture.ts` | **New production invariant `p1.production.ambient-scope-minimization` (INV-15):** non-PG/no-audit driver ⇒ fail-closed; `hasAmbientConnectScope()` true ⇒ boot failure; `undeclaredLabels` non-empty ⇒ boot failure with the offending labels. |
@@ -118,14 +118,14 @@ No assertion was weakened: the only migrated assertion (t06 revert-to-`'*'`) was
 ## 7. Evidence
 
 - **Focused INV-15 suite:** 9/9 pass (`inv15-system-scope-minimization.test.js`, this session).
-- **storage-postgres package:** 52/52 pass (t01/t04/t05/t06/p1-rls-probe/postgres/inv15 — includes real-PostgreSQL app-role enforcement).
+- **storage-postgres package:** 53/53 pass (t01/t04/t05/t06/p1-rls-probe/postgres/inv15 — includes real-PostgreSQL app-role enforcement; the count rose from the initially reported 52 when the undeclared-label case was added to the INV-15 suite before final commit).
 - **authorization-boundary:** **126/126** pass (52.2 s) — R2 durable paths, multiprocess restart, pool outage, retention GC, credentials, manifest authority — unchanged behavior over the migrated scope layer.
 - **authentication 51/51** (S-8/S-9 stores over the enumerated pool-path labels), **agent-runtime 80/80**, **autonomous-action-runtime 26/26**, **knowledge-graph 47/47** (incl. T-06 two-kernel + OS-process isolation), **cli 117/117** (incl. production-posture PG boot with the new invariant), **loop-host 170/170**, **revenue-ledger 20/20**, **commercial-control-plane 69/69**, **commercial-memory 10/10**, **human-approval 8/8**, **storage 26/26**.
 - **Full monorepo:** `npm test` (aggregate runner) — **50/50 workspaces PASSED; 1,203 test cases; 0 fail; 0 skipped; 0 `not ok`; 0 “DATABASE INTEGRATION NOT EXECUTED”**; exit 0; captured with `tee` (protocol from the closed investigation).
 - **Build:** `npm run build` all workspaces — clean (0 TS errors) before and after test migration.
 - **Lint:** `npm run lint` — **0 errors**; 60 pre-existing warnings (byte-identical to base `3e43dc6`; two temporary errors introduced mid-session were fixed, verified by base comparison).
 - **Secret scan:** `npm run scan:r2` — **PASS** (8 static files, 13 dump rows, 0 findings).
-- **CI:** see completion report (§11) — Actions result for the PR head.
+- **CI:** see completion report / PR #28 Actions run 34349013708 (SUCCESS on head `a86c825`; see §12).
 - **Reproducibility:** every failure mode addressed by the closed investigation is absent here: the suites were re-run on this artifact at commit state “working tree + these changes” only, with the environment freshly provisioned.
 
 ## 8. Security invariants preserved (explicit checklist)
@@ -149,7 +149,18 @@ AuthorizationBoundaryModule enforcement, verified principal identity, tenant iso
 - `npm run scan:r2`
 - `npm test` (aggregate; expect `Total: 50 · Passed: 50 · Failed: 0 · Skipped: 0`)
 
-## 11. Provenance
+## 11. Addendum — independent verification findings remediation (F1–F3)
+
+Independent verification (see `INV-15_GAP-07_INDEPENDENT_VERIFICATION.md`, B-grade) identified three non-blocking
+documentation/reporting findings, remediated in a follow-up comment-only/doc-only commit:
+**F1** census figures corrected above (methodology now stated and reproducible; totals reconcile: 199 = 45 + 154;
+test delta 147 − 130 all storage-postgres); **F2** the `tenant-isolation.ts` row above now states the truth (no
+implementation-commit change; the comment refresh ships in this remediation commit); **F3** the three stale comments in
+`tenant-isolation.ts` describing the removed "driver's own pool" ambient model are refreshed to the explicit
+per-transaction `SET LOCAL`-only reality. Security logic, tests, and assertions are untouched. Full remediation evidence:
+`INV-15_GAP-07_FINDINGS_REMEDIATION.md`.
+
+## 12. Provenance
 
 - Base: `3e43dc664ee7156f5cfd0c0322e4a4bef209e07b` (canonical main; INV-15 branch had zero code delta at start).
 - Commit SHA / branch / PR: recorded in the completion report and PR description (git-native provenance; the pre-commit tree is exactly §4 + this file — verified via `git status`/`git diff --stat`).

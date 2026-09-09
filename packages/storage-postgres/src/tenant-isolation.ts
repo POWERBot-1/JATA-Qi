@@ -24,10 +24,12 @@
 //     flows that carry a tenant run under this context.
 //   - A session WITHOUT a tenant context (GUC unset) sees NO rows and can
 //     write NO rows: an unconfigured connection fails closed by default.
-//   - A session with the explicit SYSTEM marker (GUC = '*', set on the
-//     driver's own pool via connection startup options) is the server-side
-//     system scope: it sees and writes all rows, exactly like the pre-RLS
-//     driver. '*' is not a valid tenant id (see the charset below), so it
+//   - A session with the explicit SYSTEM marker (GUC = '*') is the
+//     server-side system scope: it sees and writes all rows, exactly like
+//     the pre-RLS driver. Since INV-15/GAP-07 the marker exists ONLY
+//     inside explicit per-transaction `SET LOCAL` grants acquired by the
+//     driver (never a session-level ambient, never pool startup options —
+//     pooled sessions start UNSET, i.e. blind). '*' is not a valid tenant id (see the charset below), so it
 //     can never collide with a real tenant context. Production deployments
 //     use one application role for system flows and per-tenant contexts for
 //     tenant flows; application-level authorization (system/global_admin
@@ -54,8 +56,11 @@ export const TENANT_RLS_SETTING = 'app.tenant_id';
 /** Valid tenant-id alphabet (mirrors the storage-module validation). */
 export const TENANT_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 /**
- * Explicit system-scope marker for RLS sessions that must span tenants
- * (the driver's own pool, unscoped transactions). '*' is deliberately NOT a
+ * Explicit system-scope marker for RLS sessions that must span tenants.
+ * Set ONLY by the driver inside explicit, counted per-transaction
+ * `SET LOCAL` grants (`withSystemScope`, the unscoped `beginTransaction`
+ * branch, the schema-isolation path) — never ambient session state
+ * (INV-15/GAP-07). '*' is deliberately NOT a
  * valid tenant id, so a system context can never be confused with (or
  * forged as) a tenant context by the application layers.
  */
@@ -140,8 +145,10 @@ export async function ensureTenantIsolation(
 /**
  * Set the per-transaction tenant context using `SET LOCAL` so the
  * setting is bound to the transaction and reverts on commit/rollback.
- * The system marker is refused: system scope is set by the driver's pool
- * (or `setSystemTenantContext`), never through the tenant API.
+ * The system marker is refused: system scope is acquired ONLY through the
+ * driver's explicit system-scope transactions (`setSystemTenantContext`
+ * inside `SET LOCAL` transactions), never via session state and never
+ * through the tenant API.
  */
 export async function setTenantContext(
   client: pg.PoolClient,
