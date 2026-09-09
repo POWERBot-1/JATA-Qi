@@ -17,9 +17,13 @@
 //   * replaceAll/clear only ever affect the binding tenant's rows.
 //
 // Unscoped collections (no tenant binding) behave exactly like the pre-RLS
-// driver: the connection session runs with the system scope ('*') and rows
-// are stamped with `tenant_id` from their own body when present, so
-// tenant-scoped sessions can see them later.
+// driver: rows are stamped with `tenant_id` from their own body when
+// present, so tenant-scoped sessions can see them later. Since
+// INV-15/GAP-07 their system-scope visibility is NOT an ambient session
+// property: every unscoped pool-path operation runs inside an explicit,
+// labeled system-scope transaction supplied by the driver
+// (`SystemScopeRunner`). A pool-path handle constructed WITHOUT a runner
+// fails closed instead of inheriting any ambient scope.
 
 import type pg from 'pg';
 import type {
@@ -31,14 +35,12 @@ import {
   TENANT_ID_COLUMN,
   TenantIsolationDriverError,
 } from './tenant-isolation.js';
+import { PostgresDriverError } from './errors.js';
+import type { SystemScopeRunner } from './system-scope-audit.js';
 
 /** Minimal query surface shared by a pool and a transaction client. */
 export interface PgExecutor {
   query(text: string, values?: unknown[]): Promise<pg.QueryResult<any>>;
-}
-
-function isClient(exec: PgExecutor): exec is pg.PoolClient {
-  return typeof (exec as pg.PoolClient).release === 'function';
 }
 
 function escapeId(identifier: string): string {
@@ -64,26 +66,49 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
   private readonly table: string;
   private readonly pool: pg.Pool;
   private readonly txClient?: pg.PoolClient;
+  /**
+   * INV-15/GAP-07: explicit system-scope authority for unscoped pool-path
+   * operation (replaces the pre-INV-15 ambient session scope). Present only
+   * on handles opened through `PostgresDriver.openCollection`; transaction-
+   * bound handles never need it because their transaction already carries an
+   * explicit scope (tenant `SET LOCAL` or system `SET LOCAL`).
+   */
+  private readonly systemScope?: SystemScopeRunner;
 
-  constructor(name: string, table: string, pool: pg.Pool, txClient?: pg.PoolClient, tenantId?: string) {
+  constructor(
+    name: string,
+    table: string,
+    pool: pg.Pool,
+    txClient?: pg.PoolClient,
+    tenantId?: string,
+    systemScope?: SystemScopeRunner,
+  ) {
     this.name = name;
     this.table = table;
     this.pool = pool;
     this.txClient = txClient;
     this.tenantId = tenantId;
+    this.systemScope = systemScope;
   }
 
-  private get exec(): PgExecutor {
-    return (this.txClient ?? this.pool) as PgExecutor;
-  }
-
-  private async q(text: string, values?: unknown[]): Promise<pg.QueryResult<any>> {
-    try {
-      return await this.exec.query(text, values);
-    } catch (error) {
-      // Surface a clear error; callers must not treat a failed write as success.
-      throw error;
+  /**
+   * Route one logical operation through the operation's authority: a
+   * transaction-bound handle runs on its own (already-scoped) client; a
+   * pool-path handle runs inside an explicit, labeled system-scope
+   * transaction acquired per operation. A pool-path handle constructed
+   * WITHOUT system-scope authority fails closed — there is no ambient scope
+   * to fall back to (INV-15/GAP-07).
+   */
+  private scoped<R>(op: (client: pg.PoolClient) => Promise<R>): Promise<R> {
+    if (this.txClient) return op(this.txClient);
+    if (!this.systemScope) {
+      return Promise.reject(new PostgresDriverError(
+        `PostgresCollection "${this.name}" was opened without a tenant binding and without explicit ` +
+          'system-scope authority. INV-15/GAP-07: pooled sessions carry no ambient scope; an unscoped ' +
+          'pool-path handle must be constructed with the driver system-scope runner (fail-closed).',
+      ));
     }
+    return this.systemScope.run(`poolpath:${this.name}`, op);
   }
 
   private parse(row: { body?: unknown } | undefined): T | undefined {
@@ -99,7 +124,7 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
    * (system-scope) collections accept any document and stamp the column from
    * the document's own tenantId when present.
    */
-  private async tenantGuard(doc: T): Promise<string> {
+  private async tenantGuard(exec: PgExecutor, doc: T): Promise<string> {
     const binding = this.tenantId;
     const docTenant = bodyTenant(doc);
     if (binding === undefined) return docTenant ?? '';
@@ -109,7 +134,7 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
       );
     }
     const t = escapeId(this.table);
-    const clash = await this.q(
+    const clash = await exec.query(
       `SELECT 1 FROM ${t} WHERE id = $1 AND ${TENANT_ID_COLUMN} IS DISTINCT FROM $2 LIMIT 1`,
       [doc.id, binding],
     );
@@ -136,24 +161,30 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
 
   async put(doc: T): Promise<T> {
     if (!doc.id) throw new Error(`Collection "${this.name}": document must have an id`);
-    const stamp = await this.tenantGuard(doc);
-    const tenantValue = this.tenantId !== undefined ? stamp : bodyTenant(doc) ?? null;
-    await this.q(this.insertSql(), [doc.id, JSON.stringify(doc), tenantValue]);
-    return doc;
+    return this.scoped(async (client) => {
+      const stamp = await this.tenantGuard(client, doc);
+      const tenantValue = this.tenantId !== undefined ? stamp : bodyTenant(doc) ?? null;
+      await client.query(this.insertSql(), [doc.id, JSON.stringify(doc), tenantValue]);
+      return doc;
+    });
   }
 
   async get(id: string): Promise<T | undefined> {
     const t = escapeId(this.table);
     const { clause, values } = this.tenantPredicateSql();
-    const res = await this.q(`SELECT body FROM ${t} WHERE id = $1${clause}`, [id, ...values]);
-    return this.parse(res.rows[0]);
+    return this.scoped(async (client) => {
+      const res = await client.query(`SELECT body FROM ${t} WHERE id = $1${clause}`, [id, ...values]);
+      return this.parse(res.rows[0]);
+    });
   }
 
   async delete(id: string): Promise<boolean> {
     const t = escapeId(this.table);
     const { clause, values } = this.tenantPredicateSql();
-    const res = await this.q(`DELETE FROM ${t} WHERE id = $1${clause}`, [id, ...values]);
-    return (res.rowCount ?? 0) > 0;
+    return this.scoped(async (client) => {
+      const res = await client.query(`DELETE FROM ${t} WHERE id = $1${clause}`, [id, ...values]);
+      return (res.rowCount ?? 0) > 0;
+    });
   }
 
   async has(id: string): Promise<boolean> {
@@ -162,22 +193,26 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
 
   async all(): Promise<T[]> {
     const t = escapeId(this.table);
-    if (this.tenantId !== undefined) {
-      const res = await this.q(`SELECT body FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
+    return this.scoped(async (client) => {
+      if (this.tenantId !== undefined) {
+        const res = await client.query(`SELECT body FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
+        return res.rows.map((row) => this.parse(row) as T).filter((x): x is T => x !== undefined);
+      }
+      const res = await client.query(`SELECT body FROM ${t}`);
       return res.rows.map((row) => this.parse(row) as T).filter((x): x is T => x !== undefined);
-    }
-    const res = await this.q(`SELECT body FROM ${t}`);
-    return res.rows.map((row) => this.parse(row) as T).filter((x): x is T => x !== undefined);
+    });
   }
 
   async count(): Promise<number> {
     const t = escapeId(this.table);
-    if (this.tenantId !== undefined) {
-      const res = await this.q(`SELECT count(*)::int AS n FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
+    return this.scoped(async (client) => {
+      if (this.tenantId !== undefined) {
+        const res = await client.query(`SELECT count(*)::int AS n FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
+        return res.rows[0]?.n ?? 0;
+      }
+      const res = await client.query(`SELECT count(*)::int AS n FROM ${t}`);
       return res.rows[0]?.n ?? 0;
-    }
-    const res = await this.q(`SELECT count(*)::int AS n FROM ${t}`);
-    return res.rows[0]?.n ?? 0;
+    });
   }
 
   async query(opts: QueryOptions<T> = {}): Promise<T[]> {
@@ -199,53 +234,48 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
   }
 
   async replaceAll(docs: readonly T[]): Promise<void> {
+    if (this.txClient) {
+      // Inside the caller's transaction: no own BEGIN/COMMIT (ownership rule).
+      await this.replaceAllOn(this.txClient, docs);
+      return;
+    }
+    // Standalone: the explicit system-scope transaction IS the ownership
+    // boundary (BEGIN/COMMIT by the runner) — previously this method opened
+    // its own BEGIN on a pooled client and inherited the ambient scope.
+    await this.scoped((client) => this.replaceAllOn(client, docs));
+  }
+
+  private async replaceAllOn(client: pg.PoolClient, docs: readonly T[]): Promise<void> {
     const t = escapeId(this.table);
-    const client = this.txClient ?? (await this.pool.connect());
-    const owns = !this.txClient;
-    try {
-      if (!this.txClient) await client.query('BEGIN');
-      if (this.tenantId !== undefined) {
-        // Tenant-scoped snapshot: replace only THIS tenant's rows so one
-        // tenant's snapshot can never wipe another tenant's data.
-        await client.query(`DELETE FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
-        for (const doc of docs) {
-          if (!doc.id) throw new Error(`Collection "${this.name}": document must have an id`);
-          await client.query(
-            `INSERT INTO ${t} (id, body, ${TENANT_ID_COLUMN}, updated_at) VALUES ($1, $2::jsonb, $3, now())
-             ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, ${TENANT_ID_COLUMN} = EXCLUDED.${TENANT_ID_COLUMN}, updated_at = now()`,
-            [doc.id, JSON.stringify(doc), bodyTenant(doc) ?? this.tenantId],
-          );
-        }
-      } else {
-        await client.query(`TRUNCATE ${t}`);
-        for (const doc of docs) {
-          if (!doc.id) throw new Error(`Collection "${this.name}": document must have an id`);
-          await client.query(
-            `INSERT INTO ${t} (id, body, ${TENANT_ID_COLUMN}, updated_at) VALUES ($1, $2::jsonb, $3, now())
-             ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, ${TENANT_ID_COLUMN} = EXCLUDED.${TENANT_ID_COLUMN}, updated_at = now()`,
-            [doc.id, JSON.stringify(doc), bodyTenant(doc) ?? null],
-          );
-        }
+    if (this.tenantId !== undefined) {
+      // Tenant-scoped snapshot: replace only THIS tenant's rows so one
+      // tenant's snapshot can never wipe another tenant's data.
+      await client.query(`DELETE FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
+      for (const doc of docs) {
+        if (!doc.id) throw new Error(`Collection "${this.name}": document must have an id`);
+        await client.query(
+          `INSERT INTO ${t} (id, body, ${TENANT_ID_COLUMN}, updated_at) VALUES ($1, $2::jsonb, $3, now())
+           ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, ${TENANT_ID_COLUMN} = EXCLUDED.${TENANT_ID_COLUMN}, updated_at = now()`,
+          [doc.id, JSON.stringify(doc), bodyTenant(doc) ?? this.tenantId],
+        );
       }
-      if (!this.txClient) await client.query('COMMIT');
-    } catch (error) {
-      if (!this.txClient) {
-        try {
-          await client.query('ROLLBACK');
-        } catch {
-          /* preserve original error */
-        }
+    } else {
+      await client.query(`TRUNCATE ${t}`);
+      for (const doc of docs) {
+        if (!doc.id) throw new Error(`Collection "${this.name}": document must have an id`);
+        await client.query(
+          `INSERT INTO ${t} (id, body, ${TENANT_ID_COLUMN}, updated_at) VALUES ($1, $2::jsonb, $3, now())
+           ON CONFLICT (id) DO UPDATE SET body = EXCLUDED.body, ${TENANT_ID_COLUMN} = EXCLUDED.${TENANT_ID_COLUMN}, updated_at = now()`,
+          [doc.id, JSON.stringify(doc), bodyTenant(doc) ?? null],
+        );
       }
-      throw error;
-    } finally {
-      if (owns) client.release();
     }
   }
 
   async clear(): Promise<void> {
     const t = escapeId(this.table);
     if (this.tenantId !== undefined) {
-      await this.q(`DELETE FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]);
+      await this.scoped((client) => client.query(`DELETE FROM ${t} WHERE ${TENANT_ID_COLUMN} = $1`, [this.tenantId]));
       return;
     }
     await this.replaceAll([]);
@@ -270,14 +300,9 @@ export class PostgresCollection<T extends { id: string }> implements ICollection
       // ownership.
       return this.casOn(this.txClient, t, id, guard, makeNext, false);
     }
-    const client = await this.pool.connect();
-    try {
-      // Standalone CAS owns this connection's transaction and preserves the
-      // existing one-operation atomic behavior.
-      return await this.casOn(client, t, id, guard, makeNext, true);
-    } finally {
-      client.release();
-    }
+    // Standalone CAS: the labeled system-scope transaction is the ownership
+    // boundary (fail-closed if no explicit authority was granted).
+    return this.scoped((client) => this.casOn(client, t, id, guard, makeNext, false));
   }
 
   private async casOn(

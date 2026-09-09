@@ -339,6 +339,43 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
     },
   });
 
+  // INV-15/GAP-07: ambient security-scope minimization is live and enforced.
+  // (1) A LIVE negative test: a freshly checked-out pooled session must carry
+  //     NO tenant scope (no ambient '*'; sessions start blind under RLS).
+  // (2) The system-scope audit artifact must exist and every system-scope
+  //     operation observed by the driver must fall under an entry of the
+  //     enumerated exception registry (`ENUMERATED_SYSTEM_SCOPE_EXCEPTIONS`)
+  //     — a new, undeclared broad-scope pattern fails boot (fail-closed).
+  kernel.requireSecurityInvariant({
+    id: 'p1.production.ambient-scope-minimization',
+    description:
+      'pooled PostgreSQL sessions carry no ambient system scope; system scope exists only in explicit, enumerated SET LOCAL transactions counted by the driver audit (INV-15/PG-5)',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const storage = k.getModule<StorageModule>('storage');
+      const driver = storage.getDriver();
+      if (
+        typeof (driver as PostgresDriver).hasAmbientConnectScope !== 'function' ||
+        typeof (driver as PostgresDriver).getSystemScopeAudit !== 'function'
+      ) {
+        return `the storage driver "${driver.id}" provides no INV-15 system-scope audit; the production posture requires the PostgreSQL driver with the scope-minimization probe and enumeration (fail-closed)`;
+      }
+      let ambient: boolean;
+      try {
+        ambient = await (driver as PostgresDriver).hasAmbientConnectScope();
+      } catch (error) {
+        return `ambient-scope probe could not be executed: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      if (ambient) {
+        return 'a freshly checked-out pooled session carries a session-level tenant scope; ambient system scope (\'*\') is forbidden by INV-15/PG-5 (fail-closed)';
+      }
+      const audit = (driver as PostgresDriver).getSystemScopeAudit();
+      if (audit.undeclaredLabels.length > 0) {
+        return `system-scope operations were observed under labels not in the enumerated exception registry: ${audit.undeclaredLabels.join(', ')} (INV-15: broad-scope use must be declared and justified; fail-closed)`;
+      }
+      return true;
+    },
+  });
+
   // INV-14: security-state health is observable and was established at boot.
   kernel.requireSecurityInvariant({
     id: 'p1.production.security-state-health',

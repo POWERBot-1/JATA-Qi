@@ -31,4 +31,14 @@ export {
   type RlsProbeFailureCode,
 } from './rls-probe.js';
 export { runWithTenant } from './tenant-context.js';
+// INV-15/GAP-07 — system-scope minimization audit surface (boot enumeration).
+export {
+  ENUMERATED_SYSTEM_SCOPE_EXCEPTIONS,
+  isDeclaredSystemScopeLabel,
+} from './system-scope-audit.js';
+export type {
+  SystemScopeAudit,
+  SystemScopeException,
+  SystemScopeRunner,
+} from './system-scope-audit.js';
 export type { TenantBoundCollection, TenantContextOptions } from './tenant-context.js';
