@@ -131,6 +131,38 @@ export type A01DenialReason =
   | 'STEP_UP_STALE'
   /** P2-S3: the privilege plane is unavailable (fail-closed; no ambient authority). */
   | 'PRIVILEGE_CHECK_UNAVAILABLE'
+  /** P2-S4: the referenced delegation grant does not exist (or is invisible to the request scope). */
+  | 'DELEGATION_UNKNOWN_GRANT'
+  /** P2-S4: the grant binds a different delegatee principal (no acting-as). */
+  | 'DELEGATION_NOT_DELEGATEE'
+  /** P2-S4: a tenant-scoped grant exercised in another tenant (spec A-09). */
+  | 'DELEGATION_CROSS_TENANT_REFUSED'
+  /** P2-S4: a platform-scoped grant exercised as tenant-scoped authority (spec A-08 tenant widening). */
+  | 'DELEGATION_SCOPE_TENANT'
+  /** P2-S4: the request operation is outside the grant scope (spec A-08). */
+  | 'DELEGATION_SCOPE_OPERATION'
+  /** P2-S4: the request target is outside the grant scope (spec A-08). */
+  | 'DELEGATION_SCOPE_TARGET'
+  /** P2-S4: the request classification exceeds the grant ceiling (spec A-08). */
+  | 'DELEGATION_SCOPE_CLASSIFICATION'
+  /** P2-S4: the request impact exceeds the grant ceiling (spec A-08). */
+  | 'DELEGATION_SCOPE_IMPACT'
+  /** P2-S4: the grant window has passed (deny-early). */
+  | 'DELEGATION_EXPIRED'
+  /** P2-S4: the grant was revoked. */
+  | 'DELEGATION_REVOKED'
+  /** P2-S4: the grant was already consumed (one-shot / use-count exhausted). */
+  | 'DELEGATION_CONSUMED'
+  /** P2-S4: the grant chain depth exceeds the allowed bound. */
+  | 'DELEGATION_CHAIN_DEPTH_EXCEEDED'
+  /** P2-S4: the delegator's cited manifest revision is no longer active (spec A-16). */
+  | 'DELEGATION_DELEGATOR_AUTHORITY_CHANGED'
+  /** P2-S4: a platform-scoped grant lacks the recorded platform-plane elevation. */
+  | 'DELEGATION_PLATFORM_SCOPE_REQUIRED'
+  /** P2-S4: the grant requires (or carries an invalid) digest-bound approval. */
+  | 'DELEGATION_APPROVAL_REQUIRED'
+  /** P2-S4: the delegation plane is unavailable (fail-closed; no ambient authority). */
+  | 'DELEGATION_CHECK_UNAVAILABLE'
   | 'SECURITY_STATE_UNAVAILABLE';
 
 export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
@@ -197,6 +229,22 @@ export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
   'PRIVILEGE_SESSION_MISMATCH',
   'STEP_UP_STALE',
   'PRIVILEGE_CHECK_UNAVAILABLE',
+  'DELEGATION_UNKNOWN_GRANT',
+  'DELEGATION_NOT_DELEGATEE',
+  'DELEGATION_CROSS_TENANT_REFUSED',
+  'DELEGATION_SCOPE_TENANT',
+  'DELEGATION_SCOPE_OPERATION',
+  'DELEGATION_SCOPE_TARGET',
+  'DELEGATION_SCOPE_CLASSIFICATION',
+  'DELEGATION_SCOPE_IMPACT',
+  'DELEGATION_EXPIRED',
+  'DELEGATION_REVOKED',
+  'DELEGATION_CONSUMED',
+  'DELEGATION_CHAIN_DEPTH_EXCEEDED',
+  'DELEGATION_DELEGATOR_AUTHORITY_CHANGED',
+  'DELEGATION_PLATFORM_SCOPE_REQUIRED',
+  'DELEGATION_APPROVAL_REQUIRED',
+  'DELEGATION_CHECK_UNAVAILABLE',
   'SECURITY_STATE_UNAVAILABLE',
 ]);
 
@@ -242,6 +290,16 @@ export interface A01TargetBinding {
   readonly system: string;
   readonly resource?: string;
   readonly audience?: string;
+}
+
+/**
+ * P2-S4: a delegation grant REFERENCE carried by a decision request. The
+ * delegation stage (ordered after principal/tenant + privilege, before
+ * capability) verifies the referenced durable grant; the reference is the
+ * grant id only — never grant material or caller-controlled scope.
+ */
+export interface A01DelegationBinding {
+  readonly delegationId: string;
 }
 
 /**
@@ -314,6 +372,8 @@ export interface A01AuthorizationRequest {
   /** Stable key for idempotent replay of an externally side-effecting action. */
   readonly idempotencyKey?: string;
   readonly provenance?: { readonly source: string; readonly causationId?: string };
+  /** P2-S4: a durable delegation grant reference (verified by the delegation stage). */
+  readonly delegation?: A01DelegationBinding;
 }
 
 // ---------------------------------------------------------------------------
@@ -406,6 +466,8 @@ export interface A01AuthorizationEnvelope {
   readonly impact: A01ImpactLevel;
   readonly approval?: A01ApprovalBinding;
   readonly credential?: A01CredentialBinding;
+  /** P2-S4: the delegation grant reference the request presented (mirrored from the sealed request). */
+  readonly delegation?: A01DelegationBinding;
   readonly provenance: A01ProvenanceBinding;
   readonly decision: A01DecisionRecord;
   /**
@@ -427,6 +489,12 @@ export interface A01AuthorizationEnvelope {
   readonly privilegeElevationId?: string;
   readonly privilegeOperationClass?: string;
   readonly privilegeStatus?: string;
+  /**
+   * P2-S4 durable delegation citation (present only when the decision passed
+   * the delegation stage; covered by the integrity digest). Enforcement
+   * re-validates and atomically consumes the grant against live durable state.
+   */
+  readonly delegationStatus?: string;
   readonly integrity: { readonly algorithm: 'sha256'; readonly digest: string };
 }
 

@@ -39,6 +39,7 @@ export interface BuildEnvelopeInput {
     readonly privilegeElevationId?: string;
     readonly privilegeOperationClass?: string;
     readonly privilegeStatus?: string;
+    readonly delegationStatus?: string;
   };
 }
 
@@ -83,6 +84,7 @@ export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelop
     dataClassification: request.dataClassification,
     impact: request.impact,
     ...(request.approval !== undefined ? { approval: { ...request.approval } } : {}),
+    ...(request.delegation !== undefined ? { delegation: { delegationId: request.delegation.delegationId } } : {}),
     ...(credential !== undefined ? { credential: { ...credential, scopes: [...credential.scopes] } } : {}),
     provenance,
     decision: {
@@ -97,6 +99,7 @@ export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelop
     ...(durableCitations?.privilegeElevationId !== undefined ? { privilegeElevationId: durableCitations.privilegeElevationId } : {}),
     ...(durableCitations?.privilegeOperationClass !== undefined ? { privilegeOperationClass: durableCitations.privilegeOperationClass } : {}),
     ...(durableCitations?.privilegeStatus !== undefined ? { privilegeStatus: durableCitations.privilegeStatus } : {}),
+    ...(durableCitations?.delegationStatus !== undefined ? { delegationStatus: durableCitations.delegationStatus } : {}),
   };
   const digest = envelopeDigestValue(body);
   return deepFreeze({ ...body, integrity: { algorithm: 'sha256' as const, digest } });
@@ -271,6 +274,9 @@ export function sanitizeRequestForEnvelope(request: A01AuthorizationRequest | nu
     ...(typeof r.impact === 'string' ? { impact: r.impact as A01AuthorizationRequest['impact'] } : {}),
     ...(typeof r.idempotencyKey === 'string' ? { idempotencyKey: r.idempotencyKey } : {}),
     ...(typeof r.budgetCostUnits === 'number' ? { budgetCostUnits: r.budgetCostUnits } : {}),
+    ...(r.delegation && typeof (r.delegation as { delegationId?: unknown }).delegationId === 'string'
+      ? { delegation: { delegationId: (r.delegation as { delegationId: string }).delegationId } }
+      : {}),
     ...(r.approval && typeof (r.approval as { approvalId?: unknown }).approvalId === 'string'
       ? {
           approval: {

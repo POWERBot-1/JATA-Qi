@@ -526,8 +526,6 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
   // stage itself is unconditional in the policy engine (data-in-code); this
   // invariant asserts the RUNTIME wiring — the durable privilege plane is
   // attached AND the durable decider's privilege-stage resolver is live.
-  // (The delegation half of P2-INV-04 is S4 — not authorized here; recorded
-  // as a remaining gap.)
   kernel.requireSecurityInvariant({
     id: 'p2.production.privilege-stage-registered',
     description: 'the privileged-access plane is attached and the A-01 privilege stage is wired (spec §24-S3; P2-INV-04 privilege half)',
@@ -545,6 +543,34 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
         }
       } catch (error) {
         return `the A-01 privilege-stage wiring could not be verified: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-04 (delegation half — S4): the delegation stage is REGISTERED on
+  // the A-01 pipeline. The stage is unconditional in the policy engine
+  // (data-in-code); this invariant asserts the RUNTIME wiring — the durable
+  // delegation plane is attached AND the durable decider's delegation-stage
+  // resolver is live. Absent ⇒ every delegated decision fails closed with
+  // DELEGATION_CHECK_UNAVAILABLE (no ambient delegation authority).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.delegation-stage-registered',
+    description: 'the durable delegation plane is attached and the A-01 delegation stage is wired (spec §24-S4; P2-INV-04 delegation half)',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      try {
+        auth.getDelegationStore();
+      } catch {
+        return 'the durable delegation plane is NOT attached; the production posture requires the P2-S4 delegation store (fail-closed)';
+      }
+      const boundary = k.getModule<AuthorizationBoundaryModule>('authorization-boundary');
+      try {
+        if (!(await boundary.hasLiveDelegationAuthority())) {
+          return 'the A-01 delegation stage is not wired to a live delegation authority (the durable decider would fail closed on every delegated decision)';
+        }
+      } catch (error) {
+        return `the A-01 delegation-stage wiring could not be verified: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
       }
       return true;
     },

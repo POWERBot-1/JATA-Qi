@@ -27,6 +27,11 @@ import {
   classifyPrivilegedA01,
   PRIVILEGE_PLATFORM_TENANT,
   type AuthenticationEventDoc,
+  type DelegationAssessment,
+  type DelegationAssessmentVerdict,
+  type DelegationDenialRecord,
+  type DelegationRequirement,
+  type DelegationStateAuthority,
   type IdentityStateAuthority,
   type PrivilegeElevationAssessment,
   type PrivilegeOperationClass,
@@ -104,6 +109,17 @@ export interface DurableDeciderDeps {
    * scope); the enforcement path re-validates before the side effect.
    */
   readonly privilegeAuthorityResolver?: () => PrivilegeStateAuthority | undefined | Promise<PrivilegeStateAuthority | undefined>;
+  /**
+   * P2-S4: the delegation-state authority resolver for the durable decision
+   * path (spec §24-S4). Lazy (resolved at first delegated decision, when the
+   * kernel is fully booted). Absent ⇒ a request carrying a delegation
+   * reference DENIES with DELEGATION_CHECK_UNAVAILABLE (fail-closed — no
+   * ambient delegation authority). Present ⇒ every delegated decision
+   * re-reads the durable grant and re-verifies chain integrity against the
+   * live manifest; the enforcement path re-validates and atomically consumes
+   * the grant before the side effect.
+   */
+  readonly delegationAuthorityResolver?: () => DelegationStateAuthority | undefined | Promise<DelegationStateAuthority | undefined>;
 }
 
 /** Internal: a COMPLETED S-5 row was found — roll back Tx-1 and return the receipt. */
@@ -169,6 +185,175 @@ function privilegeDenialCode(verdict: PrivilegeElevationAssessment['verdict']): 
   }
 }
 
+/** P2-S4: a delegation-stage classification (Phase-A state). */
+interface DelegationStageState {
+  readonly delegationId: string;
+  /** The decision-time requirement (built from the request + ACTIVE manifest). */
+  readonly requirement?: DelegationRequirement;
+  /** A pre-computed Phase-A denial (fail-closed; no durable grant authority). */
+  readonly denial?: A01DenialReason;
+  /** A platform-scoped grant's Phase-A (system-scope) assessment. */
+  readonly platformAssessment?: DelegationAssessment;
+}
+
+/** Map a delegation assessment verdict to its A-01 denial code (VALID ⇒ undefined). */
+function delegationDenialCode(verdict: DelegationAssessmentVerdict): A01DenialReason | undefined {
+  switch (verdict) {
+    case 'VALID':
+      return undefined;
+    case 'UNKNOWN_GRANT':
+      return 'DELEGATION_UNKNOWN_GRANT';
+    case 'NOT_DELEGATEE':
+      return 'DELEGATION_NOT_DELEGATEE';
+    case 'CROSS_TENANT':
+      return 'DELEGATION_CROSS_TENANT_REFUSED';
+    case 'SCOPE_TENANT':
+      return 'DELEGATION_SCOPE_TENANT';
+    case 'SCOPE_OPERATION':
+      return 'DELEGATION_SCOPE_OPERATION';
+    case 'SCOPE_TARGET':
+      return 'DELEGATION_SCOPE_TARGET';
+    case 'SCOPE_CLASSIFICATION':
+      return 'DELEGATION_SCOPE_CLASSIFICATION';
+    case 'SCOPE_IMPACT':
+      return 'DELEGATION_SCOPE_IMPACT';
+    case 'EXPIRED':
+      return 'DELEGATION_EXPIRED';
+    case 'REVOKED':
+      return 'DELEGATION_REVOKED';
+    case 'CONSUMED':
+      return 'DELEGATION_CONSUMED';
+    case 'CHAIN_DEPTH':
+      return 'DELEGATION_CHAIN_DEPTH_EXCEEDED';
+    case 'DELEGATOR_AUTHORITY_CHANGED':
+      return 'DELEGATION_DELEGATOR_AUTHORITY_CHANGED';
+    case 'PLATFORM_SCOPE_REQUIRED':
+      return 'DELEGATION_PLATFORM_SCOPE_REQUIRED';
+    case 'APPROVAL_REQUIRED':
+      return 'DELEGATION_APPROVAL_REQUIRED';
+  }
+}
+
+/**
+ * Inverse of `delegationDenialCode` (A-01 denial code → assessment verdict).
+ * `undefined` for `DELEGATION_CHECK_UNAVAILABLE` (no assessment verdict —
+ * the delegation plane itself was unavailable) and for unknown codes.
+ */
+function delegationVerdictFromDenialCode(code: A01DenialReason): DelegationAssessmentVerdict | undefined {
+  switch (code) {
+    case 'DELEGATION_UNKNOWN_GRANT':
+      return 'UNKNOWN_GRANT';
+    case 'DELEGATION_NOT_DELEGATEE':
+      return 'NOT_DELEGATEE';
+    case 'DELEGATION_CROSS_TENANT_REFUSED':
+      return 'CROSS_TENANT';
+    case 'DELEGATION_SCOPE_TENANT':
+      return 'SCOPE_TENANT';
+    case 'DELEGATION_SCOPE_OPERATION':
+      return 'SCOPE_OPERATION';
+    case 'DELEGATION_SCOPE_TARGET':
+      return 'SCOPE_TARGET';
+    case 'DELEGATION_SCOPE_CLASSIFICATION':
+      return 'SCOPE_CLASSIFICATION';
+    case 'DELEGATION_SCOPE_IMPACT':
+      return 'SCOPE_IMPACT';
+    case 'DELEGATION_EXPIRED':
+      return 'EXPIRED';
+    case 'DELEGATION_REVOKED':
+      return 'REVOKED';
+    case 'DELEGATION_CONSUMED':
+      return 'CONSUMED';
+    case 'DELEGATION_CHAIN_DEPTH_EXCEEDED':
+      return 'CHAIN_DEPTH';
+    case 'DELEGATION_DELEGATOR_AUTHORITY_CHANGED':
+      return 'DELEGATOR_AUTHORITY_CHANGED';
+    case 'DELEGATION_PLATFORM_SCOPE_REQUIRED':
+      return 'PLATFORM_SCOPE_REQUIRED';
+    case 'DELEGATION_APPROVAL_REQUIRED':
+      return 'APPROVAL_REQUIRED';
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Build the delegation requirement from a request OR a sealed envelope (they
+ * share the authoritative fields) + the ACTIVE manifest. Returns `undefined`
+ * when there is no ACTIVE manifest (the delegator's cited authority cannot
+ * be re-verified — fail closed).
+ */
+function buildDelegationRequirement(
+  source:
+    | {
+        readonly principal?: { readonly id?: unknown; readonly authenticationEventId?: unknown };
+        readonly tenantId?: unknown;
+        readonly capability?: { readonly capabilityId: string; readonly capabilityVersion: string };
+        readonly tool?: unknown;
+        readonly operation?: unknown;
+        readonly target?: { readonly system: string; readonly resource?: string };
+        readonly dataClassification?: unknown;
+        readonly impact?: unknown;
+      }
+    | null
+    | undefined,
+  active: ActiveManifest | undefined,
+  delegationId: string,
+): DelegationRequirement | undefined {
+  if (!source || !active) return undefined;
+  const principal = source.principal;
+  const targetResource =
+    typeof source.target?.resource === 'string' && source.target.resource.length > 0 ? source.target.resource : undefined;
+  return {
+    delegationId,
+    principalId: typeof principal?.id === 'string' ? principal.id : '',
+    tenantId: typeof source.tenantId === 'string' ? source.tenantId : '',
+    ...(typeof principal?.authenticationEventId === 'string' && principal.authenticationEventId
+      ? { sessionEventId: principal.authenticationEventId }
+      : {}),
+    capabilityId: source.capability?.capabilityId ?? '',
+    capabilityVersion: source.capability?.capabilityVersion ?? '',
+    tool: typeof source.tool === 'string' ? source.tool : '',
+    operation: typeof source.operation === 'string' ? source.operation : '',
+    targetSystem: source.target?.system ?? '',
+    ...(targetResource !== undefined ? { targetResource } : {}),
+    classification: typeof source.dataClassification === 'string' ? source.dataClassification : 'INTERNAL',
+    impact: typeof source.impact === 'string' ? source.impact : 'EXTERNAL_SIDE_EFFECT',
+    requestIsPlatformScoped: active.manifest.allowTenantWildcard,
+    liveManifest: {
+      digest: active.digest,
+      actions: active.manifest.allowedOperations.map((entry) => ({ tool: entry.tool, operation: entry.operation })),
+      targets: active.manifest.allowedTargets.map((entry) => ({
+        system: entry.system,
+        ...(entry.resourcePattern !== undefined ? { resourcePattern: entry.resourcePattern } : {}),
+      })),
+      classificationCeiling: active.manifest.maxDataClassification,
+      impactCeiling: active.manifest.maxImpact,
+      requiresApproval: active.manifest.requiresApproval,
+    },
+  };
+}
+
+/** Map a durable delegation-store consumption failure to an A-01 denial. */
+function mapDelegationConsumeError(error: unknown): AuthorizationDeniedError {
+  const code = error instanceof Error ? /\[([A-Z0-9_]+)\]/.exec(error.message)?.[1] : undefined;
+  switch (code) {
+    case 'REVOKED':
+      return new AuthorizationDeniedError(['DELEGATION_REVOKED'], 'the delegation grant was revoked before consumption (fail-closed)');
+    case 'CONSUMED':
+      return new AuthorizationDeniedError(['DELEGATION_CONSUMED'], 'the delegation grant was already consumed (one-shot / use-count exhausted)');
+    case 'EXPIRED':
+      return new AuthorizationDeniedError(['DELEGATION_EXPIRED'], 'the delegation grant expired before consumption (fail-closed)');
+    case 'UNKNOWN_GRANT':
+      return new AuthorizationDeniedError(['DELEGATION_UNKNOWN_GRANT'], 'the delegation grant no longer exists (fail-closed)');
+    default:
+      if (error instanceof AuthorizationDeniedError) return error;
+      return new AuthorizationDeniedError(
+        ['DELEGATION_CHECK_UNAVAILABLE'],
+        'delegation consumption failed against durable state (fail-closed)',
+      );
+  }
+}
+
 /**
  * P2-S1: narrow a request's principal role set to the intersection with the
  * ACTIVE role assignments re-read in the decision transaction (spec §4.1 —
@@ -198,10 +383,13 @@ export class DurableDecider {
   private readonly verifyKernelPrincipal: ((principal: unknown, scope: string) => boolean) | undefined;
   private readonly identityAuthorityResolver: DurableDeciderDeps['identityAuthorityResolver'];
   private readonly privilegeAuthorityResolver: DurableDeciderDeps['privilegeAuthorityResolver'];
+  private readonly delegationAuthorityResolver: DurableDeciderDeps['delegationAuthorityResolver'];
   private identityAuthorityCache: IdentityStateAuthority | undefined;
   private identityAuthorityResolved = false;
   private privilegeAuthorityCache: PrivilegeStateAuthority | undefined;
   private privilegeAuthorityResolved = false;
+  private delegationAuthorityCache: DelegationStateAuthority | undefined;
+  private delegationAuthorityResolved = false;
 
   constructor(deps: DurableDeciderDeps) {
     this.store = deps.store;
@@ -213,6 +401,7 @@ export class DurableDecider {
     this.verifyKernelPrincipal = deps.verifyKernelPrincipal;
     this.identityAuthorityResolver = deps.identityAuthorityResolver;
     this.privilegeAuthorityResolver = deps.privilegeAuthorityResolver;
+    this.delegationAuthorityResolver = deps.delegationAuthorityResolver;
   }
 
   /**
@@ -261,6 +450,31 @@ export class DurableDecider {
   }
 
   /**
+   * P2-S4: lazily resolve the delegation-state authority (once; fail-closed —
+   * a resolver failure re-throws and is NOT cached, mirroring the identity and
+   * privilege resolvers). Absent ⇒ delegation references DENY (fail-closed).
+   */
+  private async resolveDelegationAuthority(): Promise<DelegationStateAuthority | undefined> {
+    if (this.delegationAuthorityResolved) return this.delegationAuthorityCache;
+    this.delegationAuthorityResolved = true;
+    try {
+      this.delegationAuthorityCache = this.delegationAuthorityResolver
+        ? await this.delegationAuthorityResolver()
+        : undefined;
+    } catch (error) {
+      this.delegationAuthorityResolved = false;
+      this.delegationAuthorityCache = undefined;
+      throw error;
+    }
+    return this.delegationAuthorityCache;
+  }
+
+  /** P2-S4 structural probe (P2-INV-04 delegation half): is a delegation authority live? */
+  async hasLiveDelegationAuthority(): Promise<boolean> {
+    return (await this.resolveDelegationAuthority()) !== undefined;
+  }
+
+  /**
    * P2-S3: register-classify the request and build the privilege-stage state.
    * Returns `undefined` when the request is not privileged or is a verified
    * kernel-internal principal (its closed cryptographic scopes are the
@@ -303,6 +517,53 @@ export class DurableDecider {
     return { requirement, operationId: entry.operationId, operationClass: entry.opClass };
   }
 
+  /**
+   * P2-S4: classify a delegation reference (spec §24-S4). The reference is
+   * the grant id only — the grant itself is re-read from durable state. The
+   * delegation authority is lazily resolved (fail-closed); a platform-scoped
+   * grant is assessed in an explicit system-scope read HERE (the
+   * ACTIVE-manifest pattern); a tenant-scoped grant is assessed inside
+   * Phase-B. A foreign-tenant grant is indistinguishable from an unknown
+   * grant (no grant-existence leak — A-09). Returns `undefined` when the
+   * request carries no delegation reference or is a verified kernel-internal
+   * principal (its closed cryptographic scopes are the authority — same rule
+   * as the session/identity/privilege stages).
+   */
+  private async classifyDelegation(
+    maybeRequest: A01AuthorizationRequest | null | undefined,
+    active: ActiveManifest | undefined,
+    now: number,
+  ): Promise<DelegationStageState | undefined> {
+    const delegationId = (maybeRequest?.delegation as { delegationId?: unknown } | undefined)?.delegationId;
+    if (typeof delegationId !== 'string' || !delegationId) return undefined;
+    const principal = maybeRequest?.principal as { authenticationMethod?: unknown } | undefined;
+    if (principal?.authenticationMethod === 'KERNEL_INTERNAL') return undefined;
+    const authority = await this.resolveDelegationAuthority();
+    if (!authority) {
+      return { delegationId, denial: 'DELEGATION_CHECK_UNAVAILABLE' };
+    }
+    // Without an ACTIVE manifest the delegator's cited authority cannot be
+    // re-verified (A-16 chain integrity) — fail closed.
+    const requirement = buildDelegationRequirement(maybeRequest, active, delegationId);
+    if (!requirement) {
+      return { delegationId, denial: 'DELEGATION_DELEGATOR_AUTHORITY_CHANGED' };
+    }
+    const peek = await authority.peek(delegationId);
+    if (!peek) {
+      return { delegationId, requirement, denial: 'DELEGATION_UNKNOWN_GRANT' };
+    }
+    if (peek.scope === 'platform') {
+      const platformAssessment = await authority.assessPlatform(requirement, now);
+      return { delegationId, requirement, platformAssessment };
+    }
+    // Tenant-scoped grant in a foreign tenant: indistinguishable from unknown
+    // (no grant-existence leak across tenants — A-09 cross-tenant refusal).
+    if (peek.tenantId !== requirement.tenantId) {
+      return { delegationId, requirement, denial: 'DELEGATION_UNKNOWN_GRANT' };
+    }
+    return { delegationId, requirement };
+  }
+
   // -- decideAsync ----------------------------------------------------------
 
   /**
@@ -340,18 +601,29 @@ export class DurableDecider {
       return this.storageFailureDeny(maybeRequest, envelopeId, now, error);
     }
 
+    // Phase A (P2-S4): classify the delegation reference. A platform-scoped
+    // grant is assessed in an explicit system-scope read HERE; the
+    // tenant-scoped assessment runs inside the Phase-B tenant transaction.
+    // The reference is register-driven (grant id only) — never caller scope.
+    let delegation: DelegationStageState | undefined;
+    try {
+      delegation = await this.classifyDelegation(maybeRequest, active, now);
+    } catch (error) {
+      return this.storageFailureDeny(maybeRequest, envelopeId, now, error);
+    }
+
     // Requests without a usable tenant cannot open a tenant transaction:
     // render the structural DENY without durable state (sink-audited).
     if (!isValidTenantId(tenantId)) {
       return this.unscopedDeny(maybeRequest, envelopeId, now);
     }
 
-    // Phase B: ONE tenant transaction binds rate + session + privilege +
-    // credential + PDP + audit. Any throw inside ⇒ rollback ⇒
-    // storage-failure DENY.
+    // Phase B: ONE tenant transaction binds rate + session + identity +
+    // privilege + delegation + credential + PDP + audit. Any throw inside ⇒
+    // rollback ⇒ storage-failure DENY.
     try {
       return await this.store.transact({ tenantId }, async (collections, txId) =>
-        this.renderDecisionTx(collections, txId, maybeRequest, envelopeId, active, now, { tenantId, principalId, capabilityId }, privilege),
+        this.renderDecisionTx(collections, txId, maybeRequest, envelopeId, active, now, { tenantId, principalId, capabilityId }, privilege, delegation),
       );
     } catch (error) {
       if (error instanceof AuthorizationDeniedError) {
@@ -373,6 +645,7 @@ export class DurableDecider {
     now: number,
     ids: { tenantId: string; principalId: string; capabilityId: string },
     privilege: PrivilegeStageState | undefined,
+    delegation: DelegationStageState | undefined,
   ): Promise<A01AuthorizationEnvelope> {
     // 1. Rate reservation (every rendered decision is load, ALLOW or DENY).
     let usage = 0;
@@ -428,6 +701,19 @@ export class DurableDecider {
       }
     }
 
+    // 2.8 P2-S4: delegation stage (grant id reference; fail-closed). A
+    // non-VALID grant renders a short-circuit DENY envelope (fully audited
+    // in-tx); a VALID grant is cited on the sealed envelope (delegationStatus
+    // = 'VALID'). No delegation reference ⇒ the stage is a no-op.
+    let delegationCitation: string | undefined;
+    if (delegation) {
+      const assessed = await this.assessDelegationClaim(collections, delegation, now);
+      if (assessed.denialCode !== undefined) {
+        return this.renderDelegationDenyTx(collections, txId, maybeRequest, envelopeId, active, now, session, delegation, assessed.denialCode);
+      }
+      delegationCitation = 'VALID';
+    }
+
     // 3. Credential preload for the PDP adapter (checks run inside PDP).
     let credentialRow: CredentialDoc | undefined;
     const presentedId = maybeRequest?.credential?.credentialId;
@@ -471,6 +757,10 @@ export class DurableDecider {
       // stage is a structural passthrough on the durable path (a registered
       // privileged operation that reached the PDP holds a VALID elevation).
       ...(privilege ? { privilegeStage: (): readonly A01DenialReason[] => [] } : {}),
+      // P2-S4: the delegation stage was already resolved in-tx above; the PDP
+      // stage is a structural passthrough on the durable path (a request with
+      // a delegation reference that reached the PDP holds a VALID grant).
+      ...(delegation ? { delegationStage: (): readonly A01DenialReason[] => [] } : {}),
     };
     const outcome = decideA01(requestForPdp, context);
 
@@ -499,6 +789,7 @@ export class DurableDecider {
         ...(privilegeCitation?.elevationId !== undefined ? { privilegeElevationId: privilegeCitation.elevationId } : {}),
         ...(privilegeCitation?.operationClass !== undefined ? { privilegeOperationClass: privilegeCitation.operationClass } : {}),
         ...(privilegeCitation?.status !== undefined ? { privilegeStatus: privilegeCitation.status } : {}),
+        ...(delegationCitation !== undefined ? { delegationStatus: delegationCitation } : {}),
       },
     });
     await this.recordDecisionTx(collections, envelope);
@@ -576,6 +867,100 @@ export class DurableDecider {
       },
     });
     await this.recordDecisionTx(collections, envelope);
+    return envelope;
+  }
+
+  /**
+   * P2-S4: assess a classified delegation reference. A pre-computed Phase-A
+   * denial short-circuits; a platform-scoped grant uses its Phase-A system
+   * assessment; a tenant-scoped grant re-reads the durable grant INSIDE the
+   * Phase-B tenant transaction (one consistent snapshot — a grant revoked in
+   * another transaction cannot race past this read). Any storage failure
+   * propagates (Phase-B catch ⇒ storage-failure DENY).
+   */
+  private async assessDelegationClaim(
+    collections: SecurityTxCollections,
+    delegation: DelegationStageState,
+    now: number,
+  ): Promise<{ denialCode?: A01DenialReason }> {
+    if (delegation.denial) {
+      return { denialCode: delegation.denial };
+    }
+    if (delegation.platformAssessment) {
+      const code = delegationDenialCode(delegation.platformAssessment.verdict);
+      return code !== undefined ? { denialCode: code } : {};
+    }
+    const authority = await this.resolveDelegationAuthority();
+    if (!authority) return { denialCode: 'DELEGATION_CHECK_UNAVAILABLE' };
+    if (!delegation.requirement) return { denialCode: 'DELEGATION_DELEGATOR_AUTHORITY_CHANGED' };
+    const assessment = await authority.assessInTx(collections.scope, delegation.requirement, now);
+    const code = delegationDenialCode(assessment.verdict);
+    return code !== undefined ? { denialCode: code } : {};
+  }
+
+  /** Short-circuit DENY for a failed delegation claim (fully audited in-tx). */
+  private async renderDelegationDenyTx(
+    collections: SecurityTxCollections,
+    txId: string,
+    maybeRequest: A01AuthorizationRequest | null | undefined,
+    envelopeId: string,
+    active: ActiveManifest | undefined,
+    now: number,
+    session: { eventId: string; status: A01SessionAuditStatus },
+    delegation: DelegationStageState,
+    denialCode: A01DenialReason,
+  ): Promise<A01AuthorizationEnvelope> {
+    const safeRequest = sanitizeRequestForEnvelope(maybeRequest);
+    const decision: A01DecisionRecord = {
+      decisionId: `dec-${now}-${randomUUID().slice(0, 8)}`,
+      decision: 'DENY',
+      reasonCodes: Object.freeze([denialCode] as const),
+      policyVersion: this.policyVersion,
+      decidedAt: now,
+      expiresAt: now,
+      budgetCostUnits: 1,
+    };
+    const run = safeRequest.run;
+    const provenance: A01ProvenanceBinding = Object.freeze({
+      source: 'authorization-boundary',
+      correlationId: run.correlationId || run.runId,
+      createdAt: now,
+    });
+    const envelope = sealEnvelope({
+      request: safeRequest,
+      decision,
+      envelopeId,
+      provenance,
+      durableCitations: {
+        ...(active ? { manifestId: active.manifestId, manifestDigest: active.digest } : {}),
+        ...(session.eventId ? { sessionEventId: session.eventId } : {}),
+        sessionStatus: session.status,
+        securityStoreTxId: txId,
+        delegationStatus: 'DENIED',
+      },
+    });
+    await this.recordDecisionTx(collections, envelope);
+    // REMEDIATION (verifier finding 1): durable DELEGATION_DENIED emission in
+    // the SAME tenant transaction as the decision (a write failure rolls the
+    // whole decision back — fail-closed, no un-audited denial). A-16 denials
+    // carry result = DELEGATOR_AUTHORITY_CHANGED. DELEGATION_CHECK_UNAVAILABLE
+    // (authority absent) has no assessment verdict and cannot be recorded —
+    // the decision DENY + S-10 receipt already audit it.
+    const deniedVerdict = delegationVerdictFromDenialCode(denialCode);
+    if (deniedVerdict !== undefined) {
+      const authority = await this.resolveDelegationAuthority();
+      if (authority) {
+        const deniedRecord: DelegationDenialRecord = {
+          delegationId: delegation.delegationId,
+          tenantId: typeof maybeRequest?.tenantId === 'string' ? maybeRequest.tenantId : '',
+          principalId: typeof maybeRequest?.principal?.id === 'string' ? maybeRequest.principal.id : '',
+          verdict: deniedVerdict,
+          detail: `delegation denied: ${denialCode}`,
+          ...(run.correlationId || run.runId ? { correlationId: run.correlationId || run.runId } : {}),
+        };
+        await authority.recordDeniedInTx(collections.scope, deniedRecord, now);
+      }
+    }
     return envelope;
   }
 
@@ -934,11 +1319,28 @@ export class DurableDecider {
       throw error;
     }
 
-    // Tx-1: session lock → S-4 → S-5 → S-7 → credential lock + S-3.
+    // P2-S4: delegation re-validation — a revoked/expired/consumed grant or
+    // a delegator-authority change since decide denies here, before any side
+    // effect. A platform-scoped grant is also consumed here (system scope);
+    // a tenant-scoped grant is consumed atomically inside Tx-1.
+    let delegationEnforcement:
+      | { readonly delegationId: string; readonly requirement: DelegationRequirement; readonly scope: 'tenant' | 'platform' }
+      | undefined;
+    try {
+      delegationEnforcement = await this.classifyDelegationEnforcement(verified, active, now);
+    } catch (error) {
+      if (error instanceof AuthorizationDeniedError) {
+        await this.bestEffortDenyReceipt(verified, 'denied');
+      }
+      throw error;
+    }
+
+    // Tx-1: session lock → delegation consume (tenant) → S-4 → S-5 → S-7 →
+    // credential lock + S-3.
     let tx1: Tx1Outcome;
     try {
       tx1 = await this.store.transact({ tenantId }, async (collections) =>
-        this.renderTx1(collections, verified, active!, now),
+        this.renderTx1(collections, verified, active!, now, delegationEnforcement),
       );
     } catch (error) {
       if (error instanceof IdempotentReplaySignal) {
@@ -1004,9 +1406,38 @@ export class DurableDecider {
     verified: A01AuthorizationEnvelope,
     active: ActiveManifest,
     now: number,
+    delegationEnforcement:
+      | { readonly delegationId: string; readonly requirement: DelegationRequirement; readonly scope: 'tenant' | 'platform' }
+      | undefined,
   ): Promise<Tx1Outcome> {
     // 1. Session re-check (live S-8 read + enforcement-lock no-op CAS).
     await this.assertSessionLive(collections, verified, now);
+
+    // 1.5 P2-S4: delegation consume (tenant-scoped). The grant is re-read
+    // and CAS-consumed INSIDE this tenant transaction — the same snapshot as
+    // the S-4 envelope claim, so a one-shot grant used twice (or racing a
+    // revocation) resolves to exactly one winner (spec §24-S4; A-24).
+    if (delegationEnforcement && delegationEnforcement.scope === 'tenant') {
+      const authority = await this.resolveDelegationAuthority();
+      if (!authority) {
+        throw new AuthorizationDeniedError(['DELEGATION_CHECK_UNAVAILABLE'], 'delegation plane unavailable in Tx-1 (fail-closed)');
+      }
+      let assessment;
+      try {
+        assessment = await authority.assessInTx(collections.scope, delegationEnforcement.requirement, now);
+      } catch (error) {
+        throw this.storageDenied(error);
+      }
+      const code = delegationDenialCode(assessment.verdict);
+      if (code !== undefined) {
+        throw new AuthorizationDeniedError([code], `delegation re-validation failed in Tx-1 (${assessment.verdict})`);
+      }
+      try {
+        await authority.consumeInTx(collections.scope, delegationEnforcement.delegationId, now);
+      } catch (error) {
+        throw mapDelegationConsumeError(error);
+      }
+    }
 
     // 2. S-4 exactly-once (non-READ).
     await consumeEnvelope(collections.consumedEnvelopes, {
@@ -1132,6 +1563,73 @@ export class DurableDecider {
         `privilege re-validation failed at enforcement (${assessment.verdict})`,
       );
     }
+  }
+
+  /**
+   * P2-S4 enforcement re-validation + platform-grant consumption. Mirrors
+   * `assertPrivilegeLive`: the envelope's delegation reference is re-read
+   * from durable state and re-verified against the LIVE manifest. A
+   * tenant-scoped grant is fully assessed + atomically consumed INSIDE Tx-1
+   * (with the S-4 envelope claim — one consistent snapshot, so a use racing
+   * a revocation resolves to exactly one winner). A platform-scoped grant is
+   * assessed and consumed here (system scope) BEFORE Tx-1 — the safe
+   * direction (a grant can never be double-used even if Tx-1 fails).
+   */
+  private async classifyDelegationEnforcement(
+    verified: A01AuthorizationEnvelope,
+    active: ActiveManifest,
+    now: number,
+  ): Promise<
+    | { readonly delegationId: string; readonly requirement: DelegationRequirement; readonly scope: 'tenant' | 'platform' }
+    | undefined
+  > {
+    const delegationId = verified.delegation?.delegationId;
+    if (!delegationId) return undefined;
+    if (verified.principal.authenticationMethod === 'KERNEL_INTERNAL') return undefined;
+    const authority = await this.resolveDelegationAuthority();
+    if (!authority) {
+      throw new AuthorizationDeniedError(['DELEGATION_CHECK_UNAVAILABLE'], 'delegation plane unavailable at enforcement (fail-closed)');
+    }
+    const requirement = buildDelegationRequirement(verified, active, delegationId);
+    if (!requirement) {
+      throw new AuthorizationDeniedError(
+        ['DELEGATION_DELEGATOR_AUTHORITY_CHANGED'],
+        'the delegator\'s cited authority cannot be re-verified at enforcement (fail-closed)',
+      );
+    }
+    let peek;
+    try {
+      peek = await authority.peek(delegationId);
+    } catch (error) {
+      throw this.storageDenied(error);
+    }
+    if (!peek) {
+      throw new AuthorizationDeniedError(['DELEGATION_UNKNOWN_GRANT'], 'the cited delegation grant no longer exists (fail-closed)');
+    }
+    if (peek.scope === 'platform') {
+      let platformAssessment;
+      try {
+        platformAssessment = await authority.assessPlatform(requirement, now);
+      } catch (error) {
+        throw this.storageDenied(error);
+      }
+      const code = delegationDenialCode(platformAssessment.verdict);
+      if (code !== undefined) {
+        throw new AuthorizationDeniedError([code], `delegation re-validation failed at enforcement (${platformAssessment.verdict})`);
+      }
+      try {
+        await authority.consumePlatform(delegationId, now);
+      } catch (error) {
+        throw mapDelegationConsumeError(error);
+      }
+      return { delegationId, requirement, scope: 'platform' };
+    }
+    // Tenant-scoped grant in a foreign tenant: indistinguishable from unknown
+    // (no grant-existence leak across tenants — A-09).
+    if (peek.tenantId !== verified.tenantId) {
+      throw new AuthorizationDeniedError(['DELEGATION_UNKNOWN_GRANT'], 'the cited delegation grant is not visible to the envelope tenant (fail-closed)');
+    }
+    return { delegationId, requirement, scope: 'tenant' };
   }
 
   /** COMPLETED-key path: CONSUMED receipt + the re-fetched receipt (never a cached object). */

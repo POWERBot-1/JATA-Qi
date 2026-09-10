@@ -288,8 +288,8 @@ describe('P2-S1 durable identity core (real PostgreSQL, fail-hard)', () => {
     const result = await identity.deprovision(pid, TENANT, 'termination', T0 + 10);
     assert.deepEqual(
       result,
-      { sessionsRevoked: 2, tokensRevoked: 1, roleAssignmentsRevoked: 3 },
-      'the cascade revoked every session, token, and role grant (incl. the enrollment role)',
+      { sessionsRevoked: 2, tokensRevoked: 1, roleAssignmentsRevoked: 3, delegationsRevoked: 0 },
+      'the cascade revoked every session, token, and role grant (incl. the enrollment role) and reports the delegation cascade (none here)',
     );
 
     // Principal + membership terminal.

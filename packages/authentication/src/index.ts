@@ -238,3 +238,40 @@ export type {
   BootstrapElevationInput,
   RevokeElevationInput,
 } from './privilege-store.js';
+
+// P2-S4 — Delegation + Policy: the durable, tenant-bound delegation grants
+// (`identity.delegations`), the grant model/lifecycle (§8), and the
+// decision-time delegation authority surface (§7.2 / §24-S4).
+export {
+  DELEGATIONS_COLLECTION,
+  DELEGATION_PLATFORM_TENANT,
+  DELEGATION_CLOCK_SKEW_MS,
+  MAX_DELEGATION_LIFETIME_MS,
+  MAX_DELEGATION_CHAIN_DEPTH,
+  isDelegationExpired,
+  isDelegationChainDepthAllowed,
+  delegationTargetMatches,
+  delegationTargetScopeWithin,
+  assessDelegationRow,
+  assertDelegationDocumentShape,
+  DelegationStoreError,
+  DelegationRequiredError,
+} from './delegation-types.js';
+export type {
+  DelegationStatus,
+  DelegationScope,
+  DelegationAction,
+  DelegationTargetScope,
+  DelegationConstraints,
+  DelegationApprovalBinding,
+  DelegationDoc,
+  GrantDelegationInput,
+  RevokeDelegationInput,
+  DelegationAssessmentVerdict,
+  DelegationAssessment,
+  DelegationRequirement,
+  DelegationPeek,
+  DelegationDenialRecord,
+  DelegationStateAuthority,
+} from './delegation-types.js';
+export { DelegationStore } from './delegation-store.js';

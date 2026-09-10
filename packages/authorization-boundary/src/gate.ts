@@ -23,7 +23,7 @@
 // caller metadata.
 
 import { randomUUID } from 'node:crypto';
-import type { IdentityStateAuthority, PrivilegeStateAuthority } from '@jataqi/authentication';
+import type { DelegationStateAuthority, IdentityStateAuthority, PrivilegeStateAuthority } from '@jataqi/authentication';
 import { assertEnvelopeIntegrity, envelopeAcceptance, sanitizeRequestForEnvelope, sealEnvelope } from './envelope.js';
 import { decideA01, type A01DecisionResult, type A01PolicyContext } from './policy-engine.js';
 import { buildConsumedAuditRecord, buildDecisionAuditRecord, InMemoryAuditSink } from './audit.js';
@@ -91,6 +91,15 @@ export interface A01GateConfig {
    * enforcement.
    */
   readonly privilegeAuthorityResolver?: () => PrivilegeStateAuthority | undefined | Promise<PrivilegeStateAuthority | undefined>;
+  /**
+   * P2-S4: the delegation-state authority resolver for the durable decision
+   * path (spec §24-S4). Absent ⇒ a request carrying a delegation reference
+   * DENIES DELEGATION_CHECK_UNAVAILABLE (fail-closed). Present ⇒ the durable
+   * decider re-reads the grant inside its transaction, re-verifies chain
+   * integrity against the live manifest, and re-validates + consumes at
+   * enforcement.
+   */
+  readonly delegationAuthorityResolver?: () => DelegationStateAuthority | undefined | Promise<DelegationStateAuthority | undefined>;
 }
 
 export interface ScopedExecutionContext {
@@ -160,6 +169,10 @@ export class AuthorizationGate {
           // R1 in-memory path fails closed (PRIVILEGE_CHECK_UNAVAILABLE) for
           // any registered privileged operation.
           ...(config.privilegeAuthorityResolver ? { privilegeAuthorityResolver: config.privilegeAuthorityResolver } : {}),
+          // P2-S4: the delegation stage rides the DURABLE decision path; the
+          // R1 in-memory path fails closed (DELEGATION_CHECK_UNAVAILABLE) for
+          // any request carrying a delegation reference.
+          ...(config.delegationAuthorityResolver ? { delegationAuthorityResolver: config.delegationAuthorityResolver } : {}),
         })
       : undefined;
   }
@@ -181,6 +194,11 @@ export class AuthorizationGate {
   /** P2-S3 structural probe (P2-INV-04): is a durable privilege authority live? */
   async hasLivePrivilegeAuthority(): Promise<boolean> {
     return this.durable ? this.durable.hasLivePrivilegeAuthority() : false;
+  }
+
+  /** P2-S4 structural probe (P2-INV-04 delegation half): is a durable delegation authority live? */
+  async hasLiveDelegationAuthority(): Promise<boolean> {
+    return this.durable ? this.durable.hasLiveDelegationAuthority() : false;
   }
 
   /** R2: cumulative durable-transaction/retry counters (evidence; zeros when no store). */

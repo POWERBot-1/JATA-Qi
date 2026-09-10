@@ -61,6 +61,15 @@ export interface A01PolicyContext {
    * no ambient privilege authority exists).
    */
   readonly privilegeStage?: (tool: string, operation: string) => readonly A01DenialReason[];
+  /**
+   * P2-S4 delegation stage. When the request carries a delegation reference,
+   * this stage returns the delegation denial codes (empty = a valid grant was
+   * verified). The durable decider pre-resolves the verdict inside its
+   * transaction and passes a producer that returns that verdict. Absent
+   * producer + a delegation reference ⇒ `DELEGATION_CHECK_UNAVAILABLE`
+   * (fail-closed: no ambient delegation authority exists).
+   */
+  readonly delegationStage?: () => readonly A01DenialReason[];
 }
 
 export interface A01DecisionResult {
@@ -216,6 +225,20 @@ function renderDecision(request: unknown, ctx: A01PolicyContext): A01DecisionRes
       reasons.add('PRIVILEGE_CHECK_UNAVAILABLE');
     } else {
       for (const code of ctx.privilegeStage(tool, operation)) reasons.add(code);
+    }
+  }
+
+  // 4.5 Delegation stage (P2-S4) — ordered AFTER principal/tenant + privilege and
+  // BEFORE capability evaluation (spec §7.2). A delegation reference is the
+  // grant id only; the grant itself is verified against durable state. Without
+  // a configured delegation stage the decision is DELEGATION_CHECK_UNAVAILABLE
+  // (fail-closed, no ambient delegation authority).
+  const delegationRaw = req.delegation as { delegationId?: unknown } | undefined;
+  if (delegationRaw !== undefined) {
+    if (!ctx.delegationStage) {
+      reasons.add('DELEGATION_CHECK_UNAVAILABLE');
+    } else {
+      for (const code of ctx.delegationStage()) reasons.add(code);
     }
   }
 
