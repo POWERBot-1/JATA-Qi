@@ -26,7 +26,7 @@
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { createECDH, createPrivateKey, createPublicKey, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
+import { generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
 import type { Jwk } from '../src/index.js';
 import { StorageModule } from '@jataqi/storage';
@@ -96,13 +96,10 @@ function rsaFixture(): KeyFixture {
 }
 
 function ecFixture(): KeyFixture {
-  // P-256 via ECDH (the only P-256 generator in node:crypto), exported as
-  // DER and re-imported as KeyObjects.
-  const ecdh = createECDH('prime256v1');
-  ecdh.generateKeys();
-  const ecdhAny = ecdh as unknown as { getPublicKeyDER: (f: string) => Buffer; getPrivateKeyDER: (f: string) => Buffer };
-  const publicKey = createPublicKey({ key: ecdhAny.getPublicKeyDER('spki'), format: 'der', type: 'spki' });
-  const privateKey = createPrivateKey({ key: ecdhAny.getPrivateKeyDER('sec1'), format: 'der', type: 'sec1' });
+  // P-256 EC keypair generated directly as KeyObjects (available on every
+  // supported Node; the legacy ECDH class exposes no DER export methods in
+  // any released Node.js — Finding P2-S1-OIDC-01).
+  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
   const jwk = publicKey.export({ format: 'jwk' }) as Jwk;
   return { privateKey, publicJwk: { ...jwk, kty: 'EC', crv: 'P-256', kid: 'ec-key-1', alg: 'ES256' }, kid: 'ec-key-1', alg: 'ES256' };
 }
@@ -178,9 +175,15 @@ describe('P2-S1 OIDC boundary: pinned-JWKS JWT core (no PG needed)', () => {
   it('refuses alg "none", HMAC algorithms (confusion), wrong keys, unknown/missing kids', async () => {
     const pin = await resolveJwksPin({ kind: 'inline', keys: [rsa.publicJwk] }, T0_MS);
     const claims = validClaims(T0_S);
-    // alg none (unsigned) — refused even though "verifiable" trivially.
-    const noneToken = `${b64url(JSON.stringify({ alg: 'none', kid: rsa.kid }))}.${b64url(JSON.stringify(claims))}.`;
-    assert.throws(() => verifyJwt(noneToken, pin), (e: unknown) => e instanceof JwtError && e.code === 'JWT_ALG_REJECTED');
+    // alg none, canonical RFC 7519 shape (empty signature segment) — the
+    // signature stage refuses it at the earlier fail-closed malformation
+    // check: an empty signature is not valid base64url material.
+    const noneEmptySig = `${b64url(JSON.stringify({ alg: 'none', kid: rsa.kid }))}.${b64url(JSON.stringify(claims))}.`;
+    assert.throws(() => verifyJwt(noneEmptySig, pin), (e: unknown) => e instanceof JwtError && e.code === 'JWT_MALFORMED');
+    // alg none with a signature segment present — refused at the algorithm
+    // gate with the exact closed code, never "trivially verifiable".
+    const noneSigned = `${b64url(JSON.stringify({ alg: 'none', kid: rsa.kid }))}.${b64url(JSON.stringify(claims))}.${b64url('x')}`;
+    assert.throws(() => verifyJwt(noneSigned, pin), (e: unknown) => e instanceof JwtError && e.code === 'JWT_ALG_REJECTED');
     // HS256 (algorithm confusion) — an HMAC alg is never admitted.
     const hsToken = `${b64url(JSON.stringify({ alg: 'HS256', kid: rsa.kid }))}.${b64url(JSON.stringify(claims))}.${b64url('x')}`;
     assert.throws(() => verifyJwt(hsToken, pin), (e: unknown) => e instanceof JwtError && e.code === 'JWT_ALG_REJECTED');
