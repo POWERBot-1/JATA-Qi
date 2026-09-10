@@ -5,6 +5,7 @@
 **Specification:** `docs/P2_PRODUCTION_IDENTITY_PRIVILEGED_PLANE_SPECIFICATION.md` (esp. §4, §5, §14, §18, §21, §24-S1)
 **Prepared by:** the P2-S1 implementation agent, on branch `arena/01a08684-jata-qi`
 **Recovery note:** re-verified on a fresh clone after the workspace re-clone lost the original unpushed commit objects; see §1a for the documented SHA substitution.
+**Remediation note:** a broken OIDC test fixture (Finding P2-S1-OIDC-01) was discovered in the post-publication CI follow-up and corrected in `97f055b62f7c97d47455cf71da1e0ec69c129cff` (test-only); the verification record is corrected in §1b.
 
 ---
 
@@ -18,6 +19,8 @@
 | Historical (unrecoverable) E4-report SHA — first local report commit, **never pushed** | `0579eb9` (short form of the first local report commit) |
 | Branch | `arena/01a08684-jata-qi` |
 | E4 report commit | this file, committed immediately after the implementation commit |
+| Remediation commit (post-publication; Finding P2-S1-OIDC-01; **test-only**, no `src/` change) | `97f055b62f7c97d47455cf71da1e0ec69c129cff` |
+| Final published artifact (PR #29 head) | this report-amendment commit, committed immediately after the remediation commit |
 
 All evidence below was produced by executing the committed artifacts (workspace HEAD == implementation commit at verification time).
 
@@ -45,6 +48,75 @@ content change in the recovery is this reconciliation text.
 publication identity** for the identical authorized content, and the final
 exact artifact that is being published (with this report committed
 immediately after it on the same branch).
+
+### 1b. Post-publication remediation — Finding P2-S1-OIDC-01 (documented)
+
+After publication, the CI run against the exact published head (run
+`34412338682`, job `102669392025`) **FAILED** at the "Test (all workspaces)"
+step. The root cause was fully characterized by re-execution on the exact
+published tree under both Node v20.20.2 (the CI runtime) and Node v22.22.3:
+
+1. **Broken fixture.** `ecFixture()` in
+   `packages/authentication/test/p2-s1-oidc.test.ts` called
+   `ecdh.getPublicKeyDER()` / `ecdh.getPrivateKeyDER()` — methods that **do
+   not exist** on the `node:crypto` `ECDH` class in any released Node.js
+   (empirically absent on v20.20.2 and v22.22.3; absent from current Node
+   documentation). The TS source cast the instance
+   (`as unknown as {…}`), so the build did not detect it. The JWT-core
+   `describe` block therefore threw a `TypeError` at suite setup in
+   **every** environment, and its **8 subtests never executed anywhere** —
+   including **A-02's 4-case deny-early skew table at the exact second
+   boundary** and **A-26's step-up recency**.
+
+2. **Runner masking.** node:test (both runtimes; minimal 4-line repro)
+   reports a top-level suite-setup failure as `not ok` but **excludes it
+   from the `# tests`/`# pass`/`# fail` counters**, and its exit status is
+   version-dependent: Node 22 → exit 0 (fully masked — every local gate run
+   reported PASS); Node 20 → exit 1 (surfaced in CI). Consequently the
+   pre-remediation "p2-s1-oidc 14/14" figure in §3/§4.1 reflects only the
+   *authenticator* describe (14 subtests); the 8 JWT-core subtests had not
+   executed when those numbers were recorded. The workspace-level "50/50"
+   likewise held only for the masked Node-22 runs (CI on Node 20 reported
+   49/50).
+
+3. **Remediation** (commit `97f055b62f7c97d47455cf71da1e0ec69c129cff`,
+   **test-only** — no `src/` or implementation modification):
+   (a) `ecFixture()` now generates the P-256 keypair directly as KeyObjects
+   via `generateKeyPairSync('ec', { namedCurve: 'prime256v1' })` (available
+   on every supported Node; the repo declares `engines: node >=20.0.0`); the
+   fixture shape (`privateKey`, `publicJwk`, `kid`, `alg`) is unchanged.
+   (b) The `alg:"none"` assertion, which used the canonical RFC 7519
+   empty-signature shape, is replaced by **two** accurate cases
+   (strengthening, not weakening): the empty-signature shape asserts
+   `JWT_MALFORMED` (the earlier fail-closed malformation check), and a
+   well-formed `alg:"none"` token asserts `JWT_ALG_REJECTED`. Both refuse;
+   the closed code set is unchanged.
+
+4. **Pre-remediation implementation-level diagnostic** (a 1:1 mirror of the
+   8 subtest assertions executed against the published `dist` on both
+   runtimes): 7 of 8 logic suites passed fully — including
+   **A-02's exact-boundary 4-case skew** (exp DENY `+300`/ALLOW `+301`/DENY
+   `+299`/DENY `−1`; nbf and iat ALLOW `+300`/DENY `+301`/ALLOW `−60`) and
+   **A-26** (boundary fresh, 1 s stale, `ageMs`, `NaN`/`maxAgeMs=0`
+   refused) — and the only mismatch was the documented `alg:"none"`
+   shape expectation (test-side, not an implementation defect). No
+   implementation security defect was identified.
+
+5. **Post-remediation re-verification** (from head `97f055b`):
+   - Node v20.20.2 (CI runtime parity): `p2-s1-oidc.test.js` **22/22** (0
+     `not ok`, exit 0); authentication workspace **92/92** subtests; full
+     `npm test` **50/50 workspaces, exit 0**; build 0 errors; lint 0 errors
+     (60 pre-existing baseline warnings); scan:r2 PASS (8 static files, 13
+     dump rows, 0 findings).
+   - Node v22.22.3: identical results (22/22; 50/50, exit 0).
+   - **CI run at the remediation head: PASS** — run `34448530864`, job
+     `102778627618`, `build · lint · test` green (10m43s).
+   - Residual platform risk (recorded; no repo-side change in this
+     milestone): the node:test suite-setup-failure counter/exit-status
+     desync undercounts any suite that throws at setup and is invisible to
+     exit status on Node 22. A repo-level guard (e.g., TAP `not ok` scanning
+     in CI, or runner-Node alignment with `engines`) is a separate
+     improvement item.
 
 ## 2. Changed files (29)
 
@@ -90,23 +162,23 @@ Modified (15):
 
 ## 3. Tests executed and exact results
 
-Environment: node v22.22.3, npm 10.9.8, embedded PostgreSQL 18.4 (real PG per suite; fail-hard — a PG start failure fails the suite, never skips).
+Environment: node v22.22.3, npm 10.9.8, embedded PostgreSQL 18.4 (real PG per suite; fail-hard — a PG start failure fails the suite, never skips). Post-remediation re-verification additionally executed under node v20.20.2 (the CI runtime) — see §1b.
 
 | Suite | Command | Result |
 | --- | --- | --- |
 | P2-S1 identity core | `cd packages/authentication && npx tsc -p tsconfig.test.json && node --test dist/test/p2-s1-identity-core.test.js` | **19 pass / 0 fail** |
-| P2-S1 OIDC boundary | `cd packages/authentication && node --test dist/test/p2-s1-oidc.test.js` | **14 pass / 0 fail** |
+| P2-S1 OIDC boundary | `cd packages/authentication && node --test dist/test/p2-s1-oidc.test.js` | **14 pass / 0 fail** — *pre-remediation counter; it excludes the JWT-core describe (8 subtests) that never executed — see §1b*. Post-remediation (head `97f055b`): **22 pass / 0 fail** on both Node v20.20.2 and v22.22.3 |
 | P2-S1 identity decision (A-11) | `cd packages/authorization-boundary && node --test dist/test/p2-s1-identity-decision.test.js` | **8 pass / 0 fail** |
 | P2-S1 posture invariants | `cd packages/cli && node --test dist/test/p2-posture-invariants.test.js` | **7 pass / 0 fail** |
 | P1 production posture (re-qualification) | `cd packages/cli && node --test dist/test/p1-posture-pg.test.js` | **5 pass / 0 fail** |
 | Full workspace regression | `npm test` (root) | **Total: 50 · Passed: 50 · Failed: 0 · Skipped: 0** — all 51 packages PASSED |
 
-Mandated artifact gates: A-01 (replay), A-02 (4-case skew), A-03 (static-token revocation ⇒ next authentication DENY), A-06 (tenant server-side; unknown subject DENY; forged tenant claim ignored), A-11 (two decisions across a durable role revocation), A-15 (wrong iss/aud deny before any store read — asserted with a store-read counter), A-22 (closed schema + material refusal; insert-once), A-23 (double submission insert-once: enrollment DENY, import idempotent-skip, one record), A-26 (step-up boundary fresh/stale) — all present in the suites above and passing.
+Mandated artifact gates: A-01 (replay), A-02 (4-case skew), A-03 (static-token revocation ⇒ next authentication DENY), A-06 (tenant server-side; unknown subject DENY; forged tenant claim ignored), A-11 (two decisions across a durable role revocation), A-15 (wrong iss/aud deny before any store read — asserted with a store-read counter), A-22 (closed schema + material refusal; insert-once), A-23 (double submission insert-once: enrollment DENY, import idempotent-skip, one record), A-26 (step-up boundary fresh/stale) — all present in the suites above; the exact-boundary evidence for A-02 and A-26 lives in the JWT-core describe, which did **not** execute pre-remediation (§1b) and passes 8/8 post-remediation on both runtimes.
 
 ## 4. Evidence by area
 
 ### 4.1 OIDC claims boundary (A. of the authorization)
-`p2-s1-oidc.test.ts` (14/14): every required claim (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`, optional `auth_time`) missing/wrong ⇒ exact closed failure code (`OIDC_CLAIM_SUB_MISSING`, `_ISS_MISMATCH`, `_AUD_MISMATCH` (string or array audience), `_EXP_MISSING`, `_NBF_MISSING`, `_IAT_MISSING`, `_JTI_MISSING`, `_AUTH_TIME_INVALID`). 4-case deny-early skew asserted at the exact second boundary with `OIDC_CLOCK_SKEW_SECONDS = 300`: exp DENY at `+300` (inclusive) / ALLOW at `+301` / DENY at `+299` / DENY at `−1`; nbf ALLOW at `+300` / DENY at `+301`; iat same as nbf — verified both in pure `assessOidcClaims` and through `OidcAuthenticator.verify` (exp boundary). Unsigned (`alg:none`) and HMAC-confusion (`HS256`) tokens, missing/unknown/mismatched kids, wrong-key (same kid, different key) and tampered signatures all refused at the signature stage. Private-key JWK material refused (`JWKS_REJECTED_KEY`); empty JWKS refused; non-http(s) pin URL refused; URL pin fetched exactly once (injected fetcher count), never at verification time. **No permissive claim handling exists: every absent claim is a closed-code refusal.**
+`p2-s1-oidc.test.ts` (22/22 post-remediation; the pre-remediation counter was 14/14 — see §1b): every required claim (`sub`, `iss`, `aud`, `exp`, `nbf`, `iat`, `jti`, optional `auth_time`) missing/wrong ⇒ exact closed failure code (`OIDC_CLAIM_SUB_MISSING`, `_ISS_MISMATCH`, `_AUD_MISMATCH` (string or array audience), `_EXP_MISSING`, `_NBF_MISSING`, `_IAT_MISSING`, `_JTI_MISSING`, `_AUTH_TIME_INVALID`). 4-case deny-early skew asserted at the exact second boundary with `OIDC_CLOCK_SKEW_SECONDS = 300`: exp DENY at `+300` (inclusive) / ALLOW at `+301` / DENY at `+299` / DENY at `−1`; nbf ALLOW at `+300` / DENY at `+301`; iat same as nbf — verified both in pure `assessOidcClaims` and through `OidcAuthenticator.verify` (exp boundary). Unsigned (`alg:none`) and HMAC-confusion (`HS256`) tokens, missing/unknown/mismatched kids, wrong-key (same kid, different key) and tampered signatures all refused at the signature stage. Private-key JWK material refused (`JWKS_REJECTED_KEY`); empty JWKS refused; non-http(s) pin URL refused; URL pin fetched exactly once (injected fetcher count), never at verification time. **No permissive claim handling exists: every absent claim is a closed-code refusal.** (The JWT-core assertions in this paragraph did not execute pre-remediation; they now execute and pass — §1b.)
 
 ### 4.2 Identity lifecycle (B.)
 `p2-s1-identity-core.test.ts` (19/19): all 6 permitted transitions executed (ENROLLED→ACTIVATED, ENROLLED→DEPROVISIONED, ACTIVATED→SUSPENDED, SUSPENDED→ACTIVATED, SUSPENDED→DEACTIVATED, DEACTIVATED→DEPROVISIONED); all forbidden transitions negative-asserted (10 store-driven + 4 to-ENROLLED = 14, asserted as `storeDriven === 10` plus the closed-set matrix). ENROLLED is treated as non-ACTIVATED by the decision path (`IDENTITY_STATE_INACTIVE`); SUSPENDED denied; DEPROVISIONED denied (terminal; no re-enable; deprovisioning cascades: sessions REVOKED, tokens revoked via the registry, future grants refused — `grantRoleAssignment`/`createRecovery`/`enroll` all refuse terminal identities).
@@ -166,6 +238,7 @@ Mandated artifact gates: A-01 (replay), A-02 (4-case skew), A-03 (static-token r
 - **Test doubles are strictly local**: locally generated RSA/EC keys, inline JWKS pins, an injectable JWKS fetcher, and counting/defensive authorities. None is represented as a production identity provider; no external IdP was activated, contacted, or required (spec §5.1).
 - **Test-local policy engine reason code**: the closed A-01 reason set has no role-specific code; the operator-required fixture cites `PRINCIPAL_REVOKED` (the semantic exercised: previously held authority revoked durably). Documented in the test.
 - **`r2-secret-scan.json`** regenerated (timestamp only; 0 findings) — the committed scan artifact tracking the current state.
+- **Finding P2-S1-OIDC-01 (remediated post-publication)**: a broken EC fixture (nonexistent `ECDH.getPublicKeyDER`/`getPrivateKeyDER`) plus node:test runner masking meant the 8 OIDC JWT-core subtests (incl. A-02 exact-boundary and A-26) never executed in any run, and the pre-remediation totals in §3/§4.1/§8 of this report reflect that masked state. Remediated in `97f055b` (test-only): post-remediation 22/22 (oidc file), 92/92 (auth workspace), 50/50 on both Node v20.20.2 and v22.22.3; CI at the remediation head green (run `34448530864`). Residual: the node:test suite-setup-failure desync is a platform-level risk (see §1b).
 - **Out of scope (recorded, not expanded)**: P2-INV-04…08/10 (privilege stage, elevations, break-glass, key-management register) belong to later S1/later milestones; TOTP/MFA is S5; no P2-S2…S8, no production deployment, no external IdP activation, no KMS/HSM deployment.
 
 ## 8. Final determination
@@ -174,4 +247,5 @@ Mandated artifact gates: A-01 (replay), A-02 (4-case skew), A-03 (static-token r
 
 - Baseline `5d12cc57353c4e7cce3af157f5e23efde2c74b28` preserved; additive-only diff; no existing test weakened or deleted; no RLS bypass; no ambient authority; no session-level `*`; no second security authority store; no destructive migration; fail-closed throughout.
 - All mandated gates green: A-01/02/03/06/11/15/22/23/26; lifecycle pos+neg; cascade; auto-link idempotency; rebind refusal; OIDC claim boundary + 4-case skew; P2-INV-01/02/03/09 pos+neg; P2-INV-11 negatives; INV-15 pos+neg; system-scope declared/undeclared pos+neg; fail-closed; KERNEL_INTERNAL skip; 50/50 regression; clean build; 0 lint errors; scan PASS.
+- **Verification record corrected (Finding P2-S1-OIDC-01, §1b)**: pre-remediation, 8 OIDC JWT-core subtests (incl. A-02 exact-boundary 4-case skew and A-26) never executed due to the broken fixture + runner masking; those gates are now backed by executed subtests, and the post-remediation 50/50 regression is green on both Node v20.20.2 (CI parity; CI run `34448530864` PASS) and v22.22.3.
 - Governance honored: implementation + tests + this report committed on `arena/01a08684-jata-qi`; STOP before merge; no production-readiness claim; P2-S2 not advanced. Merge requires separate explicit authorization.
