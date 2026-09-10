@@ -173,9 +173,11 @@ describe('T-01 server-side principal boundary', () => {
 
 describe('T-02 recognized-method guard (durable-boundary support)', () => {
   it('recognizes exactly the AuthenticationMethod union (single source of truth)', () => {
+    // P2-S2 extends the closed union with SESSION_TOKEN (union + list
+    // together — the single-source-of-truth rule is preserved, not relaxed).
     assert.deepEqual(
       [...RECOGNIZED_AUTHENTICATION_METHODS],
-      ['DETERMINISTIC_TEST', 'STATIC_TOKEN', 'OIDC', 'MTLS', 'KERNEL_INTERNAL'],
+      ['DETERMINISTIC_TEST', 'STATIC_TOKEN', 'OIDC', 'MTLS', 'SESSION_TOKEN', 'KERNEL_INTERNAL'],
     );
     for (const method of RECOGNIZED_AUTHENTICATION_METHODS) {
       assert.ok(isAuthenticationMethod(method));

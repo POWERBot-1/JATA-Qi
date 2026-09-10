@@ -10,7 +10,7 @@
 // methods, and misconfigured records all reject. It never mints tokens and
 // never issues roles it was not configured with.
 
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import type { CommercialActorRole } from '@jataqi/commercial-control-plane';
 import {
   PrincipalValidationError,
@@ -91,7 +91,11 @@ export class StaticTokenAuthenticator implements ServerAuthenticator {
       roles: [...record.roles],
       authenticationMethod: 'STATIC_TOKEN',
       verifiedAt: now,
-      authenticationEventId: `${requestId}:${createHash('sha256').update(credential.material).digest('hex').slice(0, 16)}`,
+      // P2-S2 fixation defense: the session identity is server-minted
+      // random (never derived from request material). Rows recorded under
+      // the old `${requestId}:${hash16}` derivation stay valid (the row id
+      // is opaque to every reader) — they simply stop being minted.
+      authenticationEventId: randomUUID(),
       ...(record.expiresAt !== undefined ? { credentialExpiresAt: record.expiresAt } : {}),
     };
   }

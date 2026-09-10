@@ -46,12 +46,17 @@ export type AuthenticationMode = 'production' | 'test-only';
 /**
  * Authentication methods a production ingress may admit. `DETERMINISTIC_TEST`
  * is excluded by construction and `KERNEL_INTERNAL` is excluded because it is
- * not a user-facing request method.
+ * not a user-facing request method. `SESSION_TOKEN` (P2-S2) is admitted: it
+ * is a server-minted 256-bit bearer that references a durably
+ * status-checked session row (fingerprint lookup + ACTIVE/expiry/tenant
+ * re-validation on every use) — verification never consults process-local
+ * state, and registration of the verifier remains explicit.
  */
 export const PRODUCTION_AUTHENTICATION_METHODS: readonly AuthenticationMethod[] = Object.freeze([
   'STATIC_TOKEN',
   'OIDC',
   'MTLS',
+  'SESSION_TOKEN',
 ]);
 
 /**

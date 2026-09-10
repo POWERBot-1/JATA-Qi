@@ -7,6 +7,7 @@
 // MATERIAL is ever stored: the registry holds one-way fingerprints,
 // and the closed field allow-list rejects material-shaped fields.
 
+import { randomUUID } from 'node:crypto';
 import type { CommercialActorRole } from '@jataqi/commercial-control-plane';
 import { StorageModule, type ICollection, type SecurityCollectionSource } from '@jataqi/storage';
 import {
@@ -245,7 +246,7 @@ export class TokenRegistryStore {
   async verifyByMaterial(
     material: string,
     now: number,
-    requestId: string,
+    _requestId: string,
   ): Promise<AuthenticatedPrincipal> {
     if (typeof material !== 'string' || material.length === 0) {
       throw new PrincipalValidationError('A non-empty token is required.');
@@ -275,7 +276,11 @@ export class TokenRegistryStore {
       roles: [...row.roles],
       authenticationMethod: 'STATIC_TOKEN',
       verifiedAt: now,
-      authenticationEventId: `${requestId}:${fingerprint.slice(0, 16)}`,
+      // P2-S2 fixation defense: the session identity is server-minted
+      // random (never derived from request material). Rows recorded under
+      // the old `${requestId}:${hash16}` derivation stay valid (the row id
+      // is opaque to every reader) — they simply stop being minted.
+      authenticationEventId: randomUUID(),
       ...(row.expiresAt !== undefined ? { credentialExpiresAt: row.expiresAt } : {}),
     };
   }
