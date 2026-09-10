@@ -421,6 +421,18 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
                 return undefined;
               }
             },
+            // P2-S4: the delegation stage rides the DURABLE decision path.
+            // Absent plane ⇒ a request carrying a delegation reference DENIES
+            // DELEGATION_CHECK_UNAVAILABLE (fail-closed, no ambient authority).
+            delegationAuthorityResolver: () => {
+              try {
+                const auth = kernel.getModule<AuthenticationModule>('authentication');
+                return auth.getDelegationStore().asStateAuthority();
+              } catch {
+                // This composition has no durable delegation plane (pre-P2-S4).
+                return undefined;
+              }
+            },
           }
         : {}),
     }),

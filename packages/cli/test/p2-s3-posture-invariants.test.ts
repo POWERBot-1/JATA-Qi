@@ -198,3 +198,54 @@ describe('P2-S3 production posture invariants (real PostgreSQL)', () => {
     }
   });
 });
+
+describe('P2-S4 production posture invariants (real PostgreSQL)', () => {
+  it('P2-INV-04 (delegation half, positive): the plane is attached and the A-01 delegation stage is wired', async () => {
+    setSealedStaticTokenEnv();
+    const jq = await bootProduction();
+    try {
+      const inv04 = getInvariant(jq, 'p2.production.delegation-stage-registered');
+      assert.equal(await inv04.check(jq.kernel), true, 'P2-INV-04 delegation half is satisfied (plane attached + stage wired)');
+    } finally {
+      await jq.shutdown();
+    }
+  });
+
+  it('P2-INV-04 (delegation half, negative): a composition without the delegation plane fails closed', async () => {
+    setSealedStaticTokenEnv();
+    const jq = await bootProduction();
+    try {
+      const inv04 = getInvariant(jq, 'p2.production.delegation-stage-registered');
+      const stubKernel = {
+        getModule: (id: string) =>
+          id === 'authentication'
+            ? { getDelegationStore: () => { throw new Error('no delegation plane'); } }
+            : { hasLiveDelegationAuthority: async () => true },
+      } as never;
+      const outcome = await inv04.check(stubKernel);
+      assert.equal(typeof outcome, 'string', 'a missing plane fails the invariant (a string is a failure reason)');
+      assert.match(outcome as string, /NOT attached|fail-closed/i);
+    } finally {
+      await jq.shutdown();
+    }
+  });
+
+  it('P2-INV-04 (delegation half, negative): an unwired delegation stage fails closed', async () => {
+    setSealedStaticTokenEnv();
+    const jq = await bootProduction();
+    try {
+      const inv04 = getInvariant(jq, 'p2.production.delegation-stage-registered');
+      const stubKernel = {
+        getModule: (id: string) =>
+          id === 'authentication'
+            ? { getDelegationStore: () => ({}) }
+            : { hasLiveDelegationAuthority: async () => false },
+      } as never;
+      const outcome = await inv04.check(stubKernel);
+      assert.equal(typeof outcome, 'string');
+      assert.match(outcome as string, /not wired|fail-closed/i);
+    } finally {
+      await jq.shutdown();
+    }
+  });
+});

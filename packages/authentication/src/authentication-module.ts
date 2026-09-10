@@ -21,6 +21,7 @@ import { IdentityStore } from './identity-store.js';
 import { JtiReplayStore } from './jti-replay.js';
 import { SessionTokenService } from './session-tokens.js';
 import { PrivilegeStore } from './privilege-store.js';
+import { DelegationStore } from './delegation-store.js';
 import type { ServerAuthenticator } from './types.js';
 
 export interface AuthenticationDurableSessionsConfig {
@@ -88,6 +89,7 @@ export class AuthenticationModule implements IModule {
   #jtiReplay: JtiReplayStore | undefined;
   #sessionTokens: SessionTokenService | undefined;
   #privilegeStore: PrivilegeStore | undefined;
+  #delegationStore: DelegationStore | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -119,6 +121,10 @@ export class AuthenticationModule implements IModule {
       // authoritative substrate. Fails closed at open exactly like the other
       // durable stores (a non-transactional source refuses the plane).
       this.#privilegeStore = await PrivilegeStore.open(storage);
+      // P2-S4: the durable delegation + policy store over the same
+      // authoritative substrate. Fails closed at open exactly like the other
+      // durable stores (a non-transactional source refuses delegation state).
+      this.#delegationStore = await DelegationStore.open(storage);
       // P2-S2: the session-token lifecycle service over the same durable
       // substrate (mint/verify/rotate/revoke + identity-state gate). The
       // session lifetime is wired from the SAME configuration as the
@@ -187,13 +193,17 @@ export class AuthenticationModule implements IModule {
     if (this.#privilegeStore) {
       kernel.container.registerValue('authentication.privilege-store', this.#privilegeStore);
     }
+    if (this.#delegationStore) {
+      kernel.container.registerValue('authentication.delegation-store', this.#delegationStore);
+    }
     kernel.logger.info(
       `principal boundary initialized (T-03): ${this.#boundary.getPolicy().describe()}; ` +
         `authenticators=[${this.#boundary.listAuthenticatorIds().join(',') || '<none>'}]` +
         (this.#eventStore ? '; durable sessions enabled (R2 S-8/S-9)' : '') +
         (this.#identityStore ? '; identity core enabled (P2-S1)' : '') +
         (this.#sessionTokens ? '; session tokens enabled (P2-S2)' : '') +
-        (this.#privilegeStore ? '; privilege plane enabled (P2-S3)' : ''),
+        (this.#privilegeStore ? '; privilege plane enabled (P2-S3)' : '') +
+        (this.#delegationStore ? '; delegation plane enabled (P2-S4)' : ''),
     );
   }
 
@@ -236,5 +246,11 @@ export class AuthenticationModule implements IModule {
   getPrivilegeStore(): PrivilegeStore {
     if (!this.#privilegeStore) throw new Error('Authentication module has no durable privilege store (durableSessions not enabled).');
     return this.#privilegeStore;
+  }
+
+  /** P2-S4 delegation store; throws when durable sessions are not enabled. */
+  getDelegationStore(): DelegationStore {
+    if (!this.#delegationStore) throw new Error('Authentication module has no durable delegation store (durableSessions not enabled).');
+    return this.#delegationStore;
   }
 }

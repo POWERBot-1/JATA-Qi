@@ -250,6 +250,12 @@ export class AuthorizationBoundaryModule implements IModule {
       ...(this.config.privilegeAuthorityResolver
         ? { privilegeAuthorityResolver: this.config.privilegeAuthorityResolver }
         : {}),
+      // P2-S4: the delegation stage rides the durable decision path (absent ⇒
+      // a request carrying a delegation reference DENIES
+      // DELEGATION_CHECK_UNAVAILABLE).
+      ...(this.config.delegationAuthorityResolver
+        ? { delegationAuthorityResolver: this.config.delegationAuthorityResolver }
+        : {}),
     });
 
     // R1: SEALED bindings. A sealed token cannot be replaced, overridden,
@@ -323,5 +329,13 @@ export class AuthorizationBoundaryModule implements IModule {
       throw new Error('AuthorizationBoundaryModule: the boundary has not been initialized (fail-closed).');
     }
     return this.gate.hasLivePrivilegeAuthority();
+  }
+
+  /** P2-S4 structural probe (P2-INV-04 delegation half): is the A-01 delegation stage wired to a live authority? */
+  async hasLiveDelegationAuthority(): Promise<boolean> {
+    if (!this.gate) {
+      throw new Error('AuthorizationBoundaryModule: the boundary has not been initialized (fail-closed).');
+    }
+    return this.gate.hasLiveDelegationAuthority();
   }
 }

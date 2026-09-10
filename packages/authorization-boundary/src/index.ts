@@ -39,6 +39,7 @@ export type {
   A01CredentialCheckView,
   A01CredentialIssueSpec,
   A01DataClassification,
+  A01DelegationBinding,
   A01DecisionOutcome,
   A01DecisionRecord,
   A01DenialReason,
