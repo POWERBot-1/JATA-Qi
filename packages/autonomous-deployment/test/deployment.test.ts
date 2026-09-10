@@ -119,7 +119,7 @@ describe('Autonomous deployment', () => {
 
   it('records provider acceptance as verifying and marks healthy only after health verification', async () => {
     const counters: Record<string, number> = {};
-    deployments.registerAdapter(admin, adapter(counters));
+    await deployments.registerAdapter(admin, adapter(counters));
     const created = await deployment();
     const queued = await deployments.queueDeployment(operator, created.id, 'sandbox-deployer');
     const proposed = await decision();
@@ -138,7 +138,7 @@ describe('Autonomous deployment', () => {
   });
 
   it('does not mark a deployment healthy when a required health check fails', async () => {
-    deployments.registerAdapter(admin, adapter({}, false));
+    await deployments.registerAdapter(admin, adapter({}, false));
     const created = await deployment();
     await deployments.queueDeployment(operator, created.id, 'sandbox-deployer');
     const proposed = await decision();
@@ -149,7 +149,7 @@ describe('Autonomous deployment', () => {
 
   it('blocks production deployment when the adapter has not been explicitly enabled', async () => {
     const counters: Record<string, number> = {};
-    deployments.registerAdapter(admin, adapter(counters, true, { productionEnabled: false }));
+    await deployments.registerAdapter(admin, adapter(counters, true, { productionEnabled: false }));
     const created = await deployment('production');
     const blocked = await deployments.queueDeployment(operator, created.id, 'sandbox-deployer');
     assert.equal(blocked.state, 'BLOCKED');
@@ -158,7 +158,7 @@ describe('Autonomous deployment', () => {
 
   it('uses dry-run by default and keeps deployments tenant-isolated', async () => {
     const counters: Record<string, number> = {};
-    deployments.registerAdapter(admin, adapter(counters));
+    await deployments.registerAdapter(admin, adapter(counters));
     const created = await deployment();
     await deployments.queueDeployment(operator, created.id, 'sandbox-deployer');
     const proposed = await decision();

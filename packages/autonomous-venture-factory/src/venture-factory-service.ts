@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
+import { resolvePrivilegeEnforcerFromKernel, type PrivilegeEnforcer } from '@jataqi/authentication';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvidence, CommercialProvenance } from '@jataqi/commercial-control-plane';
 import { CommercialIntelligenceModule } from '@jataqi/commercial-intelligence';
@@ -34,15 +35,25 @@ export class AutonomousVentureFactoryService {
   private ventures!: ICollection<Venture>;
   private controlPlane!: CommercialControlPlaneService;
   private intelligence!: CommercialIntelligenceService;
+  /** P2-S3: durable elevation enforcer (undefined ⇒ privilege plane not attached). */
+  private privilegeEnforcer?: PrivilegeEnforcer;
 
   async init(kernel: KernelApi): Promise<void> {
+    this.privilegeEnforcer = resolvePrivilegeEnforcerFromKernel(kernel);
     this.ventures = await kernel.getModule<StorageModule>('storage').collection<Venture>(VENTURES_COLLECTION);
     this.controlPlane = kernel.getModule<CommercialControlPlaneModule>('commercial-control-plane').getService();
     this.intelligence = kernel.getModule<CommercialIntelligenceModule>('commercial-intelligence').getService();
   }
 
+  /** P2-S3: the service-side durable elevation gate (PO-5 sites). */
+  private async requireElevation(actor: CommercialActor, operationId: string): Promise<void> {
+    if (!this.privilegeEnforcer) return; // privilege plane not attached — the role check remains the gate (§9.1)
+    await this.privilegeEnforcer.assertElevation(actor.id, actor.tenantId, operationId, Date.now());
+  }
+
   async createVenture(actor: CommercialActor, input: CreateVentureInput): Promise<Venture> {
     assertManager(actor);
+    await this.requireElevation(actor, 'venture-factory.venture.create');
     validateCreate(input);
     if (input.opportunityId) {
       const opportunity = await this.intelligence.getOpportunity(actor, input.opportunityId);
@@ -69,6 +80,7 @@ export class AutonomousVentureFactoryService {
 
   async transition(actor: CommercialActor, ventureId: string, input: TransitionVentureInput): Promise<Venture> {
     assertManager(actor);
+    await this.requireElevation(actor, 'venture-factory.venture.transition');
     const venture = await this.requireVenture(actor, ventureId);
     if (!input.reason.trim() || !input.evidence.length) throw new VentureFactoryError('Venture transition reason and evidence are required.');
     if (!isTransitionAllowed(venture.state, input.newState)) throw new VentureFactoryError(`Venture transition is not allowed: ${venture.state} -> ${input.newState}.`);

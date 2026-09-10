@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection, StorageWriteScope } from '@jataqi/storage';
+import { resolvePrivilegeEnforcerFromKernel, type PrivilegeEnforcer } from '@jataqi/authentication';
 import { CommercialControlPlaneModule } from '@jataqi/commercial-control-plane';
 import { moneyEquals, moneyProductEquals, quantizeMonetaryValue, sumMoney } from '@jataqi/commercial-control-plane';
 import type { CommercialActor, CommercialControlPlaneService, CommercialEvent, CommercialProvenance, MonetaryValue } from '@jataqi/commercial-control-plane';
@@ -47,9 +48,12 @@ export class BillingService {
   private payments!: PaymentsService;
   private controlPlane!: CommercialControlPlaneService;
   private unregisterDurableHandler?: () => void;
+  /** P2-S3: durable elevation enforcer (undefined ⇒ privilege plane not attached). */
+  private privilegeEnforcer?: PrivilegeEnforcer;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
+    this.privilegeEnforcer = resolvePrivilegeEnforcerFromKernel(kernel);
     const storage = kernel.getModule<StorageModule>('storage');
     this.storage = storage;
     this.plans = await storage.collection<BillingPlan>(PLANS_COLLECTION);
@@ -77,8 +81,26 @@ export class BillingService {
     this.unregisterDurableHandler = undefined;
   }
 
+  /**
+   * P2-S3 service-migration gate: assert a durable elevation for a register
+   * operation. When the privilege plane is not attached this is a no-op (the
+   * role check above remains the gate — spec §9.1 migration coexistence).
+   * When attached, any denial OR storage failure throws (fail-closed).
+   */
+  private async requireElevation(actor: CommercialActor, operationId: string): Promise<void> {
+    if (!this.privilegeEnforcer) return;
+    await this.privilegeEnforcer.assertElevation(actor.id, actor.tenantId, operationId, Date.now());
+  }
+
+  /** P2-S3: cross-tenant reads require a platform-admin elevation (PO-3). */
+  private async requireCrossTenantRead(actor: CommercialActor): Promise<void> {
+    if (!this.privilegeEnforcer) return;
+    await this.privilegeEnforcer.assertElevation(actor.id, actor.tenantId, 'billing.cross-tenant.read', Date.now());
+  }
+
   async createPlan(actor: CommercialActor, input: CreateBillingPlanInput): Promise<BillingPlan> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'billing.plan.create');
     validatePlan(input);
     const now = Date.now();
     // T-07/T-09 money policy: prices are quantized at the boundary at the
@@ -92,6 +114,7 @@ export class BillingService {
 
   async createSubscription(actor: CommercialActor, input: CreateSubscriptionInput): Promise<Subscription> {
     assertManager(actor);
+    await this.requireElevation(actor, 'billing.subscription.create');
     if (!input.customerReference.trim() || !input.productId.trim()) throw new BillingError('Subscription customer and product references are required.');
     const plan = await this.plans.get(input.planId);
     if (!plan || !canRead(actor, plan.tenantId) || !plan.active || plan.productId !== input.productId) throw new BillingError('Active billing plan not found for product.');
@@ -110,6 +133,7 @@ export class BillingService {
 
   async createInvoice(actor: CommercialActor, input: CreateInvoiceInput): Promise<Invoice> {
     assertManager(actor);
+    await this.requireElevation(actor, 'billing.invoice.create');
     validateInvoiceInput(input);
     if (input.subscriptionId) {
       const subscription = await this.subscriptions.get(input.subscriptionId);
@@ -137,6 +161,7 @@ export class BillingService {
   /** Creates a provider-neutral payment intent; it does not charge or activate the invoice. */
   async createInvoicePayment(actor: CommercialActor, invoiceId: string, input: CreateInvoicePaymentInput): Promise<Invoice> {
     assertManager(actor);
+    await this.requireElevation(actor, 'billing.invoice.payment.create');
     const invoice = await this.requireInvoice(actor, invoiceId);
     if (!['ISSUED', 'PAYMENT_PENDING'].includes(invoice.status)) throw new BillingError(`Invoice ${invoice.id} cannot create payment from ${invoice.status}.`);
     const payment = await this.payments.createIntent(actor, {
@@ -151,6 +176,7 @@ export class BillingService {
 
   async cancelSubscription(actor: CommercialActor, subscriptionId: string, reason: string): Promise<Subscription> {
     assertManager(actor);
+    await this.requireElevation(actor, 'billing.subscription.cancel');
     if (!reason.trim()) throw new BillingError('Cancellation reason is required.');
     const subscription = await this.requireSubscription(actor, subscriptionId);
     const updated: Subscription = { ...subscription, status: 'CANCELLED', cancelledAt: Date.now(), updatedAt: Date.now() };
@@ -161,29 +187,38 @@ export class BillingService {
 
   async getPlan(actor: CommercialActor, id: string): Promise<BillingPlan | undefined> {
     const plan = await this.plans.get(id);
+    if (plan && plan.tenantId !== actor.tenantId) await this.requireCrossTenantRead(actor);
     return plan && canRead(actor, plan.tenantId) ? copy(plan) : undefined;
   }
 
   async getSubscription(actor: CommercialActor, id: string): Promise<Subscription | undefined> {
     const subscription = await this.subscriptions.get(id);
+    if (subscription && subscription.tenantId !== actor.tenantId) await this.requireCrossTenantRead(actor);
     return subscription && canRead(actor, subscription.tenantId) ? copy(subscription) : undefined;
   }
 
   async listPlans(actor: CommercialActor): Promise<BillingPlan[]> {
-    return (await this.plans.all()).filter((plan) => canRead(actor, plan.tenantId)).map(copy);
+    const plans = await this.plans.all();
+    if (plans.some((plan) => plan.tenantId !== actor.tenantId)) await this.requireCrossTenantRead(actor);
+    return plans.filter((plan) => canRead(actor, plan.tenantId)).map(copy);
   }
 
   async listSubscriptions(actor: CommercialActor): Promise<Subscription[]> {
-    return (await this.subscriptions.all()).filter((subscription) => canRead(actor, subscription.tenantId)).map(copy);
+    const subscriptions = await this.subscriptions.all();
+    if (subscriptions.some((subscription) => subscription.tenantId !== actor.tenantId)) await this.requireCrossTenantRead(actor);
+    return subscriptions.filter((subscription) => canRead(actor, subscription.tenantId)).map(copy);
   }
 
   async getInvoice(actor: CommercialActor, id: string): Promise<Invoice | undefined> {
     const invoice = await this.invoices.get(id);
+    if (invoice && invoice.tenantId !== actor.tenantId) await this.requireCrossTenantRead(actor);
     return invoice && canRead(actor, invoice.tenantId) ? copy(invoice) : undefined;
   }
 
   async listInvoices(actor: CommercialActor): Promise<Invoice[]> {
-    return (await this.invoices.all()).filter((invoice) => canRead(actor, invoice.tenantId)).map(copy);
+    const invoices = await this.invoices.all();
+    if (invoices.some((invoice) => invoice.tenantId !== actor.tenantId)) await this.requireCrossTenantRead(actor);
+    return invoices.filter((invoice) => canRead(actor, invoice.tenantId)).map(copy);
   }
 
   /**

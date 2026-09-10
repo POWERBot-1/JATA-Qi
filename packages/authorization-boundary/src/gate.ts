@@ -23,7 +23,7 @@
 // caller metadata.
 
 import { randomUUID } from 'node:crypto';
-import type { IdentityStateAuthority } from '@jataqi/authentication';
+import type { IdentityStateAuthority, PrivilegeStateAuthority } from '@jataqi/authentication';
 import { assertEnvelopeIntegrity, envelopeAcceptance, sanitizeRequestForEnvelope, sealEnvelope } from './envelope.js';
 import { decideA01, type A01DecisionResult, type A01PolicyContext } from './policy-engine.js';
 import { buildConsumedAuditRecord, buildDecisionAuditRecord, InMemoryAuditSink } from './audit.js';
@@ -83,6 +83,14 @@ export interface A01GateConfig {
    * mismatch; narrow roles to the active set).
    */
   readonly identityAuthorityResolver?: () => IdentityStateAuthority | undefined | Promise<IdentityStateAuthority | undefined>;
+  /**
+   * P2-S3: the privilege-state authority resolver for the durable decision
+   * path (spec §24-S3). Absent ⇒ a registered privileged operation DENIES
+   * PRIVILEGE_CHECK_UNAVAILABLE (fail-closed). Present ⇒ the durable decider
+   * re-reads the elevation inside its transaction and re-validates at
+   * enforcement.
+   */
+  readonly privilegeAuthorityResolver?: () => PrivilegeStateAuthority | undefined | Promise<PrivilegeStateAuthority | undefined>;
 }
 
 export interface ScopedExecutionContext {
@@ -148,6 +156,10 @@ export class AuthorizationGate {
           // P2-S1: the identity-state re-read rides the DURABLE decision
           // path only (the R1 in-memory path is unchanged by design).
           ...(config.identityAuthorityResolver ? { identityAuthorityResolver: config.identityAuthorityResolver } : {}),
+          // P2-S3: the privilege stage rides the DURABLE decision path; the
+          // R1 in-memory path fails closed (PRIVILEGE_CHECK_UNAVAILABLE) for
+          // any registered privileged operation.
+          ...(config.privilegeAuthorityResolver ? { privilegeAuthorityResolver: config.privilegeAuthorityResolver } : {}),
         })
       : undefined;
   }
@@ -164,6 +176,11 @@ export class AuthorizationGate {
   /** R2: the attached durable security-state substrate, if any. */
   get securityStore(): SecurityStateStore | undefined {
     return this.store;
+  }
+
+  /** P2-S3 structural probe (P2-INV-04): is a durable privilege authority live? */
+  async hasLivePrivilegeAuthority(): Promise<boolean> {
+    return this.durable ? this.durable.hasLivePrivilegeAuthority() : false;
   }
 
   /** R2: cumulative durable-transaction/retry counters (evidence; zeros when no store). */

@@ -12,7 +12,7 @@
 // not inputs to this function at all — the gate constructs requests only from
 // verified identities and declared tool/adapter metadata.
 
-import { isAuthenticationMethod } from '@jataqi/authentication';
+import { isAuthenticationMethod, classifyPrivilegedA01 } from '@jataqi/authentication';
 import { targetMatches } from './capability-manifests.js';
 import { a01ActionDigest } from './canonical.js';
 import type { CapabilityManifestRegistry } from './capability-manifests.js';
@@ -51,6 +51,16 @@ export interface A01PolicyContext {
    * any other check and never converts a DENY into an ALLOW on its own.
    */
   readonly verifyKernelPrincipal?: (principal: unknown, scope: string) => boolean;
+  /**
+   * P2-S3 privilege stage. When the request's (tool, operation) is a
+   * registered privileged operation, the stage returns the elevation
+   * denial codes (empty = a valid elevation was verified). The durable
+   * decider pre-resolves the verdict inside its Phase-B transaction and
+   * passes a producer that returns that verdict. Absent producer + a
+   * privileged operation ⇒ `PRIVILEGE_CHECK_UNAVAILABLE` (fail-closed:
+   * no ambient privilege authority exists).
+   */
+  readonly privilegeStage?: (tool: string, operation: string) => readonly A01DenialReason[];
 }
 
 export interface A01DecisionResult {
@@ -194,7 +204,22 @@ function renderDecision(request: unknown, ctx: A01PolicyContext): A01DecisionRes
   }
   const tenantId = typeof tenantRaw === 'string' ? tenantRaw : '';
 
-  // 4. Agent + run -----------------------------------------------------------------
+  // 4. Privilege stage (P2-S3) — ordered AFTER principal/tenant validation and
+  // BEFORE capability evaluation (spec §7.2). Classification is register-driven
+  // (data in code) — never caller-controlled. A registered privileged operation
+  // requires a valid durable elevation; without a configured privilege stage the
+  // decision is PRIVILEGE_CHECK_UNAVAILABLE (fail-closed, no ambient authority).
+  const tool = typeof toolRaw === 'string' ? toolRaw : '';
+  const operation = typeof operationRaw === 'string' ? operationRaw : '';
+  if (classifyPrivilegedA01(tool, operation) !== undefined) {
+    if (!ctx.privilegeStage) {
+      reasons.add('PRIVILEGE_CHECK_UNAVAILABLE');
+    } else {
+      for (const code of ctx.privilegeStage(tool, operation)) reasons.add(code);
+    }
+  }
+
+  // 5. Agent + run -----------------------------------------------------------------
   if (!agentRaw || typeof agentRaw.agentId !== 'string' || agentRaw.agentId.trim().length === 0) {
     reasons.add('MISSING_AGENT');
   }
@@ -233,8 +258,6 @@ function renderDecision(request: unknown, ctx: A01PolicyContext): A01DecisionRes
   }
 
   // 7. Tool / operation ----------------------------------------------------------------
-  const tool = typeof toolRaw === 'string' ? toolRaw : '';
-  const operation = typeof operationRaw === 'string' ? operationRaw : '';
   if (tool.trim().length === 0) {
     reasons.add('MISSING_TOOL');
   } else if (manifest) {

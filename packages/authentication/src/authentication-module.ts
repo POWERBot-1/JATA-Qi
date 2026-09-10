@@ -20,6 +20,7 @@ import { TokenRegistryStore } from './token-registry.js';
 import { IdentityStore } from './identity-store.js';
 import { JtiReplayStore } from './jti-replay.js';
 import { SessionTokenService } from './session-tokens.js';
+import { PrivilegeStore } from './privilege-store.js';
 import type { ServerAuthenticator } from './types.js';
 
 export interface AuthenticationDurableSessionsConfig {
@@ -86,6 +87,7 @@ export class AuthenticationModule implements IModule {
   #identityStore: IdentityStore | undefined;
   #jtiReplay: JtiReplayStore | undefined;
   #sessionTokens: SessionTokenService | undefined;
+  #privilegeStore: PrivilegeStore | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -113,6 +115,10 @@ export class AuthenticationModule implements IModule {
       // opened (and failing closed) in the same step as S-8/S-9.
       this.#identityStore = await IdentityStore.open(storage);
       this.#jtiReplay = await JtiReplayStore.open(storage);
+      // P2-S3: the durable privileged access plane (elevations) over the same
+      // authoritative substrate. Fails closed at open exactly like the other
+      // durable stores (a non-transactional source refuses the plane).
+      this.#privilegeStore = await PrivilegeStore.open(storage);
       // P2-S2: the session-token lifecycle service over the same durable
       // substrate (mint/verify/rotate/revoke + identity-state gate). The
       // session lifetime is wired from the SAME configuration as the
@@ -178,12 +184,16 @@ export class AuthenticationModule implements IModule {
     if (this.#sessionTokens) {
       kernel.container.registerValue('authentication.session-tokens', this.#sessionTokens);
     }
+    if (this.#privilegeStore) {
+      kernel.container.registerValue('authentication.privilege-store', this.#privilegeStore);
+    }
     kernel.logger.info(
       `principal boundary initialized (T-03): ${this.#boundary.getPolicy().describe()}; ` +
         `authenticators=[${this.#boundary.listAuthenticatorIds().join(',') || '<none>'}]` +
         (this.#eventStore ? '; durable sessions enabled (R2 S-8/S-9)' : '') +
         (this.#identityStore ? '; identity core enabled (P2-S1)' : '') +
-        (this.#sessionTokens ? '; session tokens enabled (P2-S2)' : ''),
+        (this.#sessionTokens ? '; session tokens enabled (P2-S2)' : '') +
+        (this.#privilegeStore ? '; privilege plane enabled (P2-S3)' : ''),
     );
   }
 
@@ -220,5 +230,11 @@ export class AuthenticationModule implements IModule {
   getTokenRegistry(): TokenRegistryStore {
     if (!this.#tokenRegistry) throw new Error('Authentication module has no durable token registry (durableSessions not enabled).');
     return this.#tokenRegistry;
+  }
+
+  /** P2-S3 privilege plane; throws when durable sessions are not enabled. */
+  getPrivilegeStore(): PrivilegeStore {
+    if (!this.#privilegeStore) throw new Error('Authentication module has no durable privilege store (durableSessions not enabled).');
+    return this.#privilegeStore;
   }
 }

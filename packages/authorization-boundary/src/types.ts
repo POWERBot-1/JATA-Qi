@@ -115,6 +115,22 @@ export type A01DenialReason =
   | 'IDENTITY_STATE_INACTIVE'
   /** P2-S1: the request tenant does not match the identity's tenant (tenant substitution). */
   | 'IDENTITY_TENANT_MISMATCH'
+  /** P2-S3: the operation is privileged and no valid elevation was presented. */
+  | 'PRIVILEGE_ELEVATION_REQUIRED'
+  /** P2-S3: a covering elevation exists but its window has passed (deny-early). */
+  | 'PRIVILEGE_ELEVATION_EXPIRED'
+  /** P2-S3: a covering elevation exists but was revoked. */
+  | 'PRIVILEGE_ELEVATION_REVOKED'
+  /** P2-S3: the elevation scope does not match the operation's required scope. */
+  | 'PRIVILEGE_SCOPE_MISMATCH'
+  /** P2-S3: the elevation plane role is not acceptable for the operation class. */
+  | 'PRIVILEGE_ROLE_MISMATCH'
+  /** P2-S3: the elevation is bound to a different session (session binding). */
+  | 'PRIVILEGE_SESSION_MISMATCH'
+  /** P2-S3: the elevation's step-up evidence is stale (spec A-26). */
+  | 'STEP_UP_STALE'
+  /** P2-S3: the privilege plane is unavailable (fail-closed; no ambient authority). */
+  | 'PRIVILEGE_CHECK_UNAVAILABLE'
   | 'SECURITY_STATE_UNAVAILABLE';
 
 export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
@@ -173,6 +189,14 @@ export const A01_DENIAL_REASONS: readonly A01DenialReason[] = Object.freeze([
   'PRINCIPAL_REVOKED',
   'IDENTITY_STATE_INACTIVE',
   'IDENTITY_TENANT_MISMATCH',
+  'PRIVILEGE_ELEVATION_REQUIRED',
+  'PRIVILEGE_ELEVATION_EXPIRED',
+  'PRIVILEGE_ELEVATION_REVOKED',
+  'PRIVILEGE_SCOPE_MISMATCH',
+  'PRIVILEGE_ROLE_MISMATCH',
+  'PRIVILEGE_SESSION_MISMATCH',
+  'STEP_UP_STALE',
+  'PRIVILEGE_CHECK_UNAVAILABLE',
   'SECURITY_STATE_UNAVAILABLE',
 ]);
 
@@ -395,6 +419,14 @@ export interface A01AuthorizationEnvelope {
   readonly sessionEventId?: string;
   readonly sessionStatus?: A01SessionAuditStatus;
   readonly securityStoreTxId?: string;
+  /**
+   * P2-S3 durable privilege citations (present only when the decision passed
+   * the privilege stage; covered by the integrity digest). Enforcement
+   * re-validates the elevation against live durable state.
+   */
+  readonly privilegeElevationId?: string;
+  readonly privilegeOperationClass?: string;
+  readonly privilegeStatus?: string;
   readonly integrity: { readonly algorithm: 'sha256'; readonly digest: string };
 }
 

@@ -185,3 +185,56 @@ export type {
 // P2-S1 — the provider-neutral OIDC production authenticator (spec §5.1).
 export { OidcAuthenticator, OidcAuthenticatorError } from './oidc-authenticator.js';
 export type { OidcAuthenticatorOptions } from './oidc-authenticator.js';
+
+// P2-S3 — the privileged access plane: closed plane vocabulary, the
+// privileged-operation register, and the durable elevation store/authority.
+export {
+  PRIVILEGED_ELEVATIONS_COLLECTION,
+  PRIVILEGE_PLATFORM_TENANT,
+  RECOGNIZED_PRIVILEGE_ROLES,
+  RECOGNIZED_PRIVILEGE_OPERATION_CLASSES,
+  DEFAULT_ELEVATION_LIFETIME_MS,
+  MAX_ELEVATION_LIFETIME_MS,
+  PRIVILEGE_CLOCK_SKEW_MS,
+  DEFAULT_STEP_UP_MAX_AGE_MS,
+  isPrivilegeRole,
+  isPrivilegeOperationClass,
+  isElevationExpired,
+  isStepUpStale,
+  isPlaneRoleAcceptable,
+  assessElevationRow,
+  foldElevationAssessments,
+  assertElevationDocumentShape,
+  PrivilegeStoreError,
+  PrivilegeRequiredError,
+} from './privilege-types.js';
+export type {
+  PrivilegeRole,
+  PrivilegeOperationClass,
+  PrivilegeScope,
+  PrivilegeElevationStatus,
+  PrivilegeElevationDoc,
+  GrantElevationInput,
+  PrivilegeElevationAssessment,
+  PrivilegeStateAuthority,
+  PrivilegeEnforcer,
+} from './privilege-types.js';
+export {
+  PRIVILEGED_OPERATION_REGISTER,
+  REQUIRED_PO_COVERAGE,
+  RECOGNIZED_OPERATION_CLASSES,
+  requiredPlaneRole,
+  resolvePrivilegeRequirement,
+  classifyPrivilegedA01,
+  assertRegisterIntegrity,
+} from './privileged-operations.js';
+export type { PrivilegedOperationEntry } from './privileged-operations.js';
+export {
+  PrivilegeStore,
+  bootstrapElevationId,
+  resolvePrivilegeEnforcerFromKernel,
+} from './privilege-store.js';
+export type {
+  BootstrapElevationInput,
+  RevokeElevationInput,
+} from './privilege-store.js';

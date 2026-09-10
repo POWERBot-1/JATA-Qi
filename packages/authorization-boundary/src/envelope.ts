@@ -36,6 +36,9 @@ export interface BuildEnvelopeInput {
     readonly sessionEventId?: string;
     readonly sessionStatus?: A01AuthorizationEnvelope['sessionStatus'];
     readonly securityStoreTxId?: string;
+    readonly privilegeElevationId?: string;
+    readonly privilegeOperationClass?: string;
+    readonly privilegeStatus?: string;
   };
 }
 
@@ -91,6 +94,9 @@ export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelop
     ...(durableCitations?.sessionEventId !== undefined ? { sessionEventId: durableCitations.sessionEventId } : {}),
     ...(durableCitations?.sessionStatus !== undefined ? { sessionStatus: durableCitations.sessionStatus } : {}),
     ...(durableCitations?.securityStoreTxId !== undefined ? { securityStoreTxId: durableCitations.securityStoreTxId } : {}),
+    ...(durableCitations?.privilegeElevationId !== undefined ? { privilegeElevationId: durableCitations.privilegeElevationId } : {}),
+    ...(durableCitations?.privilegeOperationClass !== undefined ? { privilegeOperationClass: durableCitations.privilegeOperationClass } : {}),
+    ...(durableCitations?.privilegeStatus !== undefined ? { privilegeStatus: durableCitations.privilegeStatus } : {}),
   };
   const digest = envelopeDigestValue(body);
   return deepFreeze({ ...body, integrity: { algorithm: 'sha256' as const, digest } });

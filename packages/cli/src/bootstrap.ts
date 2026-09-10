@@ -409,6 +409,18 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
                 return undefined;
               }
             },
+            // P2-S3: the privilege stage rides the DURABLE decision path.
+            // Absent plane ⇒ a registered privileged operation DENIES
+            // PRIVILEGE_CHECK_UNAVAILABLE (fail-closed, no ambient authority).
+            privilegeAuthorityResolver: () => {
+              try {
+                const auth = kernel.getModule<AuthenticationModule>('authentication');
+                return auth.getPrivilegeStore().asStateAuthority();
+              } catch {
+                // This composition has no durable privilege plane (pre-P2-S3).
+                return undefined;
+              }
+            },
           }
         : {}),
     }),
