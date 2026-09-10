@@ -443,6 +443,25 @@ describe('P2-S4 durable delegation store (real PostgreSQL)', () => {
     assert.equal((await delegation.getDelegation(TENANT, before.id))?.status, 'REVOKED', 'the already-revoked grant stays revoked');
   });
 
+  it('§8.2.7 cascade leaves an already-CONSUMED grant untouched (already terminal)', async () => {
+    const delegator = nextId('cascade-consumed-del');
+    const peer = nextId('cascade-consumed-peer');
+    await identity.enroll({ principalId: delegator, tenantId: TENANT, roles: ['operator'], enrolledBy: 'user:admin' }, now);
+    await identity.activate(delegator, TENANT, { authenticationEventId: 'evt-cascade-consumed', method: 'STATIC_TOKEN' }, now);
+
+    const consumed = await delegation.grantDelegation(
+      grantInput({ delegatorPrincipalId: delegator, delegateePrincipalId: peer, oneShot: true, useCount: undefined }),
+      now,
+    );
+    await delegation.asStateAuthority().consumePlatform(consumed.id, now);
+    assert.equal((await delegation.getDelegation(TENANT, consumed.id))?.status, 'CONSUMED');
+
+    await identity.suspend(delegator, TENANT, 'cascade consumed probe', now);
+    const after = await delegation.getDelegation(TENANT, consumed.id);
+    assert.equal(after?.status, 'CONSUMED', 'a consumed grant is already terminal; the cascade does not rewrite it');
+    assert.equal(after?.revokedAt, undefined, 'the cascade does not fabricate a revocation on a consumed grant');
+  });
+
   it('§8.2.7 cascade is tenant-scoped: suspension does not touch another tenant\'s grants', async () => {
     const delegator = nextId('xt-cascade-del');
     const peer = nextId('xt-cascade-peer');

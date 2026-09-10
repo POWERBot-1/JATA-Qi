@@ -116,19 +116,19 @@ All PostgreSQL suites use the fail-hard embedded-PostgreSQL helper
 
 | Suite | Tests | Result |
 | --- | --- | --- |
-| `p2-s4-delegation-store.test.ts` (new, remediated) | 21 | pass 21, skip 0 |
+| `p2-s4-delegation-store.test.ts` (new, remediated) | 22 | pass 22, skip 0 |
 | `p2-s4-delegation-decision.test.ts` (new, remediated) | 23 | pass 23, skip 0 |
 | `p2-s3-posture-invariants.test.ts` (extended +3) | 8 | pass 8, skip 0 |
-| `@jataqi/authentication` (full, remediated) | 180 | pass 180, skip 0 |
+| `@jataqi/authentication` (full, remediated) | 181 | pass 181, skip 0 |
 | `@jataqi/authorization-boundary` (full, remediated) | 183 | pass 183, skip 0 |
 | **Full workspace** `npm test` | 50 workspaces | **Passed: 50 · Failed: 0 · Skipped: 0** |
 
-> Test counts above reflect the remediation commit (store 16→21, decision
-> 17→23; authentication 175→180, boundary 177→183). The original
+> Test counts above reflect the remediation commit (store 16→22, decision
+> 17→23; authentication 175→181, boundary 177→183). The original
 > implementation counts (16/17/175/177) are preserved in §13's provenance
 > table.
 
-### 4.1 Store-level coverage (21)
+### 4.1 Store-level coverage (22)
 
 Non-transactional-source refusal; durable `DELEGATION_GRANTED`/`REVOKED`
 events (secret-free, in the same store); idempotent reason-mandatory
@@ -228,7 +228,7 @@ itself was not emitted until the remediation commit).
 ## 7. S1 / S2 / S3 regression
 
 The S1 identity core, S2 session tokens/fanout, and S3 privilege plane suites
-all remain green (authentication 180 tests, authorization-boundary 183 tests,
+all remain green (authentication 181 tests, authorization-boundary 183 tests,
 full workspace 50/50 with 0 skip). No test was weakened or removed; no silent
 PG skip was introduced. The one S1 assertion updated by the remediation is the
 `DeprovisionResult` shape in `p2-s1-identity-core.test.ts` — it now ALSO
@@ -344,7 +344,7 @@ remain the historical evidence as committed at `40350aa`.
 | # | Original finding | Remediated | Independently re-verified? | Remaining |
 | --- | --- | --- | --- | --- |
 | 1 | `DELEGATION_USED` / `DELEGATION_DENIED` were declared but never emitted (§13 audit completeness FAILED) | **Yes** — `consumeInTx`/`consumePlatform` now append a durable `DELEGATION_USED` in-tx; every decision-path delegation deny (`renderDelegationDenyTx`) now appends a durable `DELEGATION_DENIED` in the same tenant transaction (A-16 carries `result = DELEGATOR_AUTHORITY_CHANGED`). Secret-free, attributable, transactional (a write failure rolls the whole decision back — fail-closed), no duplicate semantics, no emission-time bypass | **No** — needs the fresh pass | Store/decision tests assert the events land in `identity.events` |
-| 2 | §8.2.7/S4.4 revocation cascade on delegator suspend/deprovision not implemented | **Yes** — `cascadeRevokeDelegationsInTx` revokes the principal's ACTIVE grants (delegator AND delegatee) inside the SAME tenant transaction as `suspend`/`deprovision`; `DeprovisionResult.delegationsRevoked` reports the count. CAS-guarded, idempotent (already-revoked grants are not re-revoked), tenant-scoped (foreign-tenant grants untouched), concurrency-safe (CAS, single snapshot) | **No** — needs the fresh pass | Store tests cover suspend/deprovision, delegator+delegatee, already-revoked, still-ACTIVE-at-deprovision, cross-tenant isolation |
+| 2 | §8.2.7/S4.4 revocation cascade on delegator suspend/deprovision not implemented | **Yes** — `cascadeRevokeDelegationsInTx` revokes the principal's ACTIVE grants (delegator AND delegatee) inside the SAME tenant transaction as `suspend`/`deprovision`; `DeprovisionResult.delegationsRevoked` reports the count. CAS-guarded, idempotent (already-revoked grants are not re-revoked), tenant-scoped (foreign-tenant grants untouched), concurrency-safe (CAS, single snapshot) | **No** — needs the fresh pass | Store tests cover suspend/deprovision, delegator+delegatee, already-revoked, already-consumed, still-ACTIVE-at-deprovision, cross-tenant isolation |
 | 3 | A-09 code deviation: `DELEGATION_UNKNOWN_GRANT` emitted where the spec row says `DELEGATION_CROSS_TENANT_REFUSED` | **Reconciled by documented decision (privacy-preserving)** — the externally-observable refusal stays `DELEGATION_UNKNOWN_GRANT`, INDISTINGUISHABLE from an unknown grant, so a cross-tenant probe cannot learn whether a grant exists in another tenant (an existence oracle would violate INV-15 tenant invisibility and §8.2.2's default-refusal semantics). Emitting `DELEGATION_CROSS_TENANT_REFUSED` for the foreign-tenant case while emitting `DELEGATION_UNKNOWN_GRANT` for the unknown case would create exactly that leak. The behavioral A-09 semantics (cross-tenant refused by default; only the fully-audited platform path succeeds) are fully satisfied and now explicitly tested (positive platform 3-way path + indistinguishable refusal) | **No** — needs the fresh pass | This is a governed, documented deviation, not a silent gap; a future pass may re-label only if it preserves indistinguishability |
 | 4 | `budgetCeiling` accepted but never enforced; `rate` absent | **Yes** — grant-level `budget`/`budgetCeiling`/`rate`/`rateLimit` are now REJECTED at grant creation (`UNSUPPORTED_CONSTRAINT`) rather than silently stored unenforced. The capability manifest (`budgetPerRunCostUnits` + `rateLimit`, enforced by the A-01 pipeline for every decision incl. delegated) is the budget/rate authority | **No** — needs the fresh pass | Store test asserts the rejection + that ceilings without budget/rate persist correctly |
 | 5 | §24-S4 acceptance evidence gaps (4-way widening tenant case, 3-way platform path, depth 1/2, A-24, A-25 literal) | **Yes** — added: A-08 4-way widening (operation/target/classification/impact, grant untouched); A-09 platform-scope positive (explicit scope + elevation + approval); chain depth 1 and 2; A-24 live-manifest digest mismatch at enforcement; A-25 two-distinct-envelopes-from-one-grant | **No** — needs the fresh pass | All are executable against the real boundary + real PostgreSQL |
@@ -368,9 +368,9 @@ remain the historical evidence as committed at `40350aa`.
 
 | Gate | Result |
 | --- | --- |
-| `packages/authentication` full suite | 180/180 pass, 0 skip |
+| `packages/authentication` full suite | 181/181 pass, 0 skip |
 | `packages/authorization-boundary` full suite | 183/183 pass, 0 skip |
-| `p2-s4-delegation-store.test.ts` | 21/21 pass, 0 skip |
+| `p2-s4-delegation-store.test.ts` | 22/22 pass, 0 skip |
 | `p2-s4-delegation-decision.test.ts` | 23/23 pass, 0 skip |
 | `p2-s3-posture-invariants.test.ts` | 8/8 pass, 0 skip |
 | Build (`npm run build`) | all workspaces passed |
