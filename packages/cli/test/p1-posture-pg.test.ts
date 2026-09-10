@@ -38,6 +38,7 @@ const ENV_KEYS = [
   'JATAQI_AUTH_MODE',
   'JATAQI_AUTH_PRINCIPALS',
   'JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION',
+  'JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE',
 ];
 
 class TestExternalMaterialProvider implements CredentialMaterialProvider {
@@ -66,6 +67,10 @@ function setProductionEnv(): void {
   process.env.JATAQI_AUTH_MODE = 'static-token';
   process.env.JATAQI_AUTH_PRINCIPALS = pg.principalsFile;
   process.env.JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION = 'true';
+  // P2 (S1): the static-token production composition is a SEALED bounded
+  // transition and must carry an explicit future deadline (P2-INV-11); the
+  // production boot fails closed without it. 30 days from boot.
+  process.env.JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE = String(Date.now() + 30 * 24 * 60 * 60 * 1000);
 }
 
 async function bootProduction(overrides: {

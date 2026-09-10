@@ -29,7 +29,7 @@ import type {
   CredentialMaterialProvider,
 } from '@jataqi/authorization-boundary';
 import { isDevelopmentCredentialMaterialProvider, MIN_DURABLE_MANIFEST_LIFETIME_MS } from '@jataqi/authorization-boundary';
-import type { AuthenticationModule, ServerAuthenticator } from '@jataqi/authentication';
+import type { AuthenticationModule, IdentityStore, ServerAuthenticator } from '@jataqi/authentication';
 import { DeterministicTestAuthenticator } from '@jataqi/authentication';
 
 /** The security posture of a composition. Default: `development`. */
@@ -45,7 +45,10 @@ export type ProductionPostureViolationCode =
   | 'P1_CFG_DURABLE_AUDIT_REQUIRED'
   | 'P1_CFG_TEST_AUTH_REFUSED'
   | 'P1_CFG_UNSAFE_ESCAPE_HATCH'
-  | 'P1_CFG_STATIC_TOKEN_REQUIRES_OPT_IN';
+  | 'P1_CFG_STATIC_TOKEN_REQUIRES_OPT_IN'
+  // P2 (S1) — production identity posture.
+  | 'P2_CFG_STATIC_TOKEN_DEADLINE_REQUIRED'
+  | 'P2_CFG_OIDC_REQUIRED';
 
 /**
  * A production-posture violation: an unsafe production configuration or an
@@ -392,6 +395,126 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
         }); health must be established before serving protected traffic (fail-closed)`;
       }
       return true;
+    },
+  });
+
+  // ---------------------------------------------------------------------
+  // P2 (S1) — production IDENTITY posture invariants (spec §14).
+  // Declared on the SAME append-only, non-overridable registry: a failing
+  // P2 invariant aborts boot before a module starts, exactly like P1.
+  // ---------------------------------------------------------------------
+
+  // P2-INV-01: at least one PRODUCTION authentication path is registered —
+  // an authenticator that verifies cryptographic proof (the OIDC
+  // authenticator), or the SEALED static-token transition (explicit opt-in
+  // AND a bounded future deadline — the transition is never open-ended).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.production-authenticator',
+    description:
+      'at least one production authentication path is registered: an authenticator that verifies cryptographic proof (OIDC/mTLS) or the sealed, deadline-bounded static-token transition',
+    check(k: KernelApi): boolean | string {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      const authenticators = auth.getService().listAuthenticators();
+      const crypto = authenticators.filter(
+        (a) => (a as { verifiesCryptographicProof?: unknown }).verifiesCryptographicProof === true,
+      );
+      if (crypto.length > 0) return true;
+      // Sealed static-token transition (P2-INV-11): the opt-in AND the
+      // bounded deadline must BOTH be present and the deadline future.
+      const allow = process.env.JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION?.trim().toLowerCase() === 'true';
+      const deadlineRaw = process.env.JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE?.trim();
+      const deadline = deadlineRaw ? Number(deadlineRaw) : NaN;
+      if (allow && Number.isFinite(deadline) && deadline > Date.now()) {
+        // Satisfied (the invariant contract: `true` = pass; a string would be
+        // read as a failure reason). The transition state is observable in
+        // the operator configuration (the env opt-in + deadline) and here.
+        return true;
+      }
+      return (
+        'no production authenticator is registered: no authenticator verifies cryptographic proof, and the ' +
+        'static-token transition is not sealed (requires BOTH JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION=true and a ' +
+        'future JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE) — production must verify cryptographic proof (fail-closed)'
+      );
+    },
+  });
+
+  // P2-INV-02: no development-set authenticator is registered (structural
+  // complement of P1 INV-10: even an embedded composition cannot ship test
+  // authority under the production posture).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.no-test-authority',
+    description: 'no development-set (DETERMINISTIC_TEST) authenticator is registered',
+    check(k: KernelApi): boolean | string {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      const testAuth = auth
+        .getService()
+        .listAuthenticators()
+        .filter((a) => (a.supports as readonly string[]).includes('DETERMINISTIC_TEST'));
+      if (testAuth.length > 0) {
+        return `development-set authenticator(s) registered under the production posture: ${testAuth.map((a) => a.id).join(', ')} (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-03: the identity store is live and its decision-path deny is
+  // rendered, never an availability failure — the boot canary (mint + read
+  // + suspend-deny-path + deprovision + GC sweep under `p2-canary`).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.identity-store-canary',
+    description:
+      'the durable identity core is live: the boot canary (mint/read/suspended-deny-path/deprovision/GC) renders the expected outcomes, never an availability failure',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      let store: IdentityStore;
+      try {
+        store = auth.getIdentityStore();
+      } catch {
+        return 'the durable identity core is NOT attached; the production posture requires the P2-S1 identity store (fail-closed)';
+      }
+      try {
+        const result = await store.runBootCanary(Date.now());
+        // `true` = satisfied (the invariant contract treats any string as a
+        // failure reason); the canary's own `detail` is not surfaced here —
+        // an availability failure is the only failure mode.
+        return result.ok ? true : 'the identity boot canary reported failure (fail-closed)';
+      } catch (error) {
+        return `the identity boot canary hit an availability failure: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+    },
+  });
+
+  // P2-INV-09: when an OIDC authenticator is registered, the server-side
+  // identity↔tenant mapping is CONFIGURED AND NON-EMPTY (at least one
+  // enrolled subject binding). A registered OIDC authenticator with an empty
+  // mapping can authenticate nobody — that is detected at boot, not at the
+  // first (rejected) login.
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.identity-tenant-mapping',
+    description: 'when OIDC is registered, the durable identity↔tenant mapping (subject bindings) is configured and non-empty',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      const oidc = auth
+        .getService()
+        .listAuthenticators()
+        .some((a) => (a.supports as readonly string[]).includes('OIDC'));
+      if (!oidc) return true;
+      let store: IdentityStore;
+      try {
+        store = auth.getIdentityStore();
+      } catch {
+        return 'OIDC is registered but the durable identity core is NOT attached (fail-closed)';
+      }
+      let count: number;
+      try {
+        count = await store.countSubjectBindings();
+      } catch (error) {
+        return `the subject-binding mapping could not be read: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      if (count === 0) {
+        return 'an OIDC authenticator is registered but the identity↔tenant mapping is EMPTY; configure at least one enrolled subject binding (fail-closed)';
+      }
+      return true; // satisfied: the mapping is configured and non-empty
     },
   });
 }

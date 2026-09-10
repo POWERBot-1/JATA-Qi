@@ -64,7 +64,11 @@ import {
 } from '@jataqi/agent-runtime';
 import { readConfig } from './config.js';
 import { resolveStorageDriver } from './storage-driver.js';
-import { hostAllowsTestMethod, resolveCliAuthentication } from './auth-config.js';
+import {
+  hostAllowsTestMethod,
+  resolveCliAuthentication,
+  type OidcAuthenticatorDescriptor,
+} from './auth-config.js';
 import {
   declareProductionSecurityInvariants,
   resolveSecurityPosture,
@@ -73,7 +77,15 @@ import {
   ProductionPostureViolation,
 } from './security-posture.js';
 import type { A01CapabilityManifest } from '@jataqi/authorization-boundary';
-import { StaticTokenAuthenticator, type StaticTokenRecord, type TokenRegistryStore } from '@jataqi/authentication';
+import {
+  AutoLinkedStaticTokenAuthenticator,
+  IdentityStore,
+  JtiReplayStore,
+  OidcAuthenticator,
+  StaticTokenAuthenticator,
+  type StaticTokenRecord,
+  type TokenRegistryStore,
+} from '@jataqi/authentication';
 import { readFileSync } from 'node:fs';
 
 export interface JataQiConfig {
@@ -204,11 +216,16 @@ function productionAuthorizationConfig(
 }
 
 /**
- * P1: production authentication wiring. `none` keeps protected ingress
+ * P1/P2: production authentication wiring. `none` keeps protected ingress
  * closed (admits nothing — honest fail-closed). `static-token` requires the
- * explicit production opt-in and verifies ONLY through the durable S-9
- * fingerprint registry (constructor tables are refused); the principal file
- * is imported once per boot as fingerprints — material is never persisted.
+ * explicit production opt-in AND (P2) the sealed transition deadline, and
+ * verifies ONLY through the durable S-9 fingerprint registry (constructor
+ * tables are refused); the principal file is imported once per boot as
+ * fingerprints — material is never persisted. P2-S1: every verified static
+ * token is idempotently AUTO-LINKED into the durable identity core (spec
+ * §21.1) — a token bound to a terminal/foreign identity is refused. `oidc`
+ * (P2-S1) constructs the provider-neutral OIDC authenticator against the
+ * durable identity core + jti replay set (pinned JWKS; no live IdP required).
  */
 function productionAuthenticationConfig(
   env: NodeJS.ProcessEnv,
@@ -225,33 +242,122 @@ function productionAuthenticationConfig(
     if (env.JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION?.trim().toLowerCase() !== 'true') {
       throw new ProductionPostureViolation(
         'P1_CFG_STATIC_TOKEN_REQUIRES_OPT_IN',
-        'JATAQI_AUTH_MODE="static-token" under the production posture additionally requires '
-          + 'JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION=true (owner decision D1): static bearer tokens are the weakest '
-          + 'admitted method and must be an explicit, auditable choice. Production identity (OIDC/mTLS) is P2 (fail-closed).',
+        'JATAQI_AUTH_MODE="static-token" under the production posture additionally requires ' +
+          'JATAQI_ALLOW_STATIC_TOKEN_PRODUCTION=true (owner decision D1): static bearer tokens are the weakest ' +
+          'admitted method and must be an explicit, auditable choice. Production identity (OIDC/mTLS) is P2 (fail-closed).',
+      );
+    }
+    // P2-INV-11 (sealed bounded transition): the static-token production
+    // composition is a TRANSITION — it must carry an explicit, bounded
+    // deadline. Absent, unparseable, or already past ⇒ boot fails closed.
+    const deadlineRaw = env.JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE?.trim();
+    if (!deadlineRaw) {
+      throw new ProductionPostureViolation(
+        'P2_CFG_STATIC_TOKEN_DEADLINE_REQUIRED',
+        'JATAQI_AUTH_MODE="static-token" under the production posture is a SEALED transition and requires ' +
+          'JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE (epoch ms, in the future): the bounded transition must carry an ' +
+          'explicit deadline (fail-closed).',
+      );
+    }
+    const deadline = Number(deadlineRaw);
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) {
+      throw new ProductionPostureViolation(
+        'P2_CFG_STATIC_TOKEN_DEADLINE_REQUIRED',
+        `JATAQI_STATIC_TOKEN_PRODUCTION_DEADLINE="${deadlineRaw}" must be a future epoch-ms deadline (the transition deadline has passed or is malformed) (fail-closed).`,
       );
     }
     const records: readonly StaticTokenRecord[] = resolved.staticTokenRecords ?? [];
     return {
       durableSessions,
       policy: { mode: 'production' as const },
-      authenticatorFactory: async (stores: { tokenRegistry?: TokenRegistryStore }) => {
+      authenticatorFactory: async (stores: {
+        tokenRegistry?: TokenRegistryStore;
+        identityStore?: IdentityStore;
+      }) => {
         const registry = stores.tokenRegistry;
+        const identityStore = stores.identityStore;
         if (!registry) {
           throw new Error(
             'static-token production verification requires the durable token registry (S-9); durableSessions must be enabled (fail-closed).',
+          );
+        }
+        if (!identityStore) {
+          throw new Error(
+            'static-token production verification requires the durable identity core (P2-S1); durableSessions must be enabled (fail-closed).',
           );
         }
         // One-shot import per boot: fingerprints only (SHA-256); material is
         // never persisted; re-import of an identical binding is idempotent;
         // a fingerprint bound to a different principal/tenant is refused.
         await registry.importRecords(records, 'cli:boot', Date.now());
-        return [new StaticTokenAuthenticator([], { registry })];
+        // P2-S1 (spec §21.1): every successful durable registry verification
+        // auto-links the principal into the identity core (idempotent;
+        // rebind-resistant; a terminal/foreign identity refuses the token).
+        return [
+          new AutoLinkedStaticTokenAuthenticator(
+            new StaticTokenAuthenticator([], { registry }),
+            identityStore,
+            'cli:boot',
+          ),
+        ];
       },
+    };
+  }
+  if (resolved.mode === 'oidc') {
+    const descriptor = resolved.oidc;
+    if (!descriptor) {
+      throw new ProductionPostureViolation(
+        'P2_CFG_OIDC_REQUIRED',
+        'JATAQI_AUTH_MODE="oidc" requires a resolved OIDC descriptor (issuer/audience/JWKS pin) (fail-closed).',
+      );
+    }
+    return {
+      durableSessions,
+      policy: { mode: 'production' as const },
+      authenticatorFactory: oidcAuthenticatorFactory(descriptor),
     };
   }
   return {
     durableSessions,
     policy: { mode: 'production' as const },
+  };
+}
+
+/**
+ * P2-S1: the OIDC authenticator factory (shared by the production and
+ * dev-from-env compositions). Built against the durable identity core +
+ * jti replay set — the authenticator CANNOT exist without them. The JWKS
+ * pin is resolved at construction (the `url` variant fetches exactly once,
+ * never at verification time). No live identity provider is activated or
+ * required (the pin is the trust anchor; availability is a runtime fact the
+ * verify path reports honestly per request).
+ */
+function oidcAuthenticatorFactory(
+  descriptor: OidcAuthenticatorDescriptor,
+) {
+  return async (stores: { identityStore?: IdentityStore; jtiReplay?: JtiReplayStore }) => {
+    const identityStore = stores.identityStore;
+    const jtiReplay = stores.jtiReplay;
+    if (!identityStore) {
+      throw new Error(
+        'OIDC verification requires the durable identity core (P2-S1); durableSessions must be enabled (fail-closed).',
+      );
+    }
+    if (!jtiReplay) {
+      throw new Error(
+        'OIDC verification requires the durable jti replay set (P2-S1); durableSessions must be enabled (fail-closed).',
+      );
+    }
+    return [
+      await OidcAuthenticator.create({
+        issuer: descriptor.issuer,
+        audience: descriptor.audience,
+        jwks: descriptor.jwks,
+        allowedAlgorithms: descriptor.allowedAlgorithms,
+        identityStore,
+        jtiReplay,
+      }),
+    ];
   };
 }
 
@@ -281,7 +387,32 @@ export async function createJataQi(cfg: JataQiConfig = {}): Promise<JataQiInstan
   // protected surface, and the kernel invariant declared immediately below
   // makes its absence, non-initialization, unsealing, or substitution a
   // deterministic BOOT FAILURE rather than a silent fail-open runtime.
-  kernel.register(new AuthorizationBoundaryModule(cfg.authorization ?? {}));
+  // P2-S1: the identity-state re-read (spec §24-S1) rides the DURABLE
+  // decision path whenever the composition has a durable identity core
+  // (durable sessions enabled — always under the production posture, where
+  // P2-INV-03 additionally proves the store live at boot). Absent core ⇒
+  // the exact pre-P2 decision behavior. The resolver is lazy (decision
+  // time, fully booted); a missing core is "pre-P2" (undefined), a lookup
+  // failure inside a decision is a storage-failure DENY (fail-closed).
+  const identityCorePresent = cfg.authentication?.durableSessions?.enabled === true;
+  kernel.register(
+    new AuthorizationBoundaryModule({
+      ...(cfg.authorization ?? {}),
+      ...(identityCorePresent
+        ? {
+            identityAuthorityResolver: () => {
+              try {
+                const auth = kernel.getModule<AuthenticationModule>('authentication');
+                return auth.getIdentityStore().asStateAuthority();
+              } catch {
+                // This composition has no durable identity core (pre-P2).
+                return undefined;
+              }
+            },
+          }
+        : {}),
+    }),
+  );
   requireAuthorizationBoundary(kernel);
   // P1: production posture — fail-closed composition invariants (INV-01…16).
   if (cfg.securityPosture === 'production') {
@@ -463,6 +594,15 @@ export async function createJataQiFromEnv(overrides: JataQiConfig = {}): Promise
         : {
             authenticators: resolved.authenticators,
             policy: resolved.policy,
+            // P2-S1: OIDC requires the durable identity core in every
+            // posture (the authenticator is built by the module factory
+            // against the identity store + jti replay set).
+            ...(resolved.mode === 'oidc' && resolved.oidc
+              ? {
+                  durableSessions: { enabled: true as const },
+                  authenticatorFactory: oidcAuthenticatorFactory(resolved.oidc),
+                }
+              : {}),
           }),
     // R-01: forward the host opt-in. Still disabled unless a caller explicitly
     // sets it (the `jataqi host` command does); default remains off.

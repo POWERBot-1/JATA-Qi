@@ -15,6 +15,15 @@
 //                            built ONLY from an explicit operator-supplied
 //                            principal file. Its own documentation scopes it to
 //                            development/staging; T-03 does not claim otherwise.
+//   oidc                 (P2-S1) — the provider-neutral OIDC authenticator
+//                            (pinned-JWKS verification against the durable
+//                            identity core). Requires an explicit issuer,
+//                            audience allow-list, and a PINNED JWKS source
+//                            (inline key set or exact URL). The authenticator
+//                            is constructed by the authentication module's
+//                            factory against the durable stores (it cannot
+//                            exist without them — jti replay + identity
+//                            mapping are durable by contract).
 //   test-only              — DeterministicTestAuthenticator. Requires the mode
 //                            AND a second, redundant JATAQI_ALLOW_TEST_AUTH=true,
 //                            so test authority cannot be enabled by accident.
@@ -28,6 +37,9 @@ import {
   DeterministicTestAuthenticator,
   StaticTokenAuthenticator,
   type AuthenticationPolicyInput,
+  type Jwk,
+  type JwksSource,
+  type JwtAlgorithm,
   type ServerAuthenticator,
   type StaticTokenRecord,
   type TestPrincipalRecord,
@@ -35,7 +47,22 @@ import {
 import type { CommercialActorRole } from '@jataqi/commercial-control-plane';
 
 /** Authentication posture selected for this process. */
-export type CliAuthMode = 'none' | 'static-token' | 'test-only';
+export type CliAuthMode = 'none' | 'static-token' | 'oidc' | 'test-only';
+
+/**
+ * P2-S1: the resolved OIDC configuration (a DESCRIPTION — the authenticator
+ * itself is constructed by the authentication module's factory, against the
+ * durable identity core + jti replay stores, which do not exist before boot).
+ * The JWKS source here is a PIN: an inline operator-pinned key set or an
+ * exact URL fetched once at authenticator construction (no runtime un-pinned
+ * fetch; key rotation = new boot / config reload).
+ */
+export interface OidcAuthenticatorDescriptor {
+  readonly issuer: string;
+  readonly audience: readonly string[];
+  readonly jwks: JwksSource;
+  readonly allowedAlgorithms: readonly JwtAlgorithm[];
+}
 
 /** Error raised for an unusable authentication configuration (fail-closed). */
 export class CliAuthenticationConfigError extends Error {
@@ -73,6 +100,12 @@ export interface ResolvedCliAuthentication {
    * never logged, never persisted as material.
    */
   readonly staticTokenRecords?: readonly StaticTokenRecord[];
+  /**
+   * P2-S1: the resolved OIDC configuration (present only in oidc mode).
+   * The authenticator is built by the authentication module's factory against
+   * the durable identity core + jti replay stores (absent before boot).
+   */
+  readonly oidc?: OidcAuthenticatorDescriptor;
   readonly policy: AuthenticationPolicyInput;
   /** True when no credential can possibly verify in this process. */
   readonly admitsNothing: boolean;
@@ -90,10 +123,97 @@ function parseMode(raw: string | undefined): CliAuthMode {
   const mode = (raw ?? 'none').trim().toLowerCase();
   if (mode === '' || mode === 'none') return 'none';
   if (mode === 'static-token') return 'static-token';
+  if (mode === 'oidc') return 'oidc';
   if (mode === 'test-only') return 'test-only';
   throw new CliAuthenticationConfigError(
-    `JATAQI_AUTH_MODE="${raw}" is not recognized; expected "none", "static-token", or "test-only" (fail-closed).`,
+    `JATAQI_AUTH_MODE="${raw}" is not recognized; expected "none", "static-token", "oidc", or "test-only" (fail-closed).`,
   );
+}
+
+/**
+ * P2-S1: parse the pinned JWKS source from the environment. EXACTLY ONE of
+ * `JATAQI_OIDC_JWKS` (an inline operator-pinned key set) or
+ * `JATAQI_OIDC_JWKS_URL` (an exact pinned URL) must be provided. Neither, or
+ * both, is a configuration ERROR (fail-closed) — the pin is explicit.
+ */
+function parseOidcJwksSource(env: NodeJS.ProcessEnv): JwksSource {
+  const inline = env.JATAQI_OIDC_JWKS?.trim();
+  const url = env.JATAQI_OIDC_JWKS_URL?.trim();
+  if (inline && url) {
+    throw new CliAuthenticationConfigError(
+      'Set exactly ONE of JATAQI_OIDC_JWKS (inline pinned key set) or JATAQI_OIDC_JWKS_URL (exact pinned URL) — not both (fail-closed).',
+    );
+  }
+  if (!inline && !url) {
+    throw new CliAuthenticationConfigError(
+      'JATAQI_AUTH_MODE="oidc" requires a PINNED JWKS source: set JATAQI_OIDC_JWKS (inline key set) or JATAQI_OIDC_JWKS_URL (exact URL) (fail-closed).',
+    );
+  }
+  if (url) {
+    if (!/^https?:\/\//i.test(url)) {
+      throw new CliAuthenticationConfigError(`JATAQI_OIDC_JWKS_URL="${url}" is not an http(s) URL (fail-closed).`);
+    }
+    return { kind: 'url', url };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(inline!);
+  } catch (error) {
+    throw new CliAuthenticationConfigError(
+      `JATAQI_OIDC_JWKS is not valid JSON: ${(error as Error).message} (fail-closed).`,
+    );
+  }
+  const keys = Array.isArray(parsed) ? parsed : (parsed as { keys?: unknown })?.keys;
+  if (!Array.isArray(keys) || keys.length === 0) {
+    throw new CliAuthenticationConfigError(
+      'JATAQI_OIDC_JWKS must be a non-empty JWK array or a {keys:[...]} document (fail-closed).',
+    );
+  }
+  return { kind: 'inline', keys: keys as readonly Jwk[] };
+}
+
+/** P2-S1: the admitted OIDC algorithm set (closed: RS256|ES256). */
+function parseOidcAlgorithms(env: NodeJS.ProcessEnv): readonly JwtAlgorithm[] {
+  const raw = env.JATAQI_OIDC_ALG?.trim();
+  if (!raw) return ['RS256', 'ES256'];
+  const algos = raw.split(',').map((a) => a.trim()).filter((a) => a.length > 0);
+  if (algos.length === 0) {
+    throw new CliAuthenticationConfigError('JATAQI_OIDC_ALG must name at least one algorithm (fail-closed).');
+  }
+  for (const a of algos) {
+    if (a !== 'RS256' && a !== 'ES256') {
+      throw new CliAuthenticationConfigError(
+        `JATAQI_OIDC_ALG="${a}" is not in the admitted set [RS256, ES256] (fail-closed).`,
+      );
+    }
+  }
+  return algos as readonly JwtAlgorithm[];
+}
+
+/** P2-S1: resolve the full OIDC descriptor from the environment. */
+function buildOidcDescriptor(env: NodeJS.ProcessEnv): OidcAuthenticatorDescriptor {
+  const issuer = env.JATAQI_OIDC_ISSUER?.trim();
+  if (!issuer) {
+    throw new CliAuthenticationConfigError(
+      'JATAQI_AUTH_MODE="oidc" requires JATAQI_OIDC_ISSUER (the exact expected issuer) (fail-closed).',
+    );
+  }
+  const audienceRaw = env.JATAQI_OIDC_AUDIENCE?.trim();
+  if (!audienceRaw) {
+    throw new CliAuthenticationConfigError(
+      'JATAQI_AUTH_MODE="oidc" requires JATAQI_OIDC_AUDIENCE (a comma-separated audience allow-list) (fail-closed).',
+    );
+  }
+  const audience = audienceRaw.split(',').map((a) => a.trim()).filter((a) => a.length > 0);
+  if (audience.length === 0) {
+    throw new CliAuthenticationConfigError('JATAQI_OIDC_AUDIENCE must name at least one audience (fail-closed).');
+  }
+  return {
+    issuer,
+    audience,
+    jwks: parseOidcJwksSource(env),
+    allowedAlgorithms: parseOidcAlgorithms(env),
+  };
 }
 
 function parseRoles(raw: unknown, context: string): CommercialActorRole[] {
@@ -224,6 +344,28 @@ export function resolveCliAuthentication(env: NodeJS.ProcessEnv = process.env): 
         'JATAQI_AUTH_MODE=static-token with an explicit JATAQI_AUTH_PRINCIPALS file, or embed ' +
         'JATA Qi and register its own ServerAuthenticator. Until then, authenticated work ' +
         'ingress is unavailable by design rather than by accident.',
+    };
+  }
+
+  if (mode === 'oidc') {
+    // P2-S1: the OIDC authenticator is provider-neutral and DURABLE — it is
+    // constructed by the authentication module's factory against the identity
+    // core + jti replay stores. Here we only resolve + validate the pinned
+    // configuration (issuer / audience / JWKS pin / algorithms) so a
+    // misconfigured process never boots. No authenticator is built yet
+    // (the durable stores do not exist before module init).
+    const descriptor = buildOidcDescriptor(env);
+    return {
+      mode,
+      authenticators: [],
+      oidc: descriptor,
+      policy: { mode: 'production' },
+      admitsNothing: false,
+      description:
+        `authentication mode=oidc: provider-neutral OIDC verification against a pinned JWKS ` +
+        `(${descriptor.jwks.kind === 'url' ? descriptor.jwks.url : 'inline key set'}), issuer=${descriptor.issuer}, ` +
+        `audiences=[${descriptor.audience.join(',')}], algs=[${descriptor.allowedAlgorithms.join(',')}] ` +
+        '(durable identity core + jti replay required at boot).',
     };
   }
 

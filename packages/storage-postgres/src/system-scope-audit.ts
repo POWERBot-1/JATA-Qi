@@ -51,9 +51,12 @@ export const ENUMERATED_SYSTEM_SCOPE_EXCEPTIONS: readonly SystemScopeException[]
     justification:
       'explicitly unscoped composed transactions (`beginTransaction()` without a tenantId): the ' +
       'R2 durable-security system flows (S-1 policy/manifest reads, security-state seed, ' +
-      'mirror, reachability probe and retention/GC) and other cross-tenant system ' +
-      'compositions. The scope is transaction-local `SET LOCAL` and reverts on ' +
-      'commit/rollback.',
+      'mirror, reachability probe and retention/GC), the P2-S1 identity core (pre-tenant ' +
+      'federation-binding PK reads, the principal-uniqueness query on the enrollment/' +
+      'auto-link creation paths, the one-shot jti replay consume, and the boot-invariant ' +
+      'binding count — each a single bounded operation, counted per use), and other ' +
+      'cross-tenant system compositions. The scope is transaction-local `SET LOCAL` and ' +
+      'reverts on commit/rollback.',
   }),
   Object.freeze({
     labelPrefix: 'schema:isolation',

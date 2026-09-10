@@ -240,6 +240,11 @@ export class AuthorizationBoundaryModule implements IModule {
       ...(this.securityStore && this.durableBroker
         ? { store: this.securityStore, durableBroker: this.durableBroker }
         : {}),
+      // P2-S1: the identity-state re-read rides the durable decision path
+      // (absent ⇒ the exact pre-P2 behavior; the R1 path is never touched).
+      ...(this.config.identityAuthorityResolver
+        ? { identityAuthorityResolver: this.config.identityAuthorityResolver }
+        : {}),
     });
 
     // R1: SEALED bindings. A sealed token cannot be replaced, overridden,

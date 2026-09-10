@@ -86,24 +86,27 @@ export function parseHostEnqueueArgs(args: readonly string[]): HostEnqueueOption
  * is a property of the DEPLOYMENT, not of the request.
  */
 export function credentialForMode(
-  mode: 'none' | 'static-token' | 'test-only',
+  mode: 'none' | 'static-token' | 'oidc' | 'test-only',
   token: string | undefined,
 ): PresentedCredential {
   if (mode === 'none') {
     throw new Error(
       'No authentication method is configured (JATAQI_AUTH_MODE is unset or "none"), so no credential can be ' +
         'presented and no work can be created. Configure JATAQI_AUTH_MODE=static-token with an explicit ' +
-        'JATAQI_AUTH_PRINCIPALS file, or embed JATA Qi and register your own ServerAuthenticator. Failing closed.',
+        'JATAQI_AUTH_PRINCIPALS file, JATAQI_AUTH_MODE=oidc with a pinned issuer/audience/JWKS configuration ' +
+        '(and a signed bearer token in JATAQI_AUTH_TOKEN), or embed JATA Qi and register your own ' +
+        'ServerAuthenticator. Failing closed.',
     );
   }
   if (typeof token !== 'string' || token.trim().length === 0) {
     throw new Error(
-      'JATAQI_AUTH_TOKEN is required: the credential material is read from the environment, never from the ' +
-        'command line. Failing closed.',
+      'JATAQI_AUTH_TOKEN is required: the credential material (static token or OIDC bearer JWT) is read from ' +
+        'the environment, never from the command line. Failing closed.',
     );
   }
   return {
-    method: mode === 'test-only' ? 'DETERMINISTIC_TEST' : 'STATIC_TOKEN',
+    method:
+      mode === 'test-only' ? 'DETERMINISTIC_TEST' : mode === 'oidc' ? 'OIDC' : 'STATIC_TOKEN',
     material: token,
   };
 }

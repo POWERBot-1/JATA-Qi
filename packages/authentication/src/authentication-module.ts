@@ -17,6 +17,8 @@ import type { SecurityCollectionSource } from '@jataqi/storage';
 import { PrincipalBoundary, type PrincipalBoundaryConfig } from './principal-boundary.js';
 import { AuthenticationEventStore } from './authentication-event-store.js';
 import { TokenRegistryStore } from './token-registry.js';
+import { IdentityStore } from './identity-store.js';
+import { JtiReplayStore } from './jti-replay.js';
 import type { ServerAuthenticator } from './types.js';
 
 export interface AuthenticationDurableSessionsConfig {
@@ -51,6 +53,13 @@ export interface AuthenticationModuleConfig extends PrincipalBoundaryConfig {
   readonly authenticatorFactory?: (stores: {
     readonly sessionStore?: AuthenticationEventStore;
     readonly tokenRegistry?: TokenRegistryStore;
+    /**
+     * P2-S1: the durable identity core + jti replay set (present whenever
+     * durable sessions are open). Production authenticators (OIDC,
+     * auto-linked static tokens) are constructed against these.
+     */
+    readonly identityStore?: IdentityStore;
+    readonly jtiReplay?: JtiReplayStore;
   }) => readonly ServerAuthenticator[] | Promise<readonly ServerAuthenticator[]>;
 }
 
@@ -67,6 +76,8 @@ export class AuthenticationModule implements IModule {
   #boundary: PrincipalBoundary | undefined;
   #eventStore: AuthenticationEventStore | undefined;
   #tokenRegistry: TokenRegistryStore | undefined;
+  #identityStore: IdentityStore | undefined;
+  #jtiReplay: JtiReplayStore | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -88,6 +99,12 @@ export class AuthenticationModule implements IModule {
       }
       eventStore = await AuthenticationEventStore.open(storage);
       this.#tokenRegistry = await TokenRegistryStore.open(storage);
+      // P2-S1: the durable identity core (principals, memberships,
+      // role-assignments, recovery, subject-bindings, events) and the jti
+      // replay set are part of the durable authentication substrate —
+      // opened (and failing closed) in the same step as S-8/S-9.
+      this.#identityStore = await IdentityStore.open(storage);
+      this.#jtiReplay = await JtiReplayStore.open(storage);
     }
     if (!this.#tokenRegistry) this.#tokenRegistry = this.#config.tokenRegistry;
     // P1 (S2): construct authenticators through the factory when supplied, so
@@ -105,6 +122,8 @@ export class AuthenticationModule implements IModule {
       authenticators = await this.#config.authenticatorFactory({
         ...(eventStore ? { sessionStore: eventStore } : {}),
         ...(this.#tokenRegistry ? { tokenRegistry: this.#tokenRegistry } : {}),
+        ...(this.#identityStore ? { identityStore: this.#identityStore } : {}),
+        ...(this.#jtiReplay ? { jtiReplay: this.#jtiReplay } : {}),
       });
       if (!Array.isArray(authenticators)) {
         throw new Error('Authentication module: authenticatorFactory must return an array of authenticators (fail-closed).');
@@ -129,10 +148,17 @@ export class AuthenticationModule implements IModule {
     if (this.#tokenRegistry) {
       kernel.container.registerValue('authentication.token-registry', this.#tokenRegistry);
     }
+    if (this.#identityStore) {
+      kernel.container.registerValue('authentication.identity-store', this.#identityStore);
+    }
+    if (this.#jtiReplay) {
+      kernel.container.registerValue('authentication.jti-replay', this.#jtiReplay);
+    }
     kernel.logger.info(
       `principal boundary initialized (T-03): ${this.#boundary.getPolicy().describe()}; ` +
         `authenticators=[${this.#boundary.listAuthenticatorIds().join(',') || '<none>'}]` +
-        (this.#eventStore ? '; durable sessions enabled (R2 S-8/S-9)' : ''),
+        (this.#eventStore ? '; durable sessions enabled (R2 S-8/S-9)' : '') +
+        (this.#identityStore ? '; identity core enabled (P2-S1)' : ''),
     );
   }
 
@@ -145,6 +171,18 @@ export class AuthenticationModule implements IModule {
   getSessionStore(): AuthenticationEventStore {
     if (!this.#eventStore) throw new Error('Authentication module has no durable session store (durableSessions not enabled).');
     return this.#eventStore;
+  }
+
+  /** P2-S1 identity core; throws when durable sessions are not enabled. */
+  getIdentityStore(): IdentityStore {
+    if (!this.#identityStore) throw new Error('Authentication module has no durable identity store (durableSessions not enabled).');
+    return this.#identityStore;
+  }
+
+  /** P2-S1 jti replay set; throws when durable sessions are not enabled. */
+  getJtiReplayStore(): JtiReplayStore {
+    if (!this.#jtiReplay) throw new Error('Authentication module has no durable jti replay store (durableSessions not enabled).');
+    return this.#jtiReplay;
   }
 
   /** R2 S-9 registry; throws when durable sessions are not enabled. */

@@ -190,6 +190,15 @@ export class PrincipalBoundary {
   }
 
   /**
+   * The registered authenticators themselves (structural posture checks —
+   * e.g. P2-INV-01/INV-02 inspect `verifiesCryptographicProof` and the
+   * supported methods; never used for verification).
+   */
+  listAuthenticators(): readonly ServerAuthenticator[] {
+    return this.#registry.list();
+  }
+
+  /**
    * Authenticate a presented credential and return the verified principal.
    *
    * Order of enforcement (all fail closed, none falls back):
