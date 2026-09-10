@@ -41,6 +41,7 @@ export type AuthenticationMethod =
   | 'STATIC_TOKEN'      // static token; development / staging only
   | 'OIDC'              // OpenID Connect; provider activation is gated
   | 'MTLS'              // mTLS client certificate; provider activation is gated
+  | 'SESSION_TOKEN'     // P2-S2: opaque session token referencing a durable S-8 session row
   | 'KERNEL_INTERNAL';  // kernel-internal system actor; never a user request
 
 /**
@@ -55,6 +56,7 @@ export const RECOGNIZED_AUTHENTICATION_METHODS: readonly AuthenticationMethod[] 
   'STATIC_TOKEN',
   'OIDC',
   'MTLS',
+  'SESSION_TOKEN',
   'KERNEL_INTERNAL',
 ]);
 

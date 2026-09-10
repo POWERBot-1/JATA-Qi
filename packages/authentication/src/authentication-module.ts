@@ -19,6 +19,7 @@ import { AuthenticationEventStore } from './authentication-event-store.js';
 import { TokenRegistryStore } from './token-registry.js';
 import { IdentityStore } from './identity-store.js';
 import { JtiReplayStore } from './jti-replay.js';
+import { SessionTokenService } from './session-tokens.js';
 import type { ServerAuthenticator } from './types.js';
 
 export interface AuthenticationDurableSessionsConfig {
@@ -60,6 +61,12 @@ export interface AuthenticationModuleConfig extends PrincipalBoundaryConfig {
      */
     readonly identityStore?: IdentityStore;
     readonly jtiReplay?: JtiReplayStore;
+    /**
+     * P2-S2: the session-token lifecycle service (present whenever durable
+     * sessions are open). Compositions register session-token verification
+     * by constructing a `SessionTokenAuthenticator` against it.
+     */
+    readonly sessionTokens?: SessionTokenService;
   }) => readonly ServerAuthenticator[] | Promise<readonly ServerAuthenticator[]>;
 }
 
@@ -78,6 +85,7 @@ export class AuthenticationModule implements IModule {
   #tokenRegistry: TokenRegistryStore | undefined;
   #identityStore: IdentityStore | undefined;
   #jtiReplay: JtiReplayStore | undefined;
+  #sessionTokens: SessionTokenService | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -105,6 +113,17 @@ export class AuthenticationModule implements IModule {
       // opened (and failing closed) in the same step as S-8/S-9.
       this.#identityStore = await IdentityStore.open(storage);
       this.#jtiReplay = await JtiReplayStore.open(storage);
+      // P2-S2: the session-token lifecycle service over the same durable
+      // substrate (mint/verify/rotate/revoke + identity-state gate). The
+      // session lifetime is wired from the SAME configuration as the
+      // boundary's so both recording paths agree on expiry.
+      this.#sessionTokens = new SessionTokenService({
+        eventStore,
+        identityStore: this.#identityStore,
+        ...(this.#config.durableSessions?.sessionLifetimeMs !== undefined
+          ? { sessionLifetimeMs: this.#config.durableSessions.sessionLifetimeMs }
+          : {}),
+      });
     }
     if (!this.#tokenRegistry) this.#tokenRegistry = this.#config.tokenRegistry;
     // P1 (S2): construct authenticators through the factory when supplied, so
@@ -124,6 +143,7 @@ export class AuthenticationModule implements IModule {
         ...(this.#tokenRegistry ? { tokenRegistry: this.#tokenRegistry } : {}),
         ...(this.#identityStore ? { identityStore: this.#identityStore } : {}),
         ...(this.#jtiReplay ? { jtiReplay: this.#jtiReplay } : {}),
+        ...(this.#sessionTokens ? { sessionTokens: this.#sessionTokens } : {}),
       });
       if (!Array.isArray(authenticators)) {
         throw new Error('Authentication module: authenticatorFactory must return an array of authenticators (fail-closed).');
@@ -139,6 +159,7 @@ export class AuthenticationModule implements IModule {
       ...(this.#config.durableSessions?.sessionLifetimeMs !== undefined
         ? { sessionLifetimeMs: this.#config.durableSessions.sessionLifetimeMs }
         : {}),
+      ...(this.#sessionTokens ? { sessionTokenService: this.#sessionTokens } : {}),
     });
     kernel.container.registerValue('authentication.boundary', this.#boundary);
     kernel.container.registerValue('authentication', this.#boundary);
@@ -154,11 +175,15 @@ export class AuthenticationModule implements IModule {
     if (this.#jtiReplay) {
       kernel.container.registerValue('authentication.jti-replay', this.#jtiReplay);
     }
+    if (this.#sessionTokens) {
+      kernel.container.registerValue('authentication.session-tokens', this.#sessionTokens);
+    }
     kernel.logger.info(
       `principal boundary initialized (T-03): ${this.#boundary.getPolicy().describe()}; ` +
         `authenticators=[${this.#boundary.listAuthenticatorIds().join(',') || '<none>'}]` +
         (this.#eventStore ? '; durable sessions enabled (R2 S-8/S-9)' : '') +
-        (this.#identityStore ? '; identity core enabled (P2-S1)' : ''),
+        (this.#identityStore ? '; identity core enabled (P2-S1)' : '') +
+        (this.#sessionTokens ? '; session tokens enabled (P2-S2)' : ''),
     );
   }
 
@@ -183,6 +208,12 @@ export class AuthenticationModule implements IModule {
   getJtiReplayStore(): JtiReplayStore {
     if (!this.#jtiReplay) throw new Error('Authentication module has no durable jti replay store (durableSessions not enabled).');
     return this.#jtiReplay;
+  }
+
+  /** P2-S2 session-token service; throws when durable sessions are not enabled. */
+  getSessionTokenService(): SessionTokenService {
+    if (!this.#sessionTokens) throw new Error('Authentication module has no session-token service (durableSessions not enabled).');
+    return this.#sessionTokens;
   }
 
   /** R2 S-9 registry; throws when durable sessions are not enabled. */

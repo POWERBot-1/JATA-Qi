@@ -34,7 +34,9 @@ import {
   assertValidSessionLifetimeMs,
   DEFAULT_SESSION_LIFETIME_MS,
   type AuthenticationEventStore,
+  type SessionConcurrencyPolicy,
 } from './authentication-event-store.js';
+import type { SessionTokenService } from './session-tokens.js';
 
 export interface PrincipalBoundaryConfig {
   /**
@@ -63,12 +65,33 @@ export interface PrincipalBoundaryConfig {
    * `min(now + sessionLifetimeMs, credentialExpiresAt ?? +inf)`.
    */
   readonly sessionLifetimeMs?: number;
+  /**
+   * P2-S2: the session-token lifecycle service. Required for
+   * `authenticateWithSessionToken` (mint); SESSION_TOKEN verification
+   * through `authenticate` needs only a registered
+   * SessionTokenAuthenticator. The service's `sessionLifetimeMs` SHOULD
+   * match this boundary's `sessionLifetimeMs` (the authentication module
+   * wires both from the same configuration).
+   */
+  readonly sessionTokenService?: SessionTokenService;
 }
 
 /** A verified principal together with the actor projected from it. */
 export interface AuthenticatedRequest {
   readonly principal: AuthenticatedPrincipal;
   readonly actor: CommercialActor;
+}
+
+/**
+ * P2-S2: a freshly authenticated principal together with its minted opaque
+ * session token. The token material is returned ONCE — the caller MUST
+ * deliver it to the authenticated party over a confidential channel and
+ * MUST NOT log or persist it (only the fingerprint is durable).
+ */
+export interface AuthenticatedSession {
+  readonly principal: AuthenticatedPrincipal;
+  readonly actor: CommercialActor;
+  readonly sessionToken: string;
 }
 
 /** Secret-free provenance of one authentication, safe for logs and receipts. */
@@ -143,6 +166,7 @@ export class PrincipalBoundary {
   readonly #newRequestId: () => string;
   readonly #eventStore?: AuthenticationEventStore;
   readonly #sessionLifetimeMs: number;
+  readonly #sessionTokenService?: SessionTokenService;
 
   constructor(config: PrincipalBoundaryConfig = {}) {
     this.#policy = resolveAuthenticationPolicy(config.policy);
@@ -152,6 +176,7 @@ export class PrincipalBoundary {
     this.#eventStore = config.eventStore;
     this.#sessionLifetimeMs = config.sessionLifetimeMs ?? DEFAULT_SESSION_LIFETIME_MS;
     assertValidSessionLifetimeMs(this.#sessionLifetimeMs);
+    this.#sessionTokenService = config.sessionTokenService;
 
     for (const authenticator of config.authenticators ?? []) {
       this.#admitAuthenticator(authenticator);
@@ -213,36 +238,21 @@ export class PrincipalBoundary {
    *   6. R2 only: when an event store is attached, the success is recorded
    *      durably BEFORE the principal is returned; a record failure
    *      rejects the authentication (no unverifiable session exists).
+   *      P2-S2 only: SESSION_TOKEN presentations skip this step — they
+   *      validate an already-recorded session instead of recording one.
    */
   async authenticate(credential: PresentedCredential | undefined | null): Promise<AuthenticatedPrincipal> {
-    if (!credential || typeof credential !== 'object') {
-      throw new UnauthenticatedRequestError('no credential was presented (fail-closed).');
-    }
-    if (!isAuthenticationMethod(credential.method)) {
-      throw new UnauthenticatedRequestError(
-        `presented credential carries no recognized authentication method (got "${String(credential.method)}") (fail-closed).`,
-      );
-    }
-    // (2) policy admission precedes authenticator selection.
-    assertMethodAdmitted(this.#policy, credential.method);
-
-    // (3) delegate verification to the existing T-01 registry.
-    const principal = await this.#registry.authenticate(credential, this.#now(), this.#newRequestId());
-
-    // (4) independent structural validation of the result.
-    assertWellFormedPrincipal(principal);
-
-    // (5) the claimed method must itself be admitted.
-    if (!this.#policy.allowedMethods.includes(principal.authenticationMethod)) {
-      throw new PrincipalValidationError(
-        `Authenticator returned method "${principal.authenticationMethod}", which this composition root's policy ` +
-          `does not admit (fail-closed).`,
-      );
-    }
+    // Steps 1–5 (presence, recognized method, policy admission before any
+    // authenticator runs, registry verification, independent structural
+    // validation, method re-check) — shared with session-token minting.
+    const principal = await this.#verifyCredential(credential);
 
     // (6) R2 durable session: record BEFORE returning. The boundary is the
     // SOLE writer of session rows; no other path may mint sessions.
-    if (this.#eventStore) {
+    // P2-S2: a principal produced by SESSION_TOKEN validation references an
+    // ALREADY-RECORDED session (that is what was validated) — recording
+    // again would violate insert-once, so validation never re-records.
+    if (this.#eventStore && principal.authenticationMethod !== 'SESSION_TOKEN') {
       const now = this.#now();
       const lifetimeEnd = now + this.#sessionLifetimeMs;
       const expiresAt =
@@ -284,6 +294,77 @@ export class PrincipalBoundary {
     const principal = await this.authenticate(credential);
     const actor = projectToActor(principal, requestedRoles);
     return { principal, actor };
+  }
+
+  /**
+   * P2-S2: verify a presented credential (the shared steps 1–5 of
+   * `authenticate`: presence, recognized method, policy admission before
+   * any authenticator runs, registry verification, independent structural
+   * validation, method re-check) WITHOUT recording a session. Used by
+   * `authenticate` (which then records) and by `authenticateWithSessionToken`
+   * (which then mints) so a login is recorded exactly once.
+   */
+  async #verifyCredential(credential: PresentedCredential | undefined | null): Promise<AuthenticatedPrincipal> {
+    if (!credential || typeof credential !== 'object') {
+      throw new UnauthenticatedRequestError('no credential was presented (fail-closed).');
+    }
+    if (!isAuthenticationMethod(credential.method)) {
+      throw new UnauthenticatedRequestError(
+        `presented credential carries no recognized authentication method (got "${String(credential.method)}") (fail-closed).`,
+      );
+    }
+    assertMethodAdmitted(this.#policy, credential.method);
+    const principal = await this.#registry.authenticate(credential, this.#now(), this.#newRequestId());
+    assertWellFormedPrincipal(principal);
+    if (!this.#policy.allowedMethods.includes(principal.authenticationMethod)) {
+      throw new PrincipalValidationError(
+        `Authenticator returned method "${principal.authenticationMethod}", which this composition root's policy ` +
+          `does not admit (fail-closed).`,
+      );
+    }
+    return principal;
+  }
+
+  /**
+   * P2-S2: authenticate a presented credential AND mint its opaque session
+   * token in a single call. The credential MUST be a real credential (a
+   * SESSION_TOKEN reference is refused — no session chaining; renewal is
+   * bounded rotation, extension beyond the bound is re-authentication
+   * here). The session row is recorded WITH the token binding atomically
+   * under the concurrent-session policy (default N=3 refuse-new, overridable
+   * per call); the material is returned ONCE in `sessionToken`.
+   *
+   * `requestedRoles` narrows BEFORE mint (a narrowed session carries
+   * narrowed asserted roles); widening throws, as in `projectToActor`.
+   */
+  async authenticateWithSessionToken(
+    credential: PresentedCredential | undefined | null,
+    requestedRoles?: readonly CommercialActorRole[],
+    policy?: SessionConcurrencyPolicy,
+  ): Promise<AuthenticatedSession> {
+    if (!this.#sessionTokenService) {
+      throw new UnauthenticatedRequestError(
+        'session-token minting is not configured on this boundary (no session-token service) (fail-closed).',
+      );
+    }
+    if (credential !== undefined && credential !== null && credential.method === 'SESSION_TOKEN') {
+      throw new UnauthenticatedRequestError(
+        'a session token cannot mint a further session (no chaining — re-authenticate with a credential) (fail-closed).',
+      );
+    }
+    const principal = await this.#verifyCredential(credential);
+    const actor = projectToActor(principal, requestedRoles);
+    const narrowed: AuthenticatedPrincipal =
+      requestedRoles === undefined ? principal : { ...principal, roles: [...actor.roles] };
+    try {
+      const minted = await this.#sessionTokenService.mintFor(narrowed, this.#now(), policy);
+      return { principal: narrowed, actor, sessionToken: minted.material };
+    } catch (error) {
+      throw new UnauthenticatedRequestError(
+        'Authentication succeeded but the durable session token could not be minted ' +
+          `(${error instanceof Error ? error.message : String(error)}) (fail-closed).`,
+      );
+    }
   }
 
   /** Secret-free provenance projection of a verified principal. */

@@ -33,8 +33,10 @@ export {
   AuthenticationStoreError,
   AUTHENTICATION_EVENTS_COLLECTION,
   AUTH_SESSION_CLOCK_SKEW_MS,
+  DEFAULT_SESSION_CONCURRENCY_POLICY,
   DEFAULT_SESSION_LIFETIME_MS,
   MAX_SESSION_LIFETIME_MS,
+  SessionTokenError,
   assertSessionDocumentShape,
   assertValidSessionLifetimeMs,
   assessSessionRow,
@@ -44,7 +46,11 @@ export type {
   AuthenticationEventDoc,
   AuthenticationEventStatus,
   RecordAuthenticationEventInput,
+  RecordAuthenticationEventOptions,
+  RotateSessionTokenInput,
   SessionAssessment,
+  SessionConcurrencyPolicy,
+  SessionTokenFailureCode,
 } from './authentication-event-store.js';
 export { TokenRegistryStore, TOKEN_REGISTRY_COLLECTION } from './token-registry.js';
 export type {
@@ -71,9 +77,22 @@ export type {
 export { PrincipalBoundary } from './principal-boundary.js';
 export type {
   AuthenticatedRequest,
+  AuthenticatedSession,
   AuthenticationProvenance,
   PrincipalBoundaryConfig,
 } from './principal-boundary.js';
+// P2-S2 — durable session/token lifecycle (spec §6): opaque 256-bit tokens
+// over the S-8 rows (fingerprints only at rest), rotation, revocation, and
+// the concurrent-session policy. Token MATERIAL is never persisted.
+export {
+  DEFAULT_MAX_SESSION_ROTATIONS,
+  SESSION_TOKEN_BYTES,
+  SessionTokenAuthenticator,
+  SessionTokenService,
+  fingerprintSessionToken,
+  mintSessionTokenMaterial,
+} from './session-tokens.js';
+export type { MintedSession, SessionTokenServiceOptions } from './session-tokens.js';
 export { AuthenticationModule } from './authentication-module.js';
 export type {
   ProductionAuthenticatorContract,
