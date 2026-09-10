@@ -30,6 +30,7 @@ import {
   TOKEN_REGISTRY_COLLECTION,
   type TokenRegistryDoc,
 } from './token-registry.js';
+import { cascadeRevokeDelegationsInTx } from './delegation-store.js';
 import {
   assertIdentityDocumentShape,
   IDENTITY_EVENTS_COLLECTION,
@@ -128,6 +129,8 @@ export interface DeprovisionResult {
   readonly sessionsRevoked: number;
   readonly tokensRevoked: number;
   readonly roleAssignmentsRevoked: number;
+  /** REMEDIATION (§8.2.7): delegation grants revoked by the disablement cascade. */
+  readonly delegationsRevoked: number;
 }
 
 export interface AutoLinkResult {
@@ -500,10 +503,20 @@ export class IdentityStore {
     }, now, 'IDENTITY_ACTIVATED', 'ACTIVE', 'verification');
   }
 
-  /** Suspend (ACTIVATED → SUSPENDED) — immediate, cross-process. */
+  /** Suspend (ACTIVATED → SUSPENDED) — immediate, cross-process + the delegation cascade (§8.2.7). */
   async suspend(principalId: string, tenantId: string, reason: string, now: number): Promise<IdentityPrincipalDoc> {
     this.assertReason(reason, 'suspend');
-    return this.transition(principalId, tenantId, 'SUSPENDED', { at: now, reason: reason.trim() }, now, 'IDENTITY_SUSPENDED', 'SUSPENDED', reason.trim());
+    return this.transition(
+      principalId,
+      tenantId,
+      'SUSPENDED',
+      { at: now, reason: reason.trim() },
+      now,
+      'IDENTITY_SUSPENDED',
+      'SUSPENDED',
+      reason.trim(),
+      { reason: `identity suspended: ${reason.trim()}` },
+    );
   }
 
   /** Deactivate (SUSPENDED → DEACTIVATED) — terminal for use (§4.2 routes deactivation from SUSPENDED only). */
@@ -521,6 +534,7 @@ export class IdentityStore {
     eventKind: IdentityEventKind,
     membershipStatus: 'ACTIVE' | 'SUSPENDED' | 'REVOKED',
     membershipDetail: string,
+    cascade?: { readonly reason: string },
   ): Promise<IdentityPrincipalDoc> {
     if (!isNonBlank(principalId)) {
       return Promise.reject(new IdentityStoreError('INVALID_TRANSITION', `${eventKind} requires a non-empty principalId (fail-closed).`));
@@ -598,6 +612,12 @@ export class IdentityStore {
         result: membershipStatus,
         detail: membershipDetail,
       }));
+      if (cascade) {
+        // §8.2.7 / S4.4: disablement cascade — the principal's ACTIVE
+        // delegations (as delegator AND delegatee) are REVOKED in the SAME
+        // tenant transaction as the state change (fail-closed, auditable).
+        await cascadeRevokeDelegationsInTx(scope, { principalId, tenantId, reason: cascade.reason }, now);
+      }
       return { ...(res.doc as IdentityPrincipalDoc) };
     });
   }
@@ -700,6 +720,14 @@ export class IdentityStore {
         if (r.ok) tokensRevoked += 1;
       }
 
+      // §8.2.7 / S4.4: delegation cascade — the principal's ACTIVE grants
+      // (delegator + delegatee) are REVOKED in this same tenant transaction.
+      const delegationsRevoked = await cascadeRevokeDelegationsInTx(
+        scope,
+        { principalId, tenantId, reason: `identity deprovisioned: ${reason.trim()}` },
+        now,
+      );
+
       await this.appendEventInTx(scope, this.makeEvent({
         at: now,
         tenantId,
@@ -737,11 +765,11 @@ export class IdentityStore {
         principalId,
         resource: IDENTITY_PRINCIPALS_COLLECTION,
         decision: 'ALLOW',
-        result: `deprovision (sessions=${sessionsRevoked}, tokens=${tokensRevoked}, roles=${roleAssignmentsRevoked})`,
+        result: `deprovision (sessions=${sessionsRevoked}, tokens=${tokensRevoked}, roles=${roleAssignmentsRevoked}, delegations=${delegationsRevoked})`,
         detail: reason.trim(),
       }));
 
-      return { sessionsRevoked, tokensRevoked, roleAssignmentsRevoked };
+      return { sessionsRevoked, tokensRevoked, roleAssignmentsRevoked, delegationsRevoked };
     });
   }
 
@@ -1277,7 +1305,7 @@ export class IdentityStore {
 
     // GC-clean the canary (documented exception, mirroring the P1 canary).
     await this.sweepCanary(tenantId, principalId);
-    return { ok: true, detail: `mint=read=suspended-deny-path=deprovisioned(cascade sessions=${result.sessionsRevoked} tokens=${result.tokensRevoked} roles=${result.roleAssignmentsRevoked})=swept` };
+    return { ok: true, detail: `mint=read=suspended-deny-path=deprovisioned(cascade sessions=${result.sessionsRevoked} tokens=${result.tokensRevoked} roles=${result.roleAssignmentsRevoked} delegations=${result.delegationsRevoked})=swept` };
   }
 
   private async lookupViaOwnTx(

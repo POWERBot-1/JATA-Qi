@@ -65,11 +65,17 @@ export interface DelegationTargetScope {
   readonly resourcePattern?: string;
 }
 
-/** Grant constraints (spec §8.1). `maxAgeMs` is mandatory; ceilings narrow. */
+/**
+ * Grant constraints (spec §8.1). `maxAgeMs` is mandatory; ceilings narrow.
+ *
+ * REMEDIATION (verifier finding 4): grant-level `budget`/`rate` are NOT
+ * modeled in S4 — the capability manifest's `budgetPerRunCostUnits` and
+ * `rateLimit` (enforced by the A-01 pipeline) are the budget/rate authority.
+ * Passing either is REJECTED at grant creation (`UNSUPPORTED_CONSTRAINT`),
+ * never silently accepted as an unenforced constraint.
+ */
 export interface DelegationConstraints {
   readonly maxAgeMs: number;
-  /** Per-run budget ceiling (cost units). Absent = manifest ceiling applies. */
-  readonly budgetCeiling?: number;
   /** Classification ceiling (A-01 vocabulary string). */
   readonly classificationCeiling?: string;
   /** Impact ceiling (A-01 vocabulary string). */
@@ -248,6 +254,21 @@ export interface DelegationPeek {
 }
 
 /**
+ * REMEDIATION (verifier finding 1): the durable record of ONE delegation
+ * denial, emitted as a `DELEGATION_DENIED` identity event. Secret-free and
+ * attributable (the presenting delegatee principal + tenant). `verdict` is
+ * the assessment verdict (e.g. `DELEGATOR_AUTHORITY_CHANGED` for A-16).
+ */
+export interface DelegationDenialRecord {
+  readonly delegationId: string;
+  readonly tenantId: string;
+  readonly principalId: string;
+  readonly verdict: DelegationAssessmentVerdict;
+  readonly detail: string;
+  readonly correlationId?: string;
+}
+
+/**
  * The delegation-state authority the durable A-01 decider consults. It reads
  * the SAME `identity.delegations` collection the store writes — there is no
  * second source of truth. Implementations MUST throw on any storage problem
@@ -266,6 +287,15 @@ export interface DelegationStateAuthority {
   consumeInTx(scope: StorageWriteScope, delegationId: string, now: number): Promise<DelegationDoc>;
   /** System-scoped CAS consumption (platform grants). */
   consumePlatform(delegationId: string, now: number): Promise<DelegationDoc>;
+  /**
+   * Durable `DELEGATION_DENIED` emission INSIDE the caller's tenant
+   * transaction (the same transaction as the decision audit — a write
+   * failure rolls the whole decision back, fail-closed). The decision path
+   * routes every delegation denial (tenant-scope and platform-scope) through
+   * this method in the requester's tenant transaction; enforcement-time
+   * re-validation denials are audited by the existing S-10 deny receipts.
+   */
+  recordDeniedInTx(scope: StorageWriteScope, denial: DelegationDenialRecord, now: number): Promise<void>;
 }
 
 /** Durable delegation-store failure (any rejection from the delegation substrate). */

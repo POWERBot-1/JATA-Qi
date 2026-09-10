@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 import {
   AuthenticationEventStore,
   DelegationStore,
+  IdentityStore,
   type DelegationDoc,
 } from '@jataqi/authentication';
 import {
@@ -50,6 +51,7 @@ let pg: R2Postgres;
 let store: SecurityStateStore;
 let sessions: AuthenticationEventStore;
 let delegation: DelegationStore;
+let identity: IdentityStore;
 let audit: InMemoryAuditSink;
 let gate: AuthorizationGate;
 
@@ -63,6 +65,9 @@ const TENANT = 'acme';
 const OTHER = 'other';
 const CAP = 'cap.p2s4.delegate';
 const CAP_CHAIN = 'cap.p2s4.delegate.chain';
+const CAP_A16 = 'cap.p2s4.a16audit';
+const CAP_A24 = 'cap.p2s4.a24';
+const CAP_PLATFORM = 'cap.p2s4.platform';
 const OP = { tool: 'docs', operation: 'read' };
 const OP_WRITE = { tool: 'docs', operation: 'write' };
 
@@ -123,6 +128,40 @@ async function grantDelegation(
   );
 }
 
+/** Grant a platform-scoped delegation (explicit scope + recorded platform elevation + bound approval). */
+async function grantPlatformDelegation(delegateePrincipalId: string, digest: string): Promise<DelegationDoc> {
+  return delegation.grantDelegation(
+    {
+      delegatorPrincipalId: 'user:platform-delegator',
+      delegateePrincipalId,
+      tenantId: 'system',
+      scope: 'platform',
+      capability: { capabilityId: CAP_PLATFORM, capabilityVersion: '1' },
+      actions: [{ tool: OP.tool, operation: OP.operation }],
+      targetScope: [{ system: 'docs', resourcePattern: 'res-*' }],
+      constraints: { maxAgeMs: 3_600_000, classificationCeiling: 'INTERNAL', impactCeiling: 'EXTERNAL_SIDE_EFFECT' },
+      chainDepth: 0,
+      chain: [digest],
+      grantedBy: {
+        principalId: 'user:platform-delegator',
+        authenticationEventId: 'evt-platform-delegator',
+        platformElevationId: 'elev-platform',
+      },
+      approval: {
+        approvalId: `appr-${nextId('a')}`,
+        approverId: 'user:security-admin',
+        approvedAt: now - 1,
+        expiresAt: now + 3_600_000,
+        approvedActionDigest: `sha256-${nextId('d')}`,
+      },
+      oneShot: false,
+      useCount: 5,
+      delegatorEvidence: liveEvidence(digest),
+    },
+    now,
+  );
+}
+
 function delRequest(
   session: { eventId: string; tenantId: string; principalId: string },
   delegationId: string,
@@ -152,6 +191,9 @@ function delRequest(
 
 let activeDigest = '';
 let chainDigest = '';
+let a16Digest = '';
+let a24Digest = '';
+let platformDigest = '';
 
 before(async () => {
   now = T0;
@@ -160,6 +202,7 @@ before(async () => {
   store = await SecurityStateStore.open(storage, { now: clock });
   sessions = await AuthenticationEventStore.open(storage);
   delegation = await DelegationStore.open(storage);
+  identity = await IdentityStore.open(storage);
   audit = new InMemoryAuditSink();
   const provider = new InMemoryCredentialMaterialProvider();
   const broker = new DurableCredentialBroker(store, provider, { now: clock });
@@ -192,11 +235,47 @@ before(async () => {
     }),
     registrar(TENANT),
   );
+  // Dedicated capabilities for the remediation acceptance tests (A-16 audit,
+  // A-24 enforcement digest mismatch, A-09 platform-scope positive path).
+  await store.registerManifestVersion(
+    durableManifest(CAP_A16, {
+      allowedOperations: [OP, OP_WRITE],
+      allowedTargets: [{ system: 'docs', resourcePattern: 'res-*' }],
+      maxDataClassification: 'RESTRICTED',
+    }),
+    registrar(TENANT),
+  );
+  await store.registerManifestVersion(
+    durableManifest(CAP_A24, {
+      allowedOperations: [OP, OP_WRITE],
+      allowedTargets: [{ system: 'docs', resourcePattern: 'res-*' }],
+      maxDataClassification: 'RESTRICTED',
+    }),
+    registrar(TENANT),
+  );
+  // A deliberately system-scoped capability (allowTenantWildcard) for the
+  // platform-delegation cross-tenant path (spec §8.2.2 / A-09).
+  await store.registerManifestVersion(
+    durableManifest(CAP_PLATFORM, {
+      allowedOperations: [OP, OP_WRITE],
+      allowedTargets: [{ system: 'docs', resourcePattern: 'res-*' }],
+      maxDataClassification: 'RESTRICTED',
+      tenantScopes: [],
+      allowTenantWildcard: true,
+    }),
+    registrar(TENANT),
+  );
   const active = await store.getActiveManifest(CAP);
   const chain = await store.getActiveManifest(CAP_CHAIN);
-  assert.ok(active && chain, 'the ACTIVE manifests must resolve before grants are minted');
+  const a16 = await store.getActiveManifest(CAP_A16);
+  const a24 = await store.getActiveManifest(CAP_A24);
+  const platform = await store.getActiveManifest(CAP_PLATFORM);
+  assert.ok(active && chain && a16 && a24 && platform, 'the ACTIVE manifests must resolve before grants are minted');
   activeDigest = active.digest;
   chainDigest = chain.digest;
+  a16Digest = a16.digest;
+  a24Digest = a24.digest;
+  platformDigest = platform.digest;
 });
 
 after(async () => {
@@ -467,5 +546,175 @@ describe('P2-S4 durable delegation plane (real PostgreSQL)', () => {
     const env = await gate2.decideAsync(delRequest(session, grant.id));
     assert.equal(env.decision.decision, 'ALLOW', 'the grant is authoritative durable state, not process-local');
     assert.equal(env.delegationStatus, 'VALID');
+  });
+
+  it('A-08: each scope-widening attempt denies with its specific DELEGATION_SCOPE_* code and leaves the grant ACTIVE', async () => {
+    const delegatee = nextId('a08');
+    const session = await mintSession(delegatee);
+    // Tight ceilings (classification INTERNAL, impact READ) so both ceiling
+    // widening attempts actually exceed the grant.
+    const grant = await grantDelegation(delegatee, activeDigest, {
+      constraints: { maxAgeMs: 3_600_000, classificationCeiling: 'INTERNAL', impactCeiling: 'READ' },
+    });
+
+    // The four widening dimensions: operation, target, classification, impact.
+    const attempts: Array<{ label: string; override: Record<string, unknown>; code: string }> = [
+      { label: 'operation', override: { tool: OP_WRITE.tool, operation: OP_WRITE.operation }, code: 'DELEGATION_SCOPE_OPERATION' },
+      { label: 'target', override: { target: { system: 'crm', resource: 'res-1' } }, code: 'DELEGATION_SCOPE_TARGET' },
+      { label: 'classification', override: { dataClassification: 'CONFIDENTIAL' }, code: 'DELEGATION_SCOPE_CLASSIFICATION' },
+      { label: 'impact', override: { impact: 'REVERSIBLE_WRITE' }, code: 'DELEGATION_SCOPE_IMPACT' },
+    ];
+    for (const attempt of attempts) {
+      const env = await gate.decideAsync(delRequest(session, grant.id, attempt.override));
+      assert.equal(env.decision.decision, 'DENY', `${attempt.label} widening must deny`);
+      assert.deepEqual(env.decision.reasonCodes, [attempt.code], `${attempt.label} widening cites ${attempt.code}`);
+    }
+    const after = await delegation.getDelegation(TENANT, grant.id);
+    assert.equal(after?.status, 'ACTIVE', 'denied widening attempts never mutate the grant');
+  });
+
+  it('A-16: a delegator-authority denial emits a durable DELEGATION_DENIED event with result DELEGATOR_AUTHORITY_CHANGED', async () => {
+    const delegatee = nextId('a16audit');
+    const session = await mintSession(delegatee);
+    const grant = await grantDelegation(delegatee, a16Digest, { capabilityId: CAP_A16 });
+    const before = await gate.decideAsync(
+      delRequest(session, grant.id, { capability: { capabilityId: CAP_A16, capabilityVersion: '1' } }),
+    );
+    assert.equal(before.decision.decision, 'ALLOW');
+
+    // Narrow the delegator's authority: version 2 becomes ACTIVE, so the cited
+    // v1 digest is no longer live ⇒ DELEGATOR_AUTHORITY_CHANGED.
+    await store.registerManifestVersion(
+      durableManifest(CAP_A16, {
+        version: '2',
+        allowedOperations: [OP, OP_WRITE],
+        allowedTargets: [{ system: 'docs', resourcePattern: 'res-*' }],
+        maxDataClassification: 'RESTRICTED',
+      }),
+      registrar(TENANT),
+    );
+    const env = await gate.decideAsync(
+      delRequest(session, grant.id, { capability: { capabilityId: CAP_A16, capabilityVersion: '2' } }),
+    );
+    assert.equal(env.decision.decision, 'DENY');
+    assert.deepEqual(env.decision.reasonCodes, ['DELEGATION_DELEGATOR_AUTHORITY_CHANGED']);
+
+    const denied = await identity.queryEvents(TENANT, 'DELEGATION_DENIED');
+    const event = denied.find((e) => e.principalId === delegatee);
+    assert.ok(event, 'the A-16 denial is audited durably (DELEGATION_DENIED)');
+    assert.equal(event.result, 'DELEGATOR_AUTHORITY_CHANGED', 'the A-16 denial cites reason DELEGATOR_AUTHORITY_CHANGED');
+    assert.equal(event.decision, 'DENY');
+    assert.equal(event.resource, 'identity.delegations');
+  });
+
+  it('A-09: a platform-scope grant (explicit scope + recorded platform elevation + bound approval) ALLOWs cross-tenant', async () => {
+    const delegatee = nextId('plat');
+    const otherSession = await mintSession(delegatee, OTHER);
+    const grant = await grantPlatformDelegation(delegatee, platformDigest);
+    const env = await gate.decideAsync(
+      delRequest(otherSession, grant.id, { capability: { capabilityId: CAP_PLATFORM, capabilityVersion: '1' } }),
+    );
+    assert.equal(
+      env.decision.decision,
+      'ALLOW',
+      `the fully-audited platform path must ALLOW cross-tenant, got [${[...env.decision.reasonCodes].join(', ')}]`,
+    );
+    assert.equal(env.delegationStatus, 'VALID');
+  });
+
+  it('chain depth 1 and 2 are exercisable; the store refuses depth beyond the bound', async () => {
+    for (const depth of [1, 2]) {
+      const delegatee = nextId(`depth${depth}`);
+      const session = await mintSession(delegatee);
+      const grant = await grantDelegation(delegatee, activeDigest, { chainDepth: depth, chain: [activeDigest, `hop-${depth}`] });
+      const env = await gate.decideAsync(delRequest(session, grant.id));
+      assert.equal(env.decision.decision, 'ALLOW', `chain depth ${depth} must be exercisable`);
+    }
+  });
+
+  it('A-24: rotating the manifest between decide and enforce denies CAPABILITY_VERSION_MISMATCH before the side effect', async () => {
+    const delegatee = nextId('a24');
+    const session = await mintSession(delegatee);
+    const grant = await grantDelegation(delegatee, a24Digest, { capabilityId: CAP_A24 });
+    const req = delRequest(session, grant.id, { capability: { capabilityId: CAP_A24, capabilityVersion: '1' } });
+    const envelope = await gate.decideAsync(req);
+    assert.equal(envelope.decision.decision, 'ALLOW');
+
+    // Rotate the manifest (digest changes) AFTER decide, BEFORE enforce.
+    await store.registerManifestVersion(
+      durableManifest(CAP_A24, {
+        version: '2',
+        allowedOperations: [OP, OP_WRITE],
+        allowedTargets: [{ system: 'docs', resourcePattern: 'res-*' }],
+        maxDataClassification: 'RESTRICTED',
+      }),
+      registrar(TENANT),
+    );
+
+    let ran = false;
+    await assert.rejects(
+      () =>
+        gate.executeAuthorized(
+          envelope,
+          async () => {
+            ran = true;
+            return 'side-effect';
+          },
+          { tool: OP.tool, operation: OP.operation, targetResource: req.target.resource },
+        ),
+      (error: unknown) => {
+        const reasons = (error as { reasons?: readonly string[] } | undefined)?.reasons;
+        assert.ok(reasons?.includes('CAPABILITY_VERSION_MISMATCH'), `live-manifest digest mismatch must deny, got ${String(reasons)}`);
+        return true;
+      },
+    );
+    assert.equal(ran, false, 'the side effect never ran after the manifest rotation');
+  });
+
+  it('A-25: two distinct envelopes citing the same one-shot grant — exactly one consumes it', async () => {
+    const delegatee = nextId('a25');
+    const session = await mintSession(delegatee);
+    const grant = await grantDelegation(delegatee, activeDigest, { oneShot: true, useCount: undefined });
+
+    // Two SEPARATE decision envelopes cite the same grant (decide does not consume).
+    const req1 = delRequest(session, grant.id);
+    const env1 = await gate.decideAsync(req1);
+    assert.equal(env1.decision.decision, 'ALLOW');
+    const req2 = delRequest(session, grant.id);
+    const env2 = await gate.decideAsync(req2);
+    assert.equal(env2.decision.decision, 'ALLOW');
+
+    let calls = 0;
+    await gate.executeAuthorized(
+      env1,
+      async () => {
+        calls += 1;
+        return 'first';
+      },
+      { tool: OP.tool, operation: OP.operation, targetResource: req1.target.resource },
+    );
+    assert.equal(calls, 1, 'the first envelope ran its side effect');
+
+    await assert.rejects(
+      () =>
+        gate.executeAuthorized(
+          env2,
+          async () => {
+            calls += 1;
+            return 'second';
+          },
+          { tool: OP.tool, operation: OP.operation, targetResource: req2.target.resource },
+        ),
+      (error: unknown) => {
+        const reasons = (error as { reasons?: readonly string[] } | undefined)?.reasons;
+        assert.ok(reasons?.includes('DELEGATION_CONSUMED'), `the second envelope must deny as consumed, got ${String(reasons)}`);
+        return true;
+      },
+    );
+    assert.equal(calls, 1, 'the second envelope never re-executed the side effect');
+
+    const after = await delegation.getDelegation(TENANT, grant.id);
+    assert.equal(after?.status, 'CONSUMED', 'the one-shot grant was consumed exactly once');
+    assert.ok(after?.consumedAt !== undefined);
   });
 });

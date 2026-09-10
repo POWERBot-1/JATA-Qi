@@ -29,6 +29,7 @@ import {
   type AuthenticationEventDoc,
   type DelegationAssessment,
   type DelegationAssessmentVerdict,
+  type DelegationDenialRecord,
   type DelegationRequirement,
   type DelegationStateAuthority,
   type IdentityStateAuthority,
@@ -230,6 +231,48 @@ function delegationDenialCode(verdict: DelegationAssessmentVerdict): A01DenialRe
       return 'DELEGATION_PLATFORM_SCOPE_REQUIRED';
     case 'APPROVAL_REQUIRED':
       return 'DELEGATION_APPROVAL_REQUIRED';
+  }
+}
+
+/**
+ * Inverse of `delegationDenialCode` (A-01 denial code → assessment verdict).
+ * `undefined` for `DELEGATION_CHECK_UNAVAILABLE` (no assessment verdict —
+ * the delegation plane itself was unavailable) and for unknown codes.
+ */
+function delegationVerdictFromDenialCode(code: A01DenialReason): DelegationAssessmentVerdict | undefined {
+  switch (code) {
+    case 'DELEGATION_UNKNOWN_GRANT':
+      return 'UNKNOWN_GRANT';
+    case 'DELEGATION_NOT_DELEGATEE':
+      return 'NOT_DELEGATEE';
+    case 'DELEGATION_CROSS_TENANT_REFUSED':
+      return 'CROSS_TENANT';
+    case 'DELEGATION_SCOPE_TENANT':
+      return 'SCOPE_TENANT';
+    case 'DELEGATION_SCOPE_OPERATION':
+      return 'SCOPE_OPERATION';
+    case 'DELEGATION_SCOPE_TARGET':
+      return 'SCOPE_TARGET';
+    case 'DELEGATION_SCOPE_CLASSIFICATION':
+      return 'SCOPE_CLASSIFICATION';
+    case 'DELEGATION_SCOPE_IMPACT':
+      return 'SCOPE_IMPACT';
+    case 'DELEGATION_EXPIRED':
+      return 'EXPIRED';
+    case 'DELEGATION_REVOKED':
+      return 'REVOKED';
+    case 'DELEGATION_CONSUMED':
+      return 'CONSUMED';
+    case 'DELEGATION_CHAIN_DEPTH_EXCEEDED':
+      return 'CHAIN_DEPTH';
+    case 'DELEGATION_DELEGATOR_AUTHORITY_CHANGED':
+      return 'DELEGATOR_AUTHORITY_CHANGED';
+    case 'DELEGATION_PLATFORM_SCOPE_REQUIRED':
+      return 'PLATFORM_SCOPE_REQUIRED';
+    case 'DELEGATION_APPROVAL_REQUIRED':
+      return 'APPROVAL_REQUIRED';
+    default:
+      return undefined;
   }
 }
 
@@ -897,6 +940,27 @@ export class DurableDecider {
       },
     });
     await this.recordDecisionTx(collections, envelope);
+    // REMEDIATION (verifier finding 1): durable DELEGATION_DENIED emission in
+    // the SAME tenant transaction as the decision (a write failure rolls the
+    // whole decision back — fail-closed, no un-audited denial). A-16 denials
+    // carry result = DELEGATOR_AUTHORITY_CHANGED. DELEGATION_CHECK_UNAVAILABLE
+    // (authority absent) has no assessment verdict and cannot be recorded —
+    // the decision DENY + S-10 receipt already audit it.
+    const deniedVerdict = delegationVerdictFromDenialCode(denialCode);
+    if (deniedVerdict !== undefined) {
+      const authority = await this.resolveDelegationAuthority();
+      if (authority) {
+        const deniedRecord: DelegationDenialRecord = {
+          delegationId: delegation.delegationId,
+          tenantId: typeof maybeRequest?.tenantId === 'string' ? maybeRequest.tenantId : '',
+          principalId: typeof maybeRequest?.principal?.id === 'string' ? maybeRequest.principal.id : '',
+          verdict: deniedVerdict,
+          detail: `delegation denied: ${denialCode}`,
+          ...(run.correlationId || run.runId ? { correlationId: run.correlationId || run.runId } : {}),
+        };
+        await authority.recordDeniedInTx(collections.scope, deniedRecord, now);
+      }
+    }
     return envelope;
   }
 

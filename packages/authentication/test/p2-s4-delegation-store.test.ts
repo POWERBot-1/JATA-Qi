@@ -326,4 +326,142 @@ describe('P2-S4 durable delegation store (real PostgreSQL)', () => {
       /CLOSED_SCHEMA_VIOLATION/,
     );
   });
+
+  // -- REMEDIATION D: budget/rate constraints are never silently stored -------
+
+  it('rejects unmodeled grant-level budget/rate constraints (UNSUPPORTED_CONSTRAINT, fail-closed)', async () => {
+    await assert.rejects(
+      () => delegation.grantDelegation(grantInput({ constraints: { maxAgeMs: 3_600_000, budgetCeiling: 500 } }), now),
+      /UNSUPPORTED_CONSTRAINT/,
+    );
+    await assert.rejects(
+      () => delegation.grantDelegation(grantInput({ constraints: { maxAgeMs: 3_600_000, budget: 500 } }), now),
+      /UNSUPPORTED_CONSTRAINT/,
+    );
+    await assert.rejects(
+      () => delegation.grantDelegation(grantInput({ constraints: { maxAgeMs: 3_600_000, rate: 10 } }), now),
+      /UNSUPPORTED_CONSTRAINT/,
+    );
+    await assert.rejects(
+      () => delegation.grantDelegation(grantInput({ constraints: { maxAgeMs: 3_600_000, rateLimit: { windowMs: 60_000, max: 10 } } }), now),
+      /UNSUPPORTED_CONSTRAINT/,
+    );
+    // A grant without budget/rate still persists its enforced ceilings.
+    const ok = await delegation.grantDelegation(
+      grantInput({ constraints: { maxAgeMs: 3_600_000, classificationCeiling: 'INTERNAL', impactCeiling: 'REVERSIBLE_WRITE' } }),
+      now,
+    );
+    assert.equal(ok.status, 'ACTIVE');
+    const persisted = await delegation.getDelegation(TENANT, ok.id);
+    assert.deepEqual(persisted?.constraints, {
+      maxAgeMs: 3_600_000,
+      classificationCeiling: 'INTERNAL',
+      impactCeiling: 'REVERSIBLE_WRITE',
+    });
+  });
+
+  // -- REMEDIATION A: durable DELEGATION_USED emission -------------------------
+
+  it('consume emits a durable DELEGATION_USED event (secret-free, attributable)', async () => {
+    const delegatee = nextId('used');
+    const doc = await delegation.grantDelegation(
+      grantInput({ delegateePrincipalId: delegatee, oneShot: true, useCount: undefined }),
+      now,
+    );
+    await delegation.asStateAuthority().consumePlatform(doc.id, now);
+
+    const used = await identity.queryEvents(TENANT, 'DELEGATION_USED');
+    const event = used.find((e) => e.principalId === delegatee);
+    assert.ok(event, 'DELEGATION_USED is emitted durably on consumption');
+    assert.equal(event.resource, 'identity.delegations');
+    assert.equal(event.decision, 'ALLOW');
+    for (const key of Object.keys(event)) {
+      assert.doesNotMatch(key, /material|secret|token|password|privatekey|jwks/i);
+    }
+  });
+
+  // -- REMEDIATION B: §8.2.7 disablement cascade ------------------------------
+
+  it('§8.2.7 cascade: suspending an identity revokes its ACTIVE grants as delegator AND delegatee', async () => {
+    const delegator = nextId('cascade-del');
+    const peer = nextId('cascade-peer');
+    await identity.enroll({ principalId: delegator, tenantId: TENANT, roles: ['operator'], enrolledBy: 'user:admin' }, now);
+    await identity.activate(delegator, TENANT, { authenticationEventId: 'evt-cascade-activate', method: 'STATIC_TOKEN' }, now);
+
+    const asDelegator = await delegation.grantDelegation(
+      grantInput({ delegatorPrincipalId: delegator, delegateePrincipalId: peer }),
+      now,
+    );
+    const asDelegatee = await delegation.grantDelegation(
+      grantInput({ delegatorPrincipalId: peer, delegateePrincipalId: delegator }),
+      now,
+    );
+    assert.equal((await delegation.getDelegation(TENANT, asDelegator.id))?.status, 'ACTIVE');
+    assert.equal((await delegation.getDelegation(TENANT, asDelegatee.id))?.status, 'ACTIVE');
+
+    await identity.suspend(delegator, TENANT, 'cascade probe', now);
+
+    const delegatorSide = await delegation.getDelegation(TENANT, asDelegator.id);
+    const delegateeSide = await delegation.getDelegation(TENANT, asDelegatee.id);
+    assert.equal(delegatorSide?.status, 'REVOKED', 'the delegator-side grant is revoked by the cascade');
+    assert.equal(delegateeSide?.status, 'REVOKED', 'the delegatee-side grant is revoked by the cascade');
+    assert.match(delegatorSide?.revocationReason ?? '', /cascade probe/);
+    assert.match(delegateeSide?.revocationReason ?? '', /cascade probe/);
+
+    const revoked = await identity.queryEvents(TENANT, 'DELEGATION_REVOKED');
+    assert.ok(
+      revoked.filter((e) => e.principalId === peer || e.principalId === delegator).length >= 2,
+      'the cascade emits durable DELEGATION_REVOKED events',
+    );
+  });
+
+  it('§8.2.7 cascade (deprovision): revokes grants still ACTIVE after suspension and is idempotent for already-revoked grants', async () => {
+    const delegator = nextId('deprov-del');
+    const peer = nextId('deprov-peer');
+    await identity.enroll({ principalId: delegator, tenantId: TENANT, roles: ['operator'], enrolledBy: 'user:admin' }, now);
+    await identity.activate(delegator, TENANT, { authenticationEventId: 'evt-deprov-activate', method: 'STATIC_TOKEN' }, now);
+
+    const before = await delegation.grantDelegation(
+      grantInput({ delegatorPrincipalId: delegator, delegateePrincipalId: peer }),
+      now,
+    );
+    await identity.suspend(delegator, TENANT, 'deprov step 1', now);
+    assert.equal((await delegation.getDelegation(TENANT, before.id))?.status, 'REVOKED', 'suspension already revoked the first grant');
+
+    // A grant minted while SUSPENDED (grant-time does not re-read identity state).
+    const whileSuspended = await delegation.grantDelegation(
+      grantInput({ delegatorPrincipalId: delegator, delegateePrincipalId: peer }),
+      now,
+    );
+    assert.equal((await delegation.getDelegation(TENANT, whileSuspended.id))?.status, 'ACTIVE');
+
+    await identity.deactivate(delegator, TENANT, 'deprov step 2', now);
+    const result = await identity.deprovision(delegator, TENANT, 'deprov step 3', now);
+
+    assert.equal(result.delegationsRevoked, 1, 'deprovision revoked exactly the one grant still ACTIVE (idempotent for the already-revoked grant)');
+    assert.equal((await delegation.getDelegation(TENANT, whileSuspended.id))?.status, 'REVOKED');
+    assert.equal((await delegation.getDelegation(TENANT, before.id))?.status, 'REVOKED', 'the already-revoked grant stays revoked');
+  });
+
+  it('§8.2.7 cascade is tenant-scoped: suspension does not touch another tenant\'s grants', async () => {
+    const delegator = nextId('xt-cascade-del');
+    const peer = nextId('xt-cascade-peer');
+    await identity.enroll({ principalId: delegator, tenantId: TENANT, roles: ['operator'], enrolledBy: 'user:admin' }, now);
+    await identity.activate(delegator, TENANT, { authenticationEventId: 'evt-xt-cascade', method: 'STATIC_TOKEN' }, now);
+
+    // A grant in a DIFFERENT tenant that happens to name the same principal.
+    const foreign = await delegation.grantDelegation(
+      grantInput({ tenantId: OTHER, delegatorPrincipalId: delegator, delegateePrincipalId: peer }),
+      now,
+    );
+    const local = await delegation.grantDelegation(
+      grantInput({ delegatorPrincipalId: delegator, delegateePrincipalId: peer }),
+      now,
+    );
+
+    await identity.suspend(delegator, TENANT, 'cross-tenant cascade probe', now);
+
+    assert.equal((await delegation.getDelegation(TENANT, local.id))?.status, 'REVOKED', 'the local grant is revoked');
+    assert.equal((await delegation.getDelegation(OTHER, foreign.id))?.status, 'ACTIVE', 'the foreign-tenant grant is untouched (tenant isolation)');
+  });
 });

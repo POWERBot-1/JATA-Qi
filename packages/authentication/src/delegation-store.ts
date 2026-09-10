@@ -37,6 +37,7 @@ import {
   delegationTargetScopeWithin,
   type DelegationAssessment,
   type DelegationApprovalBinding,
+  type DelegationDenialRecord,
   type DelegationDoc,
   type DelegationPeek,
   type DelegationRequirement,
@@ -58,6 +59,98 @@ const IDENTITY_EVENT_FIELDS = new Set([
   'id', 'at', 'tenantId', 'kind', 'principalId', 'resource', 'authority', 'decision', 'result',
   'detail', 'correlationId',
 ]);
+
+/** Append one delegation audit event in the caller's transaction (fail-closed). */
+async function appendIdentityEventInTx(scope: StorageWriteScope, event: IdentityEventDoc): Promise<void> {
+  assertIdentityDocumentShape(event as unknown as Record<string, unknown>, IDENTITY_EVENT_FIELDS, 'identityEvent');
+  const events = await scope.collection<IdentityEventDoc>(IDENTITY_EVENTS_COLLECTION);
+  const res = await events.cas(event.id, (cur) => cur === undefined, () => ({ ...event }));
+  if (!res.ok) {
+    throw new DelegationStoreError('EVENT_ALREADY_RECORDED', `identity event "${event.id}" is already recorded (fail-closed).`);
+  }
+}
+
+/** Build a grant-bound delegation audit event (GRANTED/REVOKED/USED/DENIED). */
+function delegationEventDoc(
+  kind: 'DELEGATION_GRANTED' | 'DELEGATION_REVOKED' | 'DELEGATION_USED' | 'DELEGATION_DENIED',
+  doc: DelegationDoc,
+  actor: string,
+  result: string,
+  correlationId: string | undefined,
+  detail: string,
+): IdentityEventDoc {
+  return {
+    id: randomUUID(),
+    at: doc.updatedAt,
+    tenantId: doc.tenantId,
+    kind,
+    principalId: doc.delegateePrincipalId,
+    resource: DELEGATIONS_COLLECTION,
+    authority: { actor },
+    decision: kind === 'DELEGATION_DENIED' ? 'DENY' : 'ALLOW',
+    result,
+    detail,
+    ...(correlationId ? { correlationId } : {}),
+  };
+}
+
+/** Build a `DELEGATION_DENIED` event from a denial record (no grant doc required). */
+function delegationDeniedEventDoc(denial: DelegationDenialRecord, now: number): IdentityEventDoc {
+  return {
+    id: randomUUID(),
+    at: now,
+    tenantId: denial.tenantId,
+    kind: 'DELEGATION_DENIED',
+    principalId: denial.principalId,
+    resource: DELEGATIONS_COLLECTION,
+    authority: { actor: denial.principalId },
+    decision: 'DENY',
+    result: denial.verdict,
+    detail: denial.detail,
+    ...(denial.correlationId ? { correlationId: denial.correlationId } : {}),
+  };
+}
+
+/**
+ * REMEDIATION (§8.2.7 / S4.4): the identity disablement cascade over the
+ * delegation store. Runs INSIDE the identity transition's tenant transaction
+ * (passed scope), so the state change and the grant revocations commit or
+ * roll back together (fail-closed). Revokes every ACTIVE grant where the
+ * principal is the DELEGATOR or the DELEGATEE (spec §8.2.7: "delegator …
+ * delegatee likewise"), each as a CAS-guarded transition with a durable
+ * `DELEGATION_REVOKED` event. Cross-tenant safe: the scope is RLS-bound to
+ * the identity's tenant, so a foreign tenant's grants are never touched.
+ */
+export async function cascadeRevokeDelegationsInTx(
+  scope: StorageWriteScope,
+  input: { readonly principalId: string; readonly tenantId: string; readonly reason: string },
+  now: number,
+): Promise<number> {
+  const grants = await scope.collection<DelegationDoc>(DELEGATIONS_COLLECTION);
+  const rows = await grants.query({
+    where: (g) =>
+      g.tenantId === input.tenantId &&
+      g.status === 'ACTIVE' &&
+      (g.delegatorPrincipalId === input.principalId || g.delegateePrincipalId === input.principalId),
+  });
+  let revoked = 0;
+  for (const row of rows) {
+    assertDelegationDocumentShape(row as unknown as Record<string, unknown>, DELEGATION_FIELDS, 'delegation');
+    const res = await grants.cas(
+      row.id,
+      (cur) => !!cur && cur.status === 'ACTIVE' && cur.tenantId === input.tenantId,
+      (cur) => ({ ...cur, status: 'REVOKED' as const, revokedAt: now, revocationReason: input.reason, updatedAt: now }),
+    );
+    if (res.ok && res.doc) {
+      revoked += 1;
+      await appendIdentityEventInTx(
+        scope,
+        delegationEventDoc('DELEGATION_REVOKED', res.doc, 'identity:cascade', 'revoked', undefined, `identity disablement cascade: ${input.reason}`),
+      );
+    }
+  }
+  return revoked;
+}
 
 function isNonBlank(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
@@ -138,6 +231,20 @@ function assertValidGrant(input: GrantDelegationInput, now: number): void {
     throw new DelegationStoreError(
       'INVALID_LIFETIME',
       `delegation maxAgeMs must be within (0, ${MAX_DELEGATION_LIFETIME_MS}] ms (fail-closed).`,
+    );
+  }
+  // REMEDIATION (verifier finding 4): grant-level budget/rate are NOT modeled
+  // in S4 (the capability manifest's budget/rate, enforced by the A-01
+  // pipeline, is the authority). Reject them rather than silently accepting
+  // an unenforced constraint.
+  const rawConstraints = input.constraints as unknown as Record<string, unknown> | undefined;
+  if (
+    rawConstraints &&
+    ('budget' in rawConstraints || 'budgetCeiling' in rawConstraints || 'rate' in rawConstraints || 'rateLimit' in rawConstraints)
+  ) {
+    throw new DelegationStoreError(
+      'UNSUPPORTED_CONSTRAINT',
+      'grant-level budget/rate constraints are not modeled in S4; the capability manifest (budgetPerRunCostUnits/rateLimit, enforced by the A-01 pipeline) is the budget/rate authority (fail-closed).',
     );
   }
   if (!isDelegationChainDepthAllowed(input.chainDepth)) {
@@ -235,7 +342,6 @@ function buildDelegation(input: GrantDelegationInput, id: string, now: number): 
       maxAgeMs: input.constraints.maxAgeMs,
       ...(input.constraints.classificationCeiling !== undefined ? { classificationCeiling: input.constraints.classificationCeiling } : {}),
       ...(input.constraints.impactCeiling !== undefined ? { impactCeiling: input.constraints.impactCeiling } : {}),
-      ...(input.constraints.budgetCeiling !== undefined ? { budgetCeiling: input.constraints.budgetCeiling } : {}),
     },
     chainDepth: input.chainDepth,
     chain: [...input.chain],
@@ -299,12 +405,7 @@ export class DelegationStore {
   // -- events ----------------------------------------------------------------
 
   private async appendEventInTx(scope: StorageWriteScope, event: IdentityEventDoc): Promise<void> {
-    assertIdentityDocumentShape(event as unknown as Record<string, unknown>, IDENTITY_EVENT_FIELDS, 'identityEvent');
-    const events = await scope.collection<IdentityEventDoc>(IDENTITY_EVENTS_COLLECTION);
-    const res = await events.cas(event.id, (cur) => cur === undefined, () => ({ ...event }));
-    if (!res.ok) {
-      throw new DelegationStoreError('EVENT_ALREADY_RECORDED', `identity event "${event.id}" is already recorded (fail-closed).`);
-    }
+    return appendIdentityEventInTx(scope, event);
   }
 
   private delegationEvent(
@@ -315,19 +416,7 @@ export class DelegationStore {
     correlationId: string | undefined,
     detail: string,
   ): IdentityEventDoc {
-    return {
-      id: randomUUID(),
-      at: doc.updatedAt,
-      tenantId: doc.tenantId,
-      kind,
-      principalId: doc.delegateePrincipalId,
-      resource: DELEGATIONS_COLLECTION,
-      authority: { actor },
-      decision: kind === 'DELEGATION_DENIED' ? 'DENY' : 'ALLOW',
-      result,
-      detail,
-      ...(correlationId ? { correlationId } : {}),
-    };
+    return delegationEventDoc(kind, doc, actor, result, correlationId, detail);
   }
 
   // -- authority surface ------------------------------------------------------
@@ -389,7 +478,12 @@ export class DelegationStore {
             `delegation "${delegationId}" is not consumable (status ${current.status}; fail-closed).`,
           );
         }
-        return result.doc;
+        const consumed = result.doc;
+        await appendIdentityEventInTx(
+          scope,
+          delegationEventDoc('DELEGATION_USED', consumed, consumed.delegateePrincipalId, 'consumed', undefined, `remaining=${consumed.useCount ?? 0}`),
+        );
+        return consumed;
       },
       consumePlatform: async (delegationId: string, now: number): Promise<DelegationDoc> => {
         return this.inSystem(async (scope) => {
@@ -417,8 +511,16 @@ export class DelegationStore {
               `delegation "${delegationId}" is not consumable (status ${current.status}; fail-closed).`,
             );
           }
-          return result.doc;
+          const consumed = result.doc;
+          await appendIdentityEventInTx(
+            scope,
+            delegationEventDoc('DELEGATION_USED', consumed, consumed.delegateePrincipalId, 'consumed', undefined, `remaining=${consumed.useCount ?? 0}`),
+          );
+          return consumed;
         });
+      },
+      recordDeniedInTx: async (scope: StorageWriteScope, denial: DelegationDenialRecord, now: number): Promise<void> => {
+        await appendIdentityEventInTx(scope, delegationDeniedEventDoc(denial, now));
       },
     };
   }

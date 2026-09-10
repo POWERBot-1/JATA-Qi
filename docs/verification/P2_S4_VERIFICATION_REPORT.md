@@ -50,9 +50,14 @@ source edit (no silent drift).
   filesystem are never delegation authority). CAS-guarded transitions;
   insert-once ids; grant ⊆ delegator-live-manifest subset defense-in-depth;
   platform-scope grants require a recorded platform elevation + a bound digest
-  approval; every grant/revoke emits a durable `DELEGATION_GRANTED` /
+  approval; every grant/revoke/use/deny emits a durable `DELEGATION_GRANTED` /
   `DELEGATION_REVOKED` / `DELEGATION_USED` / `DELEGATION_DENIED` event in the
   SAME transaction (an audit-write failure fails the operation).
+  > **Corrected by the remediation pass (see §13):** at the original
+  > implementation commit `5623af5` only `DELEGATION_GRANTED`/`DELEGATION_REVOKED`
+  > were actually emitted — `DELEGATION_USED`/`DELEGATION_DENIED` were declared
+  > but never written (independent-verification finding 1, §13). The remediation
+  > commit emits all four durably over every use/deny path.
 - **`src/authentication-module.ts`**: opens the delegation store alongside the
   identity/session/privilege stores (fail-closed at open); registers
   `authentication.delegation-store`.
@@ -111,14 +116,19 @@ All PostgreSQL suites use the fail-hard embedded-PostgreSQL helper
 
 | Suite | Tests | Result |
 | --- | --- | --- |
-| `p2-s4-delegation-store.test.ts` (new) | 16 | pass 16, skip 0 |
-| `p2-s4-delegation-decision.test.ts` (new) | 17 | pass 17, skip 0 |
+| `p2-s4-delegation-store.test.ts` (new, remediated) | 21 | pass 21, skip 0 |
+| `p2-s4-delegation-decision.test.ts` (new, remediated) | 23 | pass 23, skip 0 |
 | `p2-s3-posture-invariants.test.ts` (extended +3) | 8 | pass 8, skip 0 |
-| `@jataqi/authentication` (full) | 175 | pass 175, skip 0 |
-| `@jataqi/authorization-boundary` (full) | 177 | pass 177, skip 0 |
+| `@jataqi/authentication` (full, remediated) | 180 | pass 180, skip 0 |
+| `@jataqi/authorization-boundary` (full, remediated) | 183 | pass 183, skip 0 |
 | **Full workspace** `npm test` | 50 workspaces | **Passed: 50 · Failed: 0 · Skipped: 0** |
 
-### 4.1 Store-level coverage (16)
+> Test counts above reflect the remediation commit (store 16→21, decision
+> 17→23; authentication 175→180, boundary 177→183). The original
+> implementation counts (16/17/175/177) are preserved in §13's provenance
+> table.
+
+### 4.1 Store-level coverage (21)
 
 Non-transactional-source refusal; durable `DELEGATION_GRANTED`/`REVOKED`
 events (secret-free, in the same store); idempotent reason-mandatory
@@ -132,7 +142,7 @@ consumption (3-way race ⇒ exactly one winner)**; counted-grant decrement to
 `CONSUMED`; revoked-grant consumption refusal; closed-schema +
 material-shaped-field refusal.
 
-### 4.2 Decision / enforcement coverage (17)
+### 4.2 Decision / enforcement coverage (23)
 
 VALID delegation ALLOW + `delegationStatus: VALID` citation; direct
 invocation without a reference is unchanged (pre-P2-S4 behavior);
@@ -147,6 +157,20 @@ decision after enforcement ⇒ `DELEGATION_CONSUMED`); **replay** (same envelope
 twice fails closed, no duplicate side effect); **enforcement re-validation**
 (revocation after decide denies BEFORE the side effect); restart re-read (a
 second gate over the same PostgreSQL reads the same durable grant).
+
+**Remediation acceptance coverage (added, see §13):**
+- A-08 full 4-way widening (operation / target / classification / impact) —
+  each DENIES with its specific `DELEGATION_SCOPE_*` code and the grant row is
+  untouched;
+- A-09 platform-scope positive path — explicit platform scope + recorded
+  platform elevation + bound approval ALLOWs cross-tenant;
+- A-16 durable `DELEGATION_DENIED` emission with `result =
+  DELEGATOR_AUTHORITY_CHANGED`;
+- chain depth 1 and 2 are both exercisable;
+- A-24 live-manifest digest mismatch at enforcement ⇒
+  `CAPABILITY_VERSION_MISMATCH` before the side effect;
+- A-25 two distinct envelopes citing one one-shot grant ⇒ exactly one
+  consumes (the second DENIES `DELEGATION_CONSUMED`, `consumedAt` asserted).
 
 ### 4.3 Posture invariants (P2-INV-04 delegation half)
 
@@ -182,7 +206,11 @@ code was changed to make the suite pass.
 | Revoke-after-decide, before-enforce | DENY before the side effect |
 
 All refusals go through the authoritative durable path and are durably
-auditable (deny receipts + `DELEGATION_DENIED` event capability).
+auditable. **Remediated (see §13):** every delegation denial now also emits a
+durable `DELEGATION_DENIED` identity event in the same transaction as the
+decision (the original implementation only declared the event type — the
+deny receipts and decision audits existed, but the `DELEGATION_DENIED` event
+itself was not emitted until the remediation commit).
 
 ---
 
@@ -200,9 +228,13 @@ auditable (deny receipts + `DELEGATION_DENIED` event capability).
 ## 7. S1 / S2 / S3 regression
 
 The S1 identity core, S2 session tokens/fanout, and S3 privilege plane suites
-all remain green (authentication 175 tests, authorization-boundary 177 tests,
+all remain green (authentication 180 tests, authorization-boundary 183 tests,
 full workspace 50/50 with 0 skip). No test was weakened or removed; no silent
-PG skip was introduced.
+PG skip was introduced. The one S1 assertion updated by the remediation is the
+`DeprovisionResult` shape in `p2-s1-identity-core.test.ts` — it now ALSO
+asserts `delegationsRevoked: 0` (the §8.2.7 delegation-cascade count for an
+identity that holds no grants); every original S1 cascade assertion
+(sessions/tokens/roles) is preserved unchanged.
 
 ---
 
@@ -216,10 +248,11 @@ PG skip was introduced.
   `docs/verification/P2_S2_VERIFICATION_REPORT.md` and
   `docs/verification/P2_S3_VERIFICATION_REPORT.md` artifacts from the existing
   PR evidence.
-- **Independent verification**: NOT yet performed. A genuinely separate pass
-  (independent reviewer/process, not this implementation session) must re-run
-  the commands and record its own result before this can be marked
-  independently verified.
+- **Independent verification**: PERFORMED (read-only, fresh clone, real
+  PostgreSQL) against PR #32 at head `40350aa` — determination **B (PASS WITH
+  NON-BLOCKING FINDINGS)**. Findings 1–7 are itemized in §13. The remediation
+  pass addresses them, and a FRESH independent re-verification of the
+  remediation commit is REQUIRED before any merge can be authorized.
 
 ---
 
@@ -232,7 +265,7 @@ PG skip was introduced.
 | F3 | `approvalRequired` enforcement (register-only in S3) | OPEN / NON-BLOCKING — S4 exercises approval-mandatory-at-grant; decision-time approval re-check remains limited |
 | F4 | Bootstrap operator / CLI gap | OPEN / NON-BLOCKING — the delegation resolver is wired in `bootstrap.ts`, but no CLI operator surface exists yet |
 | F5 | Step-up re-verification | OPEN / NON-BLOCKING — not in S4 scope |
-| F6 | A-16/A-24 adversarial exercise (S4 acceptance) | **CLOSED by direct evidence** — chain-integrity rotation (A-16) and one-shot/consumption/replay races (A-24) are exercised in `p2-s4-delegation-decision.test.ts` / `p2-s4-delegation-store.test.ts` |
+| F6 | A-16/A-24 adversarial exercise (S4 acceptance) | **PARTIALLY CLOSED → (remediation in review)** — the original report's "CLOSED by direct evidence" claim was downgraded by independent verification (finding 7): A-16 deny was tested but its audit event was missing, and A-24 was untested. The remediation commit adds the A-16 `DELEGATION_DENIED` audit assertion and the A-24 live-manifest-digest enforcement test; F6 may only be re-marked CLOSED after a fresh independent re-verification of both |
 
 ---
 
@@ -271,10 +304,11 @@ PG skip was introduced.
 
 - **Merge**: NOT performed. This report does not constitute merge
   authorization. Merging requires a separate, explicit human authorization
-  after independent verification.
+  after a FRESH independent re-verification of the remediation commit.
 - **Production**: NOT declared. No production-readiness, full-hardening, or
   95%/120% claim is made without environment evidence.
-- **Independent verification status**: PENDING (not yet performed).
+- **Independent verification status**: first pass performed (determination B);
+  remediation re-verification PENDING (not yet performed).
 
 ---
 
@@ -293,3 +327,61 @@ cd packages/authentication  && node --test dist/test/p2-s4-delegation-store.test
 cd packages/authorization-boundary && node --test dist/test/p2-s4-delegation-decision.test.js
 cd packages/cli && node --test dist/test/p2-s3-posture-invariants.test.js
 ```
+
+---
+
+## 13. Remediation pass (findings → disposition)
+
+This section records the P2-S4 remediation pass that followed the first
+independent verification (determination **B — PASS WITH NON-BLOCKING
+FINDINGS**, head `40350aa`). It identifies each original finding, the
+remediated state, what has been independently verified, and what remains.
+Nothing in this section erases or rewrites the original record above; §1–§12
+remain the historical evidence as committed at `40350aa`.
+
+### 13.1 Finding dispositions
+
+| # | Original finding | Remediated | Independently re-verified? | Remaining |
+| --- | --- | --- | --- | --- |
+| 1 | `DELEGATION_USED` / `DELEGATION_DENIED` were declared but never emitted (§13 audit completeness FAILED) | **Yes** — `consumeInTx`/`consumePlatform` now append a durable `DELEGATION_USED` in-tx; every decision-path delegation deny (`renderDelegationDenyTx`) now appends a durable `DELEGATION_DENIED` in the same tenant transaction (A-16 carries `result = DELEGATOR_AUTHORITY_CHANGED`). Secret-free, attributable, transactional (a write failure rolls the whole decision back — fail-closed), no duplicate semantics, no emission-time bypass | **No** — needs the fresh pass | Store/decision tests assert the events land in `identity.events` |
+| 2 | §8.2.7/S4.4 revocation cascade on delegator suspend/deprovision not implemented | **Yes** — `cascadeRevokeDelegationsInTx` revokes the principal's ACTIVE grants (delegator AND delegatee) inside the SAME tenant transaction as `suspend`/`deprovision`; `DeprovisionResult.delegationsRevoked` reports the count. CAS-guarded, idempotent (already-revoked grants are not re-revoked), tenant-scoped (foreign-tenant grants untouched), concurrency-safe (CAS, single snapshot) | **No** — needs the fresh pass | Store tests cover suspend/deprovision, delegator+delegatee, already-revoked, still-ACTIVE-at-deprovision, cross-tenant isolation |
+| 3 | A-09 code deviation: `DELEGATION_UNKNOWN_GRANT` emitted where the spec row says `DELEGATION_CROSS_TENANT_REFUSED` | **Reconciled by documented decision (privacy-preserving)** — the externally-observable refusal stays `DELEGATION_UNKNOWN_GRANT`, INDISTINGUISHABLE from an unknown grant, so a cross-tenant probe cannot learn whether a grant exists in another tenant (an existence oracle would violate INV-15 tenant invisibility and §8.2.2's default-refusal semantics). Emitting `DELEGATION_CROSS_TENANT_REFUSED` for the foreign-tenant case while emitting `DELEGATION_UNKNOWN_GRANT` for the unknown case would create exactly that leak. The behavioral A-09 semantics (cross-tenant refused by default; only the fully-audited platform path succeeds) are fully satisfied and now explicitly tested (positive platform 3-way path + indistinguishable refusal) | **No** — needs the fresh pass | This is a governed, documented deviation, not a silent gap; a future pass may re-label only if it preserves indistinguishability |
+| 4 | `budgetCeiling` accepted but never enforced; `rate` absent | **Yes** — grant-level `budget`/`budgetCeiling`/`rate`/`rateLimit` are now REJECTED at grant creation (`UNSUPPORTED_CONSTRAINT`) rather than silently stored unenforced. The capability manifest (`budgetPerRunCostUnits` + `rateLimit`, enforced by the A-01 pipeline for every decision incl. delegated) is the budget/rate authority | **No** — needs the fresh pass | Store test asserts the rejection + that ceilings without budget/rate persist correctly |
+| 5 | §24-S4 acceptance evidence gaps (4-way widening tenant case, 3-way platform path, depth 1/2, A-24, A-25 literal) | **Yes** — added: A-08 4-way widening (operation/target/classification/impact, grant untouched); A-09 platform-scope positive (explicit scope + elevation + approval); chain depth 1 and 2; A-24 live-manifest digest mismatch at enforcement; A-25 two-distinct-envelopes-from-one-grant | **No** — needs the fresh pass | All are executable against the real boundary + real PostgreSQL |
+| 6 | Loop-host embedded-PG parallel-boot flake | **Not a product change** — re-confirmed environment-dependent (loop-host has zero S4 involvement; 176/176 in isolation). No loop-host test was altered; no skip introduced. Re-run and report honestly each pass | Re-confirmed in this pass | Report honestly on every full run |
+| 7 | Verification report overstated USED/DENIED emission and F6 closure | **Yes** — §2.1/§5 corrected in place (with explicit "corrected" annotations), F6 re-marked PARTIALLY CLOSED → remediation-in-review, and this §13 records original vs remediated vs verified vs remaining | **No** — needs the fresh pass | F6 may only be re-marked CLOSED after fresh re-verification of A-16 AND A-24 |
+
+### 13.2 What was NOT changed
+
+- Single PostgreSQL authority; delegation truth only in `identity.delegations`.
+- Fail-closed authorization, tenant isolation, transaction safety, idempotency,
+  concurrency safety (CAS), no ambient delegation, no grant-all, no
+  client-controlled authority, chain validation, replay protection, CAS
+  consumption, enforcement-time re-validation.
+- No S1/S2/S3 behavior was weakened; no loop-host test was altered; no PG skip
+  was introduced (fail-hard).
+- AI/model output remains a non-authority; prompt-injection, confused-deputy,
+  sandbox-escape, tool-abuse, cross-tenant RAG/cache contamination stay
+  explicitly unresolved.
+
+### 13.3 Remediation results (this pass, real PostgreSQL, 0 skip)
+
+| Gate | Result |
+| --- | --- |
+| `packages/authentication` full suite | 180/180 pass, 0 skip |
+| `packages/authorization-boundary` full suite | 183/183 pass, 0 skip |
+| `p2-s4-delegation-store.test.ts` | 21/21 pass, 0 skip |
+| `p2-s4-delegation-decision.test.ts` | 23/23 pass, 0 skip |
+| `p2-s3-posture-invariants.test.ts` | 8/8 pass, 0 skip |
+| Build (`npm run build`) | all workspaces passed |
+| Lint (`npm run lint`) | 0 errors, 60 warnings (all pre-existing; none in changed files) |
+| Secret scan (`npm run scan:r2`) | PASS, 0 findings |
+
+### 13.4 Status
+
+- **95% / production**: NOT claimed; production NOT declared. Merge/deploy
+  remain NOT authorized.
+- **Next required step**: a FRESH independent re-verification of the
+  remediation commit against PR #32 (the verifier must re-check every previous
+  finding, including findings 1–7), followed by a separate explicit human
+  merge authorization. This report does not merge, approve, or deploy anything.

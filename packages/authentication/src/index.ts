@@ -271,6 +271,7 @@ export type {
   DelegationAssessment,
   DelegationRequirement,
   DelegationPeek,
+  DelegationDenialRecord,
   DelegationStateAuthority,
 } from './delegation-types.js';
 export { DelegationStore } from './delegation-store.js';
