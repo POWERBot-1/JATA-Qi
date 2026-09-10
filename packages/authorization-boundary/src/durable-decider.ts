@@ -24,8 +24,13 @@
 import { randomUUID } from 'node:crypto';
 import {
   assessSessionRow,
+  classifyPrivilegedA01,
+  PRIVILEGE_PLATFORM_TENANT,
   type AuthenticationEventDoc,
   type IdentityStateAuthority,
+  type PrivilegeElevationAssessment,
+  type PrivilegeOperationClass,
+  type PrivilegeStateAuthority,
 } from '@jataqi/authentication';
 import { StorageModule, type ICollection } from '@jataqi/storage';
 import { buildConsumedAuditRecord, buildDecisionAuditRecord } from './audit.js';
@@ -89,6 +94,16 @@ export interface DurableDeciderDeps {
    * fail-closed: a resolver/lookup failure is a storage-failure DENY.
    */
   readonly identityAuthorityResolver?: () => IdentityStateAuthority | undefined | Promise<IdentityStateAuthority | undefined>;
+  /**
+   * P2-S3: the privilege-state authority resolver for the durable decision
+   * path (spec §24-S3). Lazy (resolved at first decision, when the kernel is
+   * fully booted). Absent ⇒ a registered privileged operation DENIES with
+   * PRIVILEGE_CHECK_UNAVAILABLE (fail-closed — no ambient authority). Present
+   * ⇒ every privileged decision re-reads the durable elevation inside its
+   * transaction (tenant scope) or in an explicit system-scope read (platform
+   * scope); the enforcement path re-validates before the side effect.
+   */
+  readonly privilegeAuthorityResolver?: () => PrivilegeStateAuthority | undefined | Promise<PrivilegeStateAuthority | undefined>;
 }
 
 /** Internal: a COMPLETED S-5 row was found — roll back Tx-1 and return the receipt. */
@@ -110,6 +125,47 @@ function isValidTenantId(value: unknown): value is string {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** P2-S3: a register-classified privileged requirement (Phase-A state). */
+interface PrivilegeStageState {
+  readonly requirement: {
+    readonly principalId: string;
+    readonly tenantId: string;
+    readonly sessionEventId?: string;
+    readonly operationClass: PrivilegeOperationClass;
+    readonly scope: 'tenant' | 'platform';
+    readonly stepUpRequired: boolean;
+    readonly stepUpMaxAgeMs: number;
+  };
+  readonly operationId: string;
+  readonly operationClass: string;
+  /** True when no privilege authority is configured (fail-closed deny). */
+  readonly unavailable?: boolean;
+  /** Pre-computed platform-scope assessment (system read, Phase A). */
+  readonly platformAssessment?: PrivilegeElevationAssessment;
+}
+
+/** Map an elevation assessment verdict to its A-01 denial code (VALID ⇒ undefined). */
+function privilegeDenialCode(verdict: PrivilegeElevationAssessment['verdict']): A01DenialReason | undefined {
+  switch (verdict) {
+    case 'VALID':
+      return undefined;
+    case 'EXPIRED':
+      return 'PRIVILEGE_ELEVATION_EXPIRED';
+    case 'REVOKED':
+      return 'PRIVILEGE_ELEVATION_REVOKED';
+    case 'SCOPE_MISMATCH':
+      return 'PRIVILEGE_SCOPE_MISMATCH';
+    case 'ROLE_MISMATCH':
+      return 'PRIVILEGE_ROLE_MISMATCH';
+    case 'SESSION_MISMATCH':
+      return 'PRIVILEGE_SESSION_MISMATCH';
+    case 'STEP_UP_STALE':
+      return 'STEP_UP_STALE';
+    case 'REQUIRED':
+      return 'PRIVILEGE_ELEVATION_REQUIRED';
   }
 }
 
@@ -141,8 +197,11 @@ export class DurableDecider {
   private readonly now: () => number;
   private readonly verifyKernelPrincipal: ((principal: unknown, scope: string) => boolean) | undefined;
   private readonly identityAuthorityResolver: DurableDeciderDeps['identityAuthorityResolver'];
+  private readonly privilegeAuthorityResolver: DurableDeciderDeps['privilegeAuthorityResolver'];
   private identityAuthorityCache: IdentityStateAuthority | undefined;
   private identityAuthorityResolved = false;
+  private privilegeAuthorityCache: PrivilegeStateAuthority | undefined;
+  private privilegeAuthorityResolved = false;
 
   constructor(deps: DurableDeciderDeps) {
     this.store = deps.store;
@@ -153,6 +212,7 @@ export class DurableDecider {
     this.now = deps.now;
     this.verifyKernelPrincipal = deps.verifyKernelPrincipal;
     this.identityAuthorityResolver = deps.identityAuthorityResolver;
+    this.privilegeAuthorityResolver = deps.privilegeAuthorityResolver;
   }
 
   /**
@@ -173,6 +233,74 @@ export class DurableDecider {
       throw error;
     }
     return this.identityAuthorityCache;
+  }
+
+  /**
+   * P2-S3: lazily resolve the privilege-state authority (once; the kernel is
+   * fully booted by decision time). Fail-closed: a resolver failure re-throws
+   * (the Phase-B catch turns it into a storage-failure DENY) and is NOT
+   * cached as "resolved" — a broken resolver must keep failing closed.
+   */
+  private async resolvePrivilegeAuthority(): Promise<PrivilegeStateAuthority | undefined> {
+    if (this.privilegeAuthorityResolved) return this.privilegeAuthorityCache;
+    this.privilegeAuthorityResolved = true;
+    try {
+      this.privilegeAuthorityCache = this.privilegeAuthorityResolver
+        ? await this.privilegeAuthorityResolver()
+        : undefined;
+    } catch (error) {
+      this.privilegeAuthorityResolved = false;
+      throw error;
+    }
+    return this.privilegeAuthorityCache;
+  }
+
+  /** P2-S3 structural probe (P2-INV-04): is a privilege authority live? */
+  async hasLivePrivilegeAuthority(): Promise<boolean> {
+    return (await this.resolvePrivilegeAuthority()) !== undefined;
+  }
+
+  /**
+   * P2-S3: register-classify the request and build the privilege-stage state.
+   * Returns `undefined` when the request is not privileged or is a verified
+   * kernel-internal principal (its closed cryptographic scopes are the
+   * authority — same rule as the session/identity stages). Absent authority +
+   * a privileged request ⇒ `unavailable` (fail-closed deny). Platform-scoped
+   * requirements are assessed here (Phase-A system read); tenant-scoped ones
+   * are assessed inside Phase-B.
+   */
+  private async classifyPrivilege(
+    maybeRequest: A01AuthorizationRequest | null | undefined,
+    now: number,
+  ): Promise<PrivilegeStageState | undefined> {
+    const tool = typeof maybeRequest?.tool === 'string' ? maybeRequest.tool : '';
+    const operation = typeof maybeRequest?.operation === 'string' ? maybeRequest.operation : '';
+    const entry = classifyPrivilegedA01(tool, operation);
+    if (!entry) return undefined;
+    const principal = maybeRequest?.principal as
+      | { id?: unknown; authenticationMethod?: unknown; authenticationEventId?: unknown }
+      | undefined;
+    if (principal?.authenticationMethod === 'KERNEL_INTERNAL') return undefined;
+    const requirement = {
+      principalId: typeof principal?.id === 'string' ? principal.id : '',
+      tenantId: typeof maybeRequest?.tenantId === 'string' ? maybeRequest.tenantId : '',
+      ...(typeof principal?.authenticationEventId === 'string' && principal.authenticationEventId
+        ? { sessionEventId: principal.authenticationEventId }
+        : {}),
+      operationClass: entry.opClass,
+      scope: entry.scope,
+      stepUpRequired: entry.stepUpRequired,
+      stepUpMaxAgeMs: entry.stepUpMaxAgeMs,
+    };
+    const authority = await this.resolvePrivilegeAuthority();
+    if (!authority) {
+      return { requirement, operationId: entry.operationId, operationClass: entry.opClass, unavailable: true };
+    }
+    if (entry.scope === 'platform') {
+      const platformAssessment = await authority.assessPlatform(requirement, now);
+      return { requirement, operationId: entry.operationId, operationClass: entry.opClass, platformAssessment };
+    }
+    return { requirement, operationId: entry.operationId, operationClass: entry.opClass };
   }
 
   // -- decideAsync ----------------------------------------------------------
@@ -200,17 +328,30 @@ export class DurableDecider {
       return this.storageFailureDeny(maybeRequest, envelopeId, now, error);
     }
 
+    // Phase A (P2-S3): register-classify the request. A platform-scoped
+    // requirement is assessed in an explicit system-scope read HERE (the
+    // ACTIVE-manifest pattern); the tenant-scoped assessment runs inside the
+    // Phase-B tenant transaction. Classification is register-driven — never
+    // caller-controlled. A resolver failure is a storage-failure DENY.
+    let privilege: PrivilegeStageState | undefined;
+    try {
+      privilege = await this.classifyPrivilege(maybeRequest, now);
+    } catch (error) {
+      return this.storageFailureDeny(maybeRequest, envelopeId, now, error);
+    }
+
     // Requests without a usable tenant cannot open a tenant transaction:
     // render the structural DENY without durable state (sink-audited).
     if (!isValidTenantId(tenantId)) {
       return this.unscopedDeny(maybeRequest, envelopeId, now);
     }
 
-    // Phase B: ONE tenant transaction binds rate + session + credential +
-    // PDP + audit. Any throw inside ⇒ rollback ⇒ storage-failure DENY.
+    // Phase B: ONE tenant transaction binds rate + session + privilege +
+    // credential + PDP + audit. Any throw inside ⇒ rollback ⇒
+    // storage-failure DENY.
     try {
       return await this.store.transact({ tenantId }, async (collections, txId) =>
-        this.renderDecisionTx(collections, txId, maybeRequest, envelopeId, active, now, { tenantId, principalId, capabilityId }),
+        this.renderDecisionTx(collections, txId, maybeRequest, envelopeId, active, now, { tenantId, principalId, capabilityId }, privilege),
       );
     } catch (error) {
       if (error instanceof AuthorizationDeniedError) {
@@ -231,6 +372,7 @@ export class DurableDecider {
     active: ActiveManifest | undefined,
     now: number,
     ids: { tenantId: string; principalId: string; capabilityId: string },
+    privilege: PrivilegeStageState | undefined,
   ): Promise<A01AuthorizationEnvelope> {
     // 1. Rate reservation (every rendered decision is load, ALLOW or DENY).
     let usage = 0;
@@ -264,6 +406,26 @@ export class DurableDecider {
     }
     if (identity.narrowedRequest !== undefined) {
       requestForPdp = identity.narrowedRequest;
+    }
+
+    // 2.75 P2-S3: privilege stage (register-classified; fail-closed). A
+    // non-VALID elevation renders a short-circuit DENY envelope (still fully
+    // audited in-tx); a VALID elevation is cited on the sealed envelope.
+    let privilegeCitation: { elevationId?: string; operationClass: string; status: string } | undefined;
+    if (privilege) {
+      const assessed = await this.assessPrivilegeClaim(collections, privilege, now);
+      if (assessed.denialCode !== undefined) {
+        return this.renderPrivilegeDenyTx(collections, txId, maybeRequest, envelopeId, active, now, session, privilege, assessed.denialCode);
+      }
+      if (assessed.assessment) {
+        privilegeCitation = {
+          ...(assessed.assessment.elevationId !== undefined ? { elevationId: assessed.assessment.elevationId } : {}),
+          operationClass: privilege.operationClass,
+          status: assessed.assessment.elevationStatus ?? 'ACTIVE',
+        };
+      } else {
+        privilegeCitation = { operationClass: privilege.operationClass, status: 'ACTIVE' };
+      }
     }
 
     // 3. Credential preload for the PDP adapter (checks run inside PDP).
@@ -305,6 +467,10 @@ export class DurableDecider {
       policyVersion: this.policyVersion,
       rateWindowUsage: () => usage,
       ...(this.verifyKernelPrincipal ? { verifyKernelPrincipal: this.verifyKernelPrincipal } : {}),
+      // P2-S3: the privilege stage was already resolved in-tx above; the PDP
+      // stage is a structural passthrough on the durable path (a registered
+      // privileged operation that reached the PDP holds a VALID elevation).
+      ...(privilege ? { privilegeStage: (): readonly A01DenialReason[] => [] } : {}),
     };
     const outcome = decideA01(requestForPdp, context);
 
@@ -330,6 +496,83 @@ export class DurableDecider {
         ...(session.eventId ? { sessionEventId: session.eventId } : {}),
         sessionStatus: session.status,
         securityStoreTxId: txId,
+        ...(privilegeCitation?.elevationId !== undefined ? { privilegeElevationId: privilegeCitation.elevationId } : {}),
+        ...(privilegeCitation?.operationClass !== undefined ? { privilegeOperationClass: privilegeCitation.operationClass } : {}),
+        ...(privilegeCitation?.status !== undefined ? { privilegeStatus: privilegeCitation.status } : {}),
+      },
+    });
+    await this.recordDecisionTx(collections, envelope);
+    return envelope;
+  }
+
+  /**
+   * P2-S3: assess the register-classified privilege claim. Tenant-scoped
+   * requirements re-read the durable elevation INSIDE the Phase-B tenant
+   * transaction (one consistent snapshot); platform-scoped requirements use
+   * the Phase-A system-scope assessment. Any storage failure propagates
+   * (Phase-B catch ⇒ storage-failure DENY).
+   */
+  private async assessPrivilegeClaim(
+    collections: SecurityTxCollections,
+    privilege: PrivilegeStageState,
+    now: number,
+  ): Promise<{ denialCode?: A01DenialReason; assessment?: PrivilegeElevationAssessment }> {
+    if (privilege.unavailable) {
+      return { denialCode: 'PRIVILEGE_CHECK_UNAVAILABLE' };
+    }
+    let assessment: PrivilegeElevationAssessment;
+    if (privilege.requirement.scope === 'platform') {
+      assessment = privilege.platformAssessment ?? { verdict: 'REQUIRED', operationClass: privilege.requirement.operationClass };
+    } else {
+      const authority = await this.resolvePrivilegeAuthority();
+      if (!authority) return { denialCode: 'PRIVILEGE_CHECK_UNAVAILABLE' };
+      assessment = await authority.assessInTx(collections.scope, privilege.requirement, now);
+    }
+    const denialCode = privilegeDenialCode(assessment.verdict);
+    if (denialCode !== undefined) return { denialCode, assessment };
+    return { assessment };
+  }
+
+  /** Short-circuit DENY for a failed privilege claim (fully audited in-tx). */
+  private async renderPrivilegeDenyTx(
+    collections: SecurityTxCollections,
+    txId: string,
+    maybeRequest: A01AuthorizationRequest | null | undefined,
+    envelopeId: string,
+    active: ActiveManifest | undefined,
+    now: number,
+    session: { eventId: string; status: A01SessionAuditStatus },
+    privilege: PrivilegeStageState,
+    denialCode: A01DenialReason,
+  ): Promise<A01AuthorizationEnvelope> {
+    const safeRequest = sanitizeRequestForEnvelope(maybeRequest);
+    const decision: A01DecisionRecord = {
+      decisionId: `dec-${now}-${randomUUID().slice(0, 8)}`,
+      decision: 'DENY',
+      reasonCodes: Object.freeze([denialCode] as const),
+      policyVersion: this.policyVersion,
+      decidedAt: now,
+      expiresAt: now,
+      budgetCostUnits: 1,
+    };
+    const run = safeRequest.run;
+    const provenance: A01ProvenanceBinding = Object.freeze({
+      source: 'authorization-boundary',
+      correlationId: run.correlationId || run.runId,
+      createdAt: now,
+    });
+    const envelope = sealEnvelope({
+      request: safeRequest,
+      decision,
+      envelopeId,
+      provenance,
+      durableCitations: {
+        ...(active ? { manifestId: active.manifestId, manifestDigest: active.digest } : {}),
+        ...(session.eventId ? { sessionEventId: session.eventId } : {}),
+        sessionStatus: session.status,
+        securityStoreTxId: txId,
+        privilegeOperationClass: privilege.operationClass,
+        privilegeStatus: 'DENIED',
       },
     });
     await this.recordDecisionTx(collections, envelope);
@@ -679,6 +922,18 @@ export class DurableDecider {
       );
     }
 
+    // P2-S3: privilege re-validation — a revoked/expired elevation since
+    // decide denies here, before any side effect (spec §9.3 revocation
+    // behavior: no stale elevation remains valid after its invalidation).
+    try {
+      await this.assertPrivilegeLive(verified, now);
+    } catch (error) {
+      if (error instanceof AuthorizationDeniedError) {
+        await this.bestEffortDenyReceipt(verified, 'denied');
+      }
+      throw error;
+    }
+
     // Tx-1: session lock → S-4 → S-5 → S-7 → credential lock + S-3.
     let tx1: Tx1Outcome;
     try {
@@ -833,6 +1088,49 @@ export class DurableDecider {
       const reassessed = assessSessionRow(fresh, now);
       const status = reassessed.active ? 'revoked' : reassessed.status.toLowerCase();
       throw new AuthorizationDeniedError(['PRINCIPAL_REVOKED'], `session is ${status} (lost the enforcement lock race)`);
+    }
+  }
+
+  /**
+   * P2-S3 enforcement re-validation: re-classify the envelope's (tool,
+   * operation) against the register and re-read the durable elevation
+   * (tenant scope in its own tenant transaction; platform scope in an
+   * explicit system-scope read). Non-VALID ⇒ deny before the side effect.
+   */
+  private async assertPrivilegeLive(verified: A01AuthorizationEnvelope, now: number): Promise<void> {
+    const entry = classifyPrivilegedA01(verified.tool, verified.operation);
+    if (!entry) return;
+    if (verified.principal.authenticationMethod === 'KERNEL_INTERNAL') return;
+    const authority = await this.resolvePrivilegeAuthority();
+    if (!authority) {
+      throw new AuthorizationDeniedError(['PRIVILEGE_CHECK_UNAVAILABLE'], 'privilege plane unavailable at enforcement (fail-closed)');
+    }
+    const requirement = {
+      principalId: verified.principal.id,
+      tenantId: entry.scope === 'tenant' ? verified.tenantId : PRIVILEGE_PLATFORM_TENANT,
+      ...(verified.principal.authenticationEventId ? { sessionEventId: verified.principal.authenticationEventId } : {}),
+      operationClass: entry.opClass,
+      scope: entry.scope,
+      stepUpRequired: entry.stepUpRequired,
+      stepUpMaxAgeMs: entry.stepUpMaxAgeMs,
+    };
+    let assessment: PrivilegeElevationAssessment;
+    try {
+      if (entry.scope === 'platform') {
+        assessment = await authority.assessPlatform(requirement, now);
+      } else {
+        assessment = await this.store.transact({ tenantId: verified.tenantId }, async (collections) =>
+          authority.assessInTx(collections.scope, requirement, now),
+        );
+      }
+    } catch (error) {
+      throw this.storageDenied(error);
+    }
+    if (assessment.verdict !== 'VALID') {
+      throw new AuthorizationDeniedError(
+        [privilegeDenialCode(assessment.verdict) ?? 'PRIVILEGE_ELEVATION_REQUIRED'],
+        `privilege re-validation failed at enforcement (${assessment.verdict})`,
+      );
     }
   }
 

@@ -245,6 +245,11 @@ export class AuthorizationBoundaryModule implements IModule {
       ...(this.config.identityAuthorityResolver
         ? { identityAuthorityResolver: this.config.identityAuthorityResolver }
         : {}),
+      // P2-S3: the privilege stage rides the durable decision path (absent ⇒
+      // a registered privileged operation DENIES PRIVILEGE_CHECK_UNAVAILABLE).
+      ...(this.config.privilegeAuthorityResolver
+        ? { privilegeAuthorityResolver: this.config.privilegeAuthorityResolver }
+        : {}),
     });
 
     // R1: SEALED bindings. A sealed token cannot be replaced, overridden,
@@ -310,5 +315,13 @@ export class AuthorizationBoundaryModule implements IModule {
       throw new Error('AuthorizationBoundaryModule: durable security is not enabled (fail-closed).');
     }
     return this.durableBroker;
+  }
+
+  /** P2-S3 structural probe (P2-INV-04): is the A-01 privilege stage wired to a live authority? */
+  async hasLivePrivilegeAuthority(): Promise<boolean> {
+    if (!this.gate) {
+      throw new Error('AuthorizationBoundaryModule: the boundary has not been initialized (fail-closed).');
+    }
+    return this.gate.hasLivePrivilegeAuthority();
   }
 }

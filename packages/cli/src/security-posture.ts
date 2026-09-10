@@ -30,7 +30,7 @@ import type {
 } from '@jataqi/authorization-boundary';
 import { isDevelopmentCredentialMaterialProvider, MIN_DURABLE_MANIFEST_LIFETIME_MS } from '@jataqi/authorization-boundary';
 import type { AuthenticationModule, IdentityStore, ServerAuthenticator } from '@jataqi/authentication';
-import { DeterministicTestAuthenticator } from '@jataqi/authentication';
+import { DeterministicTestAuthenticator, assertRegisterIntegrity } from '@jataqi/authentication';
 
 /** The security posture of a composition. Default: `development`. */
 export type SecurityPosture = 'production' | 'development';
@@ -515,6 +515,77 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
         return 'an OIDC authenticator is registered but the identity↔tenant mapping is EMPTY; configure at least one enrolled subject binding (fail-closed)';
       }
       return true; // satisfied: the mapping is configured and non-empty
+    },
+  });
+
+  // ---------------------------------------------------------------------
+  // P2 (S3) — privileged access plane invariants (spec §14).
+  // ---------------------------------------------------------------------
+
+  // P2-INV-04: the privilege stage is REGISTERED on the A-01 pipeline. The
+  // stage itself is unconditional in the policy engine (data-in-code); this
+  // invariant asserts the RUNTIME wiring — the durable privilege plane is
+  // attached AND the durable decider's privilege-stage resolver is live.
+  // (The delegation half of P2-INV-04 is S4 — not authorized here; recorded
+  // as a remaining gap.)
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.privilege-stage-registered',
+    description: 'the privileged-access plane is attached and the A-01 privilege stage is wired (spec §24-S3; P2-INV-04 privilege half)',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      try {
+        auth.getPrivilegeStore();
+      } catch {
+        return 'the durable privilege plane is NOT attached; the production posture requires the P2-S3 privilege store (fail-closed)';
+      }
+      const boundary = k.getModule<AuthorizationBoundaryModule>('authorization-boundary');
+      try {
+        if (!(await boundary.hasLivePrivilegeAuthority())) {
+          return 'the A-01 privilege stage is not wired to a live privilege authority (the durable decider would fail closed on every privileged decision)';
+        }
+      } catch (error) {
+        return `the A-01 privilege-stage wiring could not be verified: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-05: every ACTIVE elevation satisfies the bounded-window policy
+  // (max lifetime respected at read; no ACTIVE elevation past its window).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.elevation-window-policy',
+    description: 'every ACTIVE elevation respects the bounded-window policy (spec §9.2: default 30 min, hard cap 4 h)',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      let store;
+      try {
+        store = auth.getPrivilegeStore();
+      } catch {
+        return 'the durable privilege plane is NOT attached; cannot verify the elevation window policy (fail-closed)';
+      }
+      try {
+        await store.assertActiveElevationsWithinBounds(Date.now());
+      } catch (error) {
+        return `an ACTIVE elevation violates the bounded-window policy: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-10: the privileged-operation register is loaded, internally
+  // consistent, and covers every mandated PO entry (spec §9.3 rule — the
+  // register is code + test-asserted; a mismatch is a boot failure).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.privilege-register-integrity',
+    description: 'the privileged-operation register is loaded and consistent (P2-INV-10)',
+    check(_k: KernelApi): boolean | string {
+      try {
+        const result = assertRegisterIntegrity();
+        if (!result.ok) return 'the privileged-operation register failed integrity (fail-closed)';
+      } catch (error) {
+        return `the privileged-operation register is invalid: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      return true;
     },
   });
 }

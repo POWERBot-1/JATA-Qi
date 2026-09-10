@@ -20,6 +20,7 @@
   "files": ["dist", "src"],
   "license": "MIT",
   "dependencies": {
+    "@jataqi/authentication": "0.1.0",
     "@jataqi/commercial-control-plane": "0.1.0",
     "@jataqi/core-kernel": "0.1.0",
     "@jataqi/permanence-fabric": "0.1.0",

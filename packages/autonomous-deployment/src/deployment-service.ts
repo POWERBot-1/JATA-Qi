@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { establishKernelWorkerAuthority, type KernelWorkerAuthorization } from '@jataqi/authorization-boundary';
+import { resolvePrivilegeEnforcerFromKernel, type PrivilegeEnforcer } from '@jataqi/authentication';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { ActionRuntimeService } from '@jataqi/autonomous-action-runtime';
@@ -44,17 +45,31 @@ export class DeploymentService {
   /** R1/D2: verified, scoped kernel-internal worker authority (per adapter). */
   private readonly workerAuthority = new Map<string, KernelWorkerAuthorization>();
   private kernel!: KernelApi;
+  /** P2-S3: durable elevation enforcer (undefined ⇒ privilege plane not attached). */
+  private privilegeEnforcer?: PrivilegeEnforcer;
 
   async init(kernel: KernelApi, runtime: ActionRuntimeService): Promise<void> {
     this.kernel = kernel;
+    this.privilegeEnforcer = resolvePrivilegeEnforcerFromKernel(kernel);
     this.deployments = await kernel.getModule<StorageModule>('storage').collection<DeploymentRecord>(DEPLOYMENTS_COLLECTION);
     this.runtime = runtime;
   }
 
-  registerAdapter(actor: CommercialActor, adapter: DeploymentAdapter): RegisteredDeploymentAdapter {
+  /** P2-S3: the service-side durable elevation gate (PO-4 sites). */
+  private async requireElevation(actor: CommercialActor, operationId: string): Promise<void> {
+    if (!this.privilegeEnforcer) return; // privilege plane not attached — the role check remains the gate (§9.1)
+    await this.privilegeEnforcer.assertElevation(actor.id, actor.tenantId, operationId, Date.now());
+  }
+
+  async registerAdapter(actor: CommercialActor, adapter: DeploymentAdapter): Promise<RegisteredDeploymentAdapter> {
     assertAdministrator(actor);
     validateAdapter(adapter);
-    if (adapter.tenantId && adapter.tenantId !== actor.tenantId && !actor.roles.includes('global_admin')) throw new DeploymentError('Cross-tenant deployment adapter registration is not authorized.');
+    if (adapter.tenantId && adapter.tenantId !== actor.tenantId) {
+      if (!actor.roles.includes('global_admin')) throw new DeploymentError('Cross-tenant deployment adapter registration is not authorized.');
+      await this.requireElevation(actor, 'deployment.adapter.register.cross-tenant');
+    } else {
+      await this.requireElevation(actor, 'deployment.adapter.register');
+    }
     if (this.adapters.has(adapter.id)) throw new DeploymentError(`Deployment adapter "${adapter.id}" is already registered.`);
     const runtimeAdapter: ActionExecutionAdapter = {
       id: `deployment:${adapter.id}`,
@@ -93,6 +108,7 @@ export class DeploymentService {
 
   async createDeployment(actor: CommercialActor, input: CreateDeploymentInput): Promise<DeploymentRecord> {
     assertManager(actor);
+    await this.requireElevation(actor, 'deployment.create');
     validateDeploymentInput(input);
     const now = Date.now();
     const deployment: DeploymentRecord = {
@@ -108,6 +124,7 @@ export class DeploymentService {
   /** Select an adapter only after a deployment record and explicit target/environment check exist. */
   async queueDeployment(actor: CommercialActor, deploymentId: string, adapterId: string): Promise<DeploymentRecord> {
     assertManager(actor);
+    await this.requireElevation(actor, 'deployment.queue');
     const deployment = await this.requireDeployment(actor, deploymentId);
     if (!['PLANNED', 'FAILED', 'BLOCKED'].includes(deployment.state)) throw new DeploymentError(`Deployment ${deployment.id} cannot be queued from ${deployment.state}.`);
     const adapter = this.adapters.get(adapterId);
@@ -127,6 +144,7 @@ export class DeploymentService {
 
   async executeDeployment(actor: CommercialActor, deploymentId: string, input: ExecuteDeploymentInput): Promise<DeploymentRecord> {
     assertManager(actor);
+    await this.requireElevation(actor, 'deployment.execute');
     const deployment = await this.requireDeployment(actor, deploymentId);
     if (deployment.state !== 'QUEUED') throw new DeploymentError(`Deployment ${deployment.id} must be QUEUED before execution.`);
     const adapter = this.findAdapter(deployment);
@@ -156,6 +174,7 @@ export class DeploymentService {
 
   async verifyDeployment(actor: CommercialActor, deploymentId: string): Promise<DeploymentRecord> {
     assertManager(actor);
+    await this.requireElevation(actor, 'deployment.verify');
     const deployment = await this.requireDeployment(actor, deploymentId);
     if (deployment.state !== 'VERIFYING' || !deployment.actionId) throw new DeploymentError('Deployment is not awaiting verification.');
     const action = await this.runtime.verify(actor, deployment.actionId);
@@ -179,6 +198,7 @@ export class DeploymentService {
   /** The adapter owns reversal; this method records only its confirmed result. */
   async rollbackDeployment(actor: CommercialActor, deploymentId: string): Promise<DeploymentRecord> {
     assertManager(actor);
+    await this.requireElevation(actor, 'deployment.rollback');
     const deployment = await this.requireDeployment(actor, deploymentId);
     if (!deployment.actionId) throw new DeploymentError('Deployment has no action to roll back.');
     const rolling: DeploymentRecord = { ...deployment, state: 'ROLLING_BACK', updatedAt: Date.now() };

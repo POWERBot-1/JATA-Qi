@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
 import { emitPlainEnveloped } from '@jataqi/core-kernel';
+import { resolvePrivilegeEnforcerFromKernel, type PrivilegeEnforcer } from '@jataqi/authentication';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import { PermanenceFabricModule } from '@jataqi/permanence-fabric';
@@ -78,9 +79,12 @@ export class CapabilityFabricService {
    * is the concurrency-safe sequence advance that replaces the
    * earlier query-then-write (`previous?.sequence + 1`) pattern. */
   private auditSequence!: ICollection<{ id: string; tenantId: string; sequence: number }>;
+  /** P2-S3: durable elevation enforcer (undefined ⇒ privilege plane not attached). */
+  private privilegeEnforcer?: PrivilegeEnforcer;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
+    this.privilegeEnforcer = resolvePrivilegeEnforcerFromKernel(kernel);
     const storage = kernel.getModule<StorageModule>('storage');
     this.capabilities = await storage.collection<JqCapability>(COLLECTIONS.capabilities);
     this.grants = await storage.collection<JqCapabilityGrant>(COLLECTIONS.grants);
@@ -91,9 +95,16 @@ export class CapabilityFabricService {
     this.permanence = kernel.getModule<PermanenceFabricModule>('permanence-fabric').getService();
   }
 
+  /** P2-S3: the service-side durable elevation gate (PO-6/PO-7 sites). */
+  private async requireElevation(actor: CommercialActor, operationId: string): Promise<void> {
+    if (!this.privilegeEnforcer) return; // privilege plane not attached — the role check remains the gate (§9.1)
+    await this.privilegeEnforcer.assertElevation(actor.id, actor.tenantId, operationId, Date.now());
+  }
+
   /** Register a proposed capability. Existence is intentionally separate from authorization and activation. */
   async registerCapability(actor: CommercialActor, input: RegisterJqCapabilityInput): Promise<JqCapability> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'capability-fabric.capability.register');
     validateCapabilityInput(input);
     if (input.identityId) await this.assertIdentityLink(actor, input.identityId);
     const dependencies = uniqueStrings(input.dependencies ?? [], 'Capability dependencies', MAX_ITEMS, 180);
@@ -128,6 +139,7 @@ export class CapabilityFabricService {
   /** Advance a capability only through explicit lifecycle transitions and evidence gates. */
   async transitionCapability(actor: CommercialActor, capabilityId: string, input: TransitionJqCapabilityInput): Promise<JqCapability> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'capability-fabric.capability.register');
     validateTransitionInput(input);
     const capability = await this.requireCapabilityForActor(actor, capabilityId);
     await assertLifecycleTransition(capability.lifecycleState, input.state, capability.safetyClass, input.evidence);
@@ -145,6 +157,7 @@ export class CapabilityFabricService {
   /** Issue a scoped capability grant. Permission IDs must be part of the registered capability boundary. */
   async grantCapability(actor: CommercialActor, capabilityId: string, input: GrantJqCapabilityInput): Promise<JqCapabilityGrant> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'capability-fabric.capability.register');
     validateGrantInput(input);
     const capability = await this.requireCapabilityForActor(actor, capabilityId);
     const permissions = uniqueStrings(input.permissionIds, 'Granted permission ids', MAX_ITEMS, 180);
@@ -167,6 +180,7 @@ export class CapabilityFabricService {
   /** Revoke a scoped grant without erasing its audit history. */
   async revokeCapabilityGrant(actor: CommercialActor, grantId: string, input: RevokeJqCapabilityGrantInput): Promise<JqCapabilityGrant> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'capability-fabric.capability.register');
     if (!input || typeof input !== 'object') throw new CapabilityFabricError('Capability grant revocation input is required.');
     const grant = await this.requireGrantForActor(actor, grantId);
     if (grant.status === 'REVOKED') return copy(grant);
@@ -227,6 +241,7 @@ export class CapabilityFabricService {
   /** Register an ENGINE_GENOME metadata record. It remains PROPOSED and cannot execute code. */
   async registerEngineGenome(actor: CommercialActor, input: RegisterEngineGenomeInput): Promise<EngineGenome> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'capability-fabric.engine.register');
     validateEngineInput(input);
     if (input.identityId) await this.assertIdentityLink(actor, input.identityId);
     const capabilities = await this.capabilitiesForTenant(actor.tenantId);
@@ -279,6 +294,7 @@ export class CapabilityFabricService {
   /** Explicitly transition engine metadata; high-impact engines cannot be activated by this registry. */
   async transitionEngineGenome(actor: CommercialActor, engineGenomeId: string, input: TransitionEngineGenomeInput): Promise<EngineGenome> {
     assertAdministrator(actor);
+    await this.requireElevation(actor, 'capability-fabric.engine.register');
     validateTransitionInput(input);
     const engine = await this.requireEngineForActor(actor, engineGenomeId);
     await assertLifecycleTransition(engine.lifecycleState, input.state, engine.safetyClass, input.evidence);
@@ -353,7 +369,10 @@ export class CapabilityFabricService {
 
   async verifyAuditIntegrity(actor: CommercialActor, tenantId = actor.tenantId): Promise<CapabilityFabricIntegrityResult> {
     assertActor(actor);
-    if (tenantId !== actor.tenantId && !actor.roles.includes('global_admin')) throw new CapabilityFabricError('Only a global administrator can verify another tenant capability audit.');
+    if (tenantId !== actor.tenantId) {
+      if (!actor.roles.includes('global_admin')) throw new CapabilityFabricError('Only a global administrator can verify another tenant capability audit.');
+      await this.requireElevation(actor, 'capability-fabric.audit.verify.cross-tenant');
+    }
     const entries = (await this.audit.query({ where: (entry) => entry.tenantId === tenantId }))
       .sort((first, second) => first.sequence - second.sequence || first.createdAt - second.createdAt || first.id.localeCompare(second.id));
     let previousHash = 'GENESIS';

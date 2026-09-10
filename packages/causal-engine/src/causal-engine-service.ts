@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { KernelApi } from '@jataqi/core-kernel';
+import { resolvePrivilegeEnforcerFromKernel, type PrivilegeEnforcer } from '@jataqi/authentication';
 import { StorageModule } from '@jataqi/storage';
 import type { ICollection } from '@jataqi/storage';
 import type { CommercialActor, CommercialEvidence } from '@jataqi/commercial-control-plane';
@@ -37,12 +38,21 @@ export class CausalEngineService {
   private models!: ICollection<CausalModel>;
   private scenarios!: ICollection<CounterfactualScenario>;
   private world!: WorldModelService;
+  /** P2-S3: durable elevation enforcer (undefined ⇒ privilege plane not attached). */
+  private privilegeEnforcer?: PrivilegeEnforcer;
 
   async init(kernel: KernelApi): Promise<void> {
     this.api = kernel;
+    this.privilegeEnforcer = resolvePrivilegeEnforcerFromKernel(kernel);
     this.models = await kernel.getModule<StorageModule>('storage').collection<CausalModel>(MODELS_COLLECTION);
     this.scenarios = await kernel.getModule<StorageModule>('storage').collection<CounterfactualScenario>(SCENARIOS_COLLECTION);
     this.world = kernel.getModule<WorldModelModule>('world-model').getService();
+  }
+
+  /** P2-S3: cross-tenant reads require a platform-admin elevation (PO-8). */
+  private async requireCrossTenantRead(actor: CommercialActor): Promise<void> {
+    if (!this.privilegeEnforcer) return; // privilege plane not attached — the role check remains the gate (§9.1)
+    await this.privilegeEnforcer.assertElevation(actor.id, actor.tenantId, 'causal-engine.cross-tenant.read', Date.now());
   }
 
   async createModel(actor: CommercialActor, input: CreateCausalModelInput): Promise<CausalModel> {
@@ -127,6 +137,7 @@ export class CausalEngineService {
 
   async getModel(actor: CommercialActor, modelId: string): Promise<CausalModel | undefined> {
     const model = await this.models.get(modelId);
+    if (model && model.tenantId !== actor.tenantId) await this.requireCrossTenantRead(actor);
     return model && canRead(actor, model.tenantId) ? copy(model) : undefined;
   }
 
