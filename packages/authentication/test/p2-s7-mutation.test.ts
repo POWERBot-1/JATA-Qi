@@ -54,6 +54,8 @@ function childEnv(): NodeJS.ProcessEnv {
 
 const KEY_SEAM = 'src/key-management.ts';
 const SECRETS = 'src/secret-material.ts';
+const MFA = 'src/mfa.ts';
+const PRIVILEGE = 'src/privilege-store.ts';
 
 interface Edit {
   readonly find: string;
@@ -248,6 +250,38 @@ const MUTANTS: readonly Mutant[] = [
     ],
     target: 'p2-s7-secret-material.test.js',
   },
+  // ---------------------------------------------------------------------
+  // P2-S5 §8 / §5.3 — enforcement of step-up assurance at the privilege
+  // elevation boundary. Both mutants must be killed by
+  // p2-s5-stepup-integration.test.js.
+  // ---------------------------------------------------------------------
+  {
+    id: 'M-S3-1',
+    control: 'grantElevation actually invokes step-up verification',
+    file: PRIVILEGE,
+    edits: [
+      {
+        find: `    await this.#verifyStepUpEvidence(input, now);`,
+        replace: `    // MUTANT M-S3-1: step-up evidence is accepted on assertion, never verified.
+    // This is exactly the pre-S5 behaviour the integration closed.`,
+      },
+    ],
+    target: 'p2-s5-stepup-integration.test.js',
+  },
+  {
+    id: 'M-S3-2',
+    control: 'a revoked/replaced factor invalidates its prior assurance (§5.3)',
+    file: MFA,
+    edits: [
+      {
+        find: `    if (resolved.factorStatus !== 'ACTIVE') {`,
+        replace: `    // MUTANT M-S3-2: the authoritative factor state is ignored, so a factor
+    // revoked as compromised keeps authorizing with its old assurance.
+    if (false) {`,
+      },
+    ],
+    target: 'p2-s5-stepup-integration.test.js',
+  },
 ];
 
 /** Bytes of every file this suite mutates, captured before any mutation. */
@@ -367,10 +401,12 @@ async function assertMutantKilled(mutant: Mutant): Promise<void> {
 
 describe('P2-S7 mutation suite (the security tests kill the mutations)', () => {
   it('captures pristine sources', async () => {
-    for (const file of [KEY_SEAM, SECRETS]) {
+    // Every file any mutant touches must be snapshotted here, or the harness
+    // refuses to run that mutant (it cannot guarantee byte-for-byte restore).
+    for (const file of [KEY_SEAM, SECRETS, MFA, PRIVILEGE]) {
       PRISTINE.set(file, await readSource(file));
     }
-    assert.equal(PRISTINE.size, 2);
+    assert.equal(PRISTINE.size, 4);
   });
 
   // Registered synchronously so node:test collects every case up front.

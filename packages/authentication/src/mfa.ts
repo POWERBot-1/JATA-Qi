@@ -134,6 +134,7 @@ export type MfaFailureCode =
   | 'MFA_ASSURANCE_UNKNOWN'
   | 'MFA_ASSURANCE_EXPIRED'
   | 'MFA_ASSURANCE_MISMATCH'
+  | 'MFA_ASSURANCE_REVOKED'
   | 'MFA_SEAM_UNAVAILABLE';
 
 export class MfaError extends Error {
@@ -944,14 +945,33 @@ export class MfaFactorStore {
     ) {
       await this.#refuse('MFA_INVALID_ARGUMENT', { ...base, kind: 'STEP_UP_DENIED' });
     }
-    const doc = await this.#inTenant(input.tenantId, async (scope) => {
+    const resolved = await this.#inTenant(input.tenantId, async (scope) => {
       const rows = await scope.collection<MfaAssuranceDoc>(MFA_ASSURANCE_COLLECTION);
       const found = await rows.get(input.assuranceId);
-      if (!found || found.tenantId !== input.tenantId || found.principalId !== input.principalId) return undefined;
-      return found;
+      if (!found || found.tenantId !== input.tenantId || found.principalId !== input.principalId) {
+        return { doc: undefined, factorStatus: undefined } as const;
+      }
+      // §5.3 — resolve the AUTHORITATIVE factor state alongside the assurance.
+      //
+      // An assurance is an immutable record with no status of its own, so a
+      // factor revoked as compromised left its already-earned assurances
+      // verifiable for the rest of the freshness window (up to
+      // DEFAULT_MFA_STEP_UP_MAX_AGE_MS). The factor document in
+      // MFA_FACTOR_COLLECTION is the single authoritative lifecycle state — no
+      // second factor authority is created and no assurance row is migrated.
+      const factors = await scope.collection<MfaFactorDoc>(MFA_FACTOR_COLLECTION);
+      const factor = await factors.get(found.factorId);
+      return { doc: found, factorStatus: factor?.status } as const;
     });
+    const doc = resolved.doc;
     // Unknown, cross-tenant and cross-principal are the SAME refusal.
     if (!doc) await this.#refuse('MFA_ASSURANCE_UNKNOWN', { ...base, kind: 'STEP_UP_DENIED' });
+    // §5.3 — the factor behind an assurance must STILL be ACTIVE. PENDING was
+    // never usable; REVOKED and REPLACED are terminal. This is a lifecycle
+    // check, not an authorization decision.
+    if (resolved.factorStatus !== 'ACTIVE') {
+      await this.#refuse('MFA_ASSURANCE_REVOKED', { ...base, kind: 'STEP_UP_DENIED', assuranceId: doc!.id });
+    }
 
     // The caller's claimed timestamp must agree with the durable record, so a
     // caller cannot present an old assurance with a fresh timestamp.

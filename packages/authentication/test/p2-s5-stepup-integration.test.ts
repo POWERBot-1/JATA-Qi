@@ -288,6 +288,70 @@ describe('P2-S5 §8 — the privilege plane consumes MFA assurance (real Postgre
     );
   });
 
+  // -----------------------------------------------------------------------
+  // §5.3 — REVOKED-FACTOR ASSURANCE. Written BEFORE the fix so the defect is
+  // proven, not assumed. Uses the real S5 factor/revocation path: no mocks, no
+  // synthetic status mechanism.
+  // -----------------------------------------------------------------------
+
+  it('§5.3 a REVOKED factor invalidates its previously-earned assurance', async () => {
+    const ctx = await admin();
+    // 1. Earn a genuine assurance from a healthy factor.
+    const assurance = await realAssurance(ctx, GRANTOR_SESSION);
+    // Sanity: it is usable right now, so the later denial cannot be explained
+    // by the assurance having been invalid all along.
+    const before = await plane.grantElevation(
+      grantInput(ctx, nextId('sess'), assurance.assuranceId, assurance.satisfiedAt),
+      Date.now(),
+    );
+    assert.equal(before.status, 'ACTIVE', 'precondition: the assurance is genuinely valid before revocation');
+
+    // 2. Revoke the factor through the real S5 lifecycle (compromise path).
+    const factors = await mfa.listFactors({ tenantId: ctx.tenantId, principalId: ctx.principalId, actorPrincipalId: ctx.principalId });
+    const active = factors.find((f) => f.status === 'ACTIVE');
+    assert.ok(active, 'the factor is ACTIVE before revocation');
+    await mfa.revoke({ tenantId: ctx.tenantId, principalId: ctx.principalId, actorPrincipalId: ctx.principalId, factorId: active!.id });
+
+    // 3. Attempt to spend the SAME assurance, still inside its freshness window.
+    await assert.rejects(
+      plane.grantElevation(
+        grantInput(ctx, nextId('sess'), assurance.assuranceId, assurance.satisfiedAt),
+        Date.now(),
+      ),
+      (error: unknown) => code(error) === 'STEP_UP_UNVERIFIED',
+      'a factor revoked as compromised must NOT keep authorizing elevations with its old assurance',
+    );
+  });
+
+  it('§5.3 a REPLACED factor invalidates its previously-earned assurance', async () => {
+    const ctx = await admin();
+    const enrolled = await mfa.enroll({ tenantId: ctx.tenantId, principalId: ctx.principalId, actorPrincipalId: ctx.principalId });
+    const secret = base32Decode(enrolled.sharedSecretBase32);
+    await mfa.activate({
+      tenantId: ctx.tenantId, principalId: ctx.principalId, actorPrincipalId: ctx.principalId,
+      factorId: enrolled.factorId, code: totpAt(secret, T0, enrolled.params),
+    });
+    const assurance = await mfa.verify({
+      tenantId: ctx.tenantId, principalId: ctx.principalId, actorPrincipalId: ctx.principalId,
+      factorId: enrolled.factorId, code: totpAt(secret, T0, enrolled.params),
+      sessionId: GRANTOR_SESSION, level: 'step-up',
+    });
+    // Replacement revokes the old factor and marks it REPLACED.
+    await mfa.replace({
+      tenantId: ctx.tenantId, principalId: ctx.principalId, actorPrincipalId: ctx.principalId,
+      existingFactorId: enrolled.factorId,
+      existingCode: totpAt(secret, Math.floor(T0 / 30_000) * 30_000 + 30_000, enrolled.params),
+    });
+    await assert.rejects(
+      plane.grantElevation(
+        grantInput(ctx, nextId('sess'), assurance.assuranceId, assurance.satisfiedAt),
+        Date.now(),
+      ),
+      (error: unknown) => code(error) === 'STEP_UP_UNVERIFIED',
+      'a replaced factor must not keep authorizing elevations with its old assurance',
+    );
+  });
+
   it('MFA verification is still not authorization: MfaError never leaks through the plane', async () => {
     const ctx = await admin();
     try {
