@@ -275,3 +275,61 @@ export type {
   DelegationStateAuthority,
 } from './delegation-types.js';
 export { DelegationStore } from './delegation-store.js';
+
+// ---------------------------------------------------------------------------
+// P2-S7 — credential material: key-management seam + secret-material store.
+// ---------------------------------------------------------------------------
+export {
+  KeyManagementError,
+  isKeyPurpose,
+  isDevelopmentKeySeam,
+  assertProductionKeySeam,
+  InMemoryKeyManagementSeam,
+  ExternalKeyManagementSeam,
+  RECOGNIZED_KEY_STATUSES,
+  RECOGNIZED_KEY_PURPOSES,
+  DEFAULT_RETIRED_KEY_GRACE_MS,
+} from './key-management.js';
+export type {
+  KeySeamKind,
+  KeyPurpose,
+  KeyStatus,
+  KeyManagementFailureCode,
+  KeyRef,
+  Signer,
+  Verifier,
+  Encryptor,
+  Decryptor,
+  SealedBlob,
+  KeyManagementSeam,
+  ExternalKeyProviderAdapter,
+} from './key-management.js';
+export {
+  SecretMaterialStore,
+  SecretMaterialError,
+  deriveSecretContext,
+  isSecretPurpose,
+  isDevelopmentSecretSeam,
+  assertProductionSecretSeam,
+  newSecretId,
+  RECOGNIZED_SECRET_PURPOSES,
+  SECRET_MATERIAL_COLLECTION,
+  SECRET_ACCESS_COLLECTION,
+  DEV_SECRET_SEAM_KEY_ID,
+} from './secret-material.js';
+export type {
+  SecretPurpose,
+  SecretStatus,
+  SecretOperation,
+  SecretAccessResult,
+  SecretMaterialFailureCode,
+  SecretMaterialDoc,
+  SecretAccessRecord,
+  SecretAccessAuditSink,
+  SecretRef,
+  SealSecretInput,
+  OpenSecretInput,
+  RotateSecretInput,
+  RevokeSecretInput,
+} from './secret-material.js';
+export type { AuthenticationCredentialMaterialConfig } from './authentication-module.js';

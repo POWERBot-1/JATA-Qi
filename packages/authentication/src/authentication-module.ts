@@ -22,6 +22,8 @@ import { JtiReplayStore } from './jti-replay.js';
 import { SessionTokenService } from './session-tokens.js';
 import { PrivilegeStore } from './privilege-store.js';
 import { DelegationStore } from './delegation-store.js';
+import { SecretMaterialStore } from './secret-material.js';
+import type { KeyManagementSeam } from './key-management.js';
 import type { ServerAuthenticator } from './types.js';
 
 export interface AuthenticationDurableSessionsConfig {
@@ -35,6 +37,22 @@ export interface AuthenticationDurableSessionsConfig {
   readonly enabled: boolean;
   /** Session lifetime override (ms); validated by the boundary. */
   readonly sessionLifetimeMs?: number;
+}
+
+/**
+ * P2-S7 — the credential-material seam configuration.
+ *
+ * Both fields are required when the object is present: there is deliberately
+ * NO default key seam and NO default key identifier. A composition that wants
+ * credential material must name the seam and the sealing key explicitly, so a
+ * development double can never be reached by omission and production can never
+ * inherit a dev seam through a defaulted value.
+ */
+export interface AuthenticationCredentialMaterialConfig {
+  /** The key-management seam. In production this MUST be `kind: 'external'`. */
+  readonly keySeam: KeyManagementSeam;
+  /** Identifier of the ACTIVE encryption key used to seal secrets. */
+  readonly encryptionKeyId: string;
 }
 
 export interface AuthenticationModuleConfig extends PrincipalBoundaryConfig {
@@ -53,6 +71,11 @@ export interface AuthenticationModuleConfig extends PrincipalBoundaryConfig {
    * explicit `authenticators` array is supplied — an explicit array keeps
    * its exact meaning (fail-closed: never both).
    */
+  /**
+   * P2-S7: credential-material seam. Absent ⇒ `getSecretMaterial()` and
+   * `getKeySeam()` throw; nothing falls back to a development implementation.
+   */
+  readonly credentialMaterial?: AuthenticationCredentialMaterialConfig;
   readonly authenticatorFactory?: (stores: {
     readonly sessionStore?: AuthenticationEventStore;
     readonly tokenRegistry?: TokenRegistryStore;
@@ -90,6 +113,8 @@ export class AuthenticationModule implements IModule {
   #sessionTokens: SessionTokenService | undefined;
   #privilegeStore: PrivilegeStore | undefined;
   #delegationStore: DelegationStore | undefined;
+  #keySeam: KeyManagementSeam | undefined;
+  #secretMaterial: SecretMaterialStore | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -125,6 +150,19 @@ export class AuthenticationModule implements IModule {
       // authoritative substrate. Fails closed at open exactly like the other
       // durable stores (a non-transactional source refuses delegation state).
       this.#delegationStore = await DelegationStore.open(storage);
+      // P2-S7: the credential-material seam over the SAME authoritative
+      // substrate. Only opened when a seam was EXPLICITLY configured — the
+      // module never constructs a development seam, so a composition that
+      // forgets it fails closed at first use rather than silently storing
+      // secrets against an in-memory double.
+      if (this.#config.credentialMaterial) {
+        this.#keySeam = this.#config.credentialMaterial.keySeam;
+        this.#secretMaterial = await SecretMaterialStore.open(
+          storage,
+          this.#config.credentialMaterial.keySeam,
+          this.#config.credentialMaterial.encryptionKeyId,
+        );
+      }
       // P2-S2: the session-token lifecycle service over the same durable
       // substrate (mint/verify/rotate/revoke + identity-state gate). The
       // session lifetime is wired from the SAME configuration as the
@@ -252,5 +290,25 @@ export class AuthenticationModule implements IModule {
   getDelegationStore(): DelegationStore {
     if (!this.#delegationStore) throw new Error('Authentication module has no durable delegation store (durableSessions not enabled).');
     return this.#delegationStore;
+  }
+
+  /**
+   * P2-S7 key-management seam. Throws when no seam was configured — it never
+   * constructs or returns a development seam, so there is no implicit
+   * production-to-dev fallback reachable from this getter.
+   */
+  getKeySeam(): KeyManagementSeam {
+    if (!this.#keySeam) {
+      throw new Error('Authentication module has no credential-material seam (credentialMaterial not configured; no dev fallback exists).');
+    }
+    return this.#keySeam;
+  }
+
+  /** P2-S7 secret-material store; throws when no seam was configured. */
+  getSecretMaterial(): SecretMaterialStore {
+    if (!this.#secretMaterial) {
+      throw new Error('Authentication module has no secret-material store (credentialMaterial not configured; no dev fallback exists).');
+    }
+    return this.#secretMaterial;
   }
 }

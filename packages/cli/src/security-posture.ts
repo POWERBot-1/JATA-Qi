@@ -30,7 +30,7 @@ import type {
 } from '@jataqi/authorization-boundary';
 import { isDevelopmentCredentialMaterialProvider, MIN_DURABLE_MANIFEST_LIFETIME_MS } from '@jataqi/authorization-boundary';
 import type { AuthenticationModule, IdentityStore, ServerAuthenticator } from '@jataqi/authentication';
-import { DeterministicTestAuthenticator, assertRegisterIntegrity } from '@jataqi/authentication';
+import { DeterministicTestAuthenticator, assertRegisterIntegrity, isDevelopmentKeySeam } from '@jataqi/authentication';
 
 /** The security posture of a composition. Default: `development`. */
 export type SecurityPosture = 'production' | 'development';
@@ -593,6 +593,40 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
         await store.assertActiveElevationsWithinBounds(Date.now());
       } catch (error) {
         return `an ACTIVE elevation violates the bounded-window policy: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-08 (S7): the credential-material KEY seam is an external
+  // (KMS/HSM-class) key provider, never a development in-memory double.
+  //
+  // This is the S7 counterpart of INV-09: INV-09 covers the A-01 credential
+  // MATERIAL provider (manifest sealing); P2-INV-08 covers the P2-S7 KEY seam
+  // that S5 (TOTP secrets) and S6 (break-glass seal) will consume. Both must
+  // be external in production, and neither has a fallback.
+  //
+  // Scope note, stated plainly: when no seam is attached the invariant is
+  // satisfied vacuously, because nothing in production consumes credential
+  // material yet (S5/S6 are unimplemented) and `getKeySeam()` throws rather
+  // than defaulting to a dev double — so absence cannot silently become an
+  // in-memory exposure. The moment a composition attaches a seam, that seam is
+  // required to be external. This does NOT assert that S5/S6 are implemented.
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.key-management-seam',
+    description: 'when attached, the P2-S7 credential-material key seam is an external (KMS/HSM-class) key provider, never a development in-memory double (spec §12; P2-INV-08)',
+    check(k: KernelApi): boolean | string {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      let seam;
+      try {
+        seam = auth.getKeySeam();
+      } catch {
+        // No seam configured: vacuously satisfied (see the scope note above).
+        return true;
+      }
+      if (isDevelopmentKeySeam(seam)) {
+        const kind = (seam as { readonly kind?: string }).kind ?? 'unknown';
+        return `the credential-material key seam is a development implementation (kind="${kind}"); production requires an external key provider and no dev fallback exists (fail-closed)`;
       }
       return true;
     },
