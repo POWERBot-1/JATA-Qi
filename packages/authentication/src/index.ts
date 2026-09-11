@@ -333,3 +333,47 @@ export type {
   RevokeSecretInput,
 } from './secret-material.js';
 export type { AuthenticationCredentialMaterialConfig } from './authentication-module.js';
+
+// ---------------------------------------------------------------------------
+// P2-S5 — MFA / stronger identity assurance.
+//
+// S5 produces an authentication ASSURANCE signal for the EXISTING authority
+// plane. It is not an authorization engine: a satisfied MFA challenge proves
+// something about who is presenting a factor, not what that principal may do.
+// ---------------------------------------------------------------------------
+
+export {
+  DEFAULT_MFA_STEP_UP_MAX_AGE_MS,
+  DEFAULT_MFA_THROTTLE_POLICY,
+  DEFAULT_TOTP_PARAMETERS,
+  MFA_ASSURANCE_COLLECTION,
+  MFA_ASSURANCE_RANK,
+  MFA_EVENT_COLLECTION,
+  MFA_FACTOR_COLLECTION,
+  MFA_THROTTLE_COLLECTION,
+  MfaError,
+  MfaFactorStore,
+  base32Decode,
+  base32Encode,
+  totpAt,
+  totpVerifyStep,
+} from './mfa.js';
+export type {
+  EnrollInput,
+  EnrollResult,
+  MfaAssuranceDoc,
+  MfaAssuranceLevel,
+  MfaAuditSink,
+  MfaEventKind,
+  MfaEventRecord,
+  MfaFactorDoc,
+  MfaFactorKind,
+  MfaFactorStatus,
+  MfaFailureCode,
+  MfaOperation,
+  MfaThrottlePolicy,
+  StepUpEvidenceInput,
+  TotpParameters,
+  VerifyInput,
+  VerifyResult,
+} from './mfa.js';
