@@ -203,17 +203,69 @@ function buildElevation(input: GrantElevationInput, now: number, id: string): Pr
  * refused, a non-transactional source is refused at open, and every mutation
  * is audited in the same transaction.
  */
-export class PrivilegeStore {
-  private constructor(private readonly source: SecurityCollectionSource) {}
+/**
+ * The assurance verifier this plane consults for step-up evidence.
+ *
+ * Defined STRUCTURALLY, not by importing the MFA module: the privilege plane
+ * consumes an assurance signal, it does not implement or own one. S5's
+ * `MfaFactorStore.verifyStepUpEvidence` satisfies this shape, and any future
+ * assurance provider can too. This is deliberately NOT a second authorization
+ * system — the decision below stays exactly where it was.
+ */
+export interface StepUpEvidenceVerifier {
+  verifyStepUpEvidence(input: {
+    readonly tenantId: string;
+    readonly principalId: string;
+    readonly assuranceId: string;
+    readonly claimedAt: number;
+    readonly maxAgeMs: number;
+    readonly sessionId?: string;
+    readonly now: number;
+  }): Promise<unknown>;
+}
 
-  static async open(source: SecurityCollectionSource): Promise<PrivilegeStore> {
+export interface PrivilegeStoreOptions {
+  /**
+   * When supplied, step-up evidence is VERIFIED against a durable assurance
+   * record instead of being trusted because the caller supplied it.
+   */
+  readonly stepUpVerifier?: StepUpEvidenceVerifier;
+  /**
+   * When true, a step-up-requiring grant is REFUSED if no verifier is
+   * configured. This is the fail-closed posture for production: a plane that
+   * cannot verify step-up evidence must not accept it.
+   *
+   * Defaults to false so that existing callers are not silently broken; the
+   * trade-off is stated rather than hidden — see the S5 report finding 1.
+   */
+  readonly strictStepUp?: boolean;
+  /** Freshness budget applied to verified evidence. */
+  readonly stepUpMaxAgeMs?: number;
+}
+
+export class PrivilegeStore {
+  private constructor(
+    private readonly source: SecurityCollectionSource,
+    private readonly stepUpVerifier: StepUpEvidenceVerifier | undefined,
+    private readonly strictStepUp: boolean,
+    private readonly stepUpMaxAgeMs: number,
+  ) {}
+
+  static async open(source: SecurityCollectionSource, options: PrivilegeStoreOptions = {}): Promise<PrivilegeStore> {
     if (!source.supportsTransactions()) {
       throw new PrivilegeStoreError(
         'NON_TRANSACTIONAL_SOURCE',
         'PrivilegeStore requires a transactional storage driver (PostgreSQL); a non-transactional store is never authoritative privilege state (fail-closed).',
       );
     }
-    const store = new PrivilegeStore(source);
+    if (options.stepUpVerifier !== undefined && typeof options.stepUpVerifier.verifyStepUpEvidence !== 'function') {
+      throw new PrivilegeStoreError('INVALID_OPTIONS', 'stepUpVerifier must expose verifyStepUpEvidence (fail-closed).');
+    }
+    const maxAge = options.stepUpMaxAgeMs ?? DEFAULT_STEP_UP_MAX_AGE_MS;
+    if (!Number.isFinite(maxAge) || maxAge <= 0) {
+      throw new PrivilegeStoreError('INVALID_OPTIONS', 'stepUpMaxAgeMs must be a positive finite number (fail-closed).');
+    }
+    const store = new PrivilegeStore(source, options.stepUpVerifier, options.strictStepUp === true, maxAge);
     const driver = source.getDriver();
     if (typeof driver.ensureIndex === 'function') {
       await driver.ensureIndex(PRIVILEGED_ELEVATIONS_COLLECTION, { name: 'by_principal', keys: ['principalId'], includeTenant: true });
@@ -222,6 +274,67 @@ export class PrivilegeStore {
   }
 
   // -- scope helpers ---------------------------------------------------------
+
+  /**
+   * P2-S5: step-up evidence must be VERIFIED, not merely ASSERTED.
+   *
+   * Before S5 this plane checked only that `stepUpAt` was present, finite and
+   * not future-beyond-skew, and that `stepUpEventId` was non-blank. Nothing
+   * resolved the id against a real assurance record, and the declared
+   * `stepUpMaxAgeMs` was compared nowhere — so `stepUpEventId: 'anything'` with
+   * `stepUpAt: now` satisfied the guard.
+   *
+   * This closes that. It runs BEFORE any transaction, so a failed verification
+   * writes nothing. It changes no authorization decision: the grantor authority
+   * assessment below is untouched.
+   */
+  async #verifyStepUpEvidence(input: GrantElevationInput, now: number): Promise<void> {
+    // Only classes that actually require step-up are checked; 'operator' is
+    // satisfied by session authentication (spec §9.3), exactly as before.
+    const requiresStepUp = input.operationClasses.some((cls) => cls !== 'operator');
+    if (!requiresStepUp) return;
+    if (this.stepUpVerifier === undefined) {
+      if (this.strictStepUp) {
+        throw new PrivilegeStoreError(
+          'STEP_UP_UNVERIFIED',
+          'step-up evidence cannot be verified: no assurance verifier is configured and strict step-up is enabled (fail-closed).',
+        );
+      }
+      // Unverified pass-through. This is the pre-S5 behaviour, preserved for
+      // callers that have not been wired to an assurance provider.
+      return;
+    }
+    // assertValidGrant has already proven these are present and finite.
+    const assuranceId = input.stepUpEventId;
+    const claimedAt = input.stepUpAt;
+    if (typeof assuranceId !== 'string' || typeof claimedAt !== 'number') {
+      throw new PrivilegeStoreError('STEP_UP_REQUIRED', 'step-up evidence is missing for a step-up-requiring class (fail-closed).');
+    }
+    try {
+      // WHOSE assurance? The GRANTOR's, in the GRANTOR's session.
+      //
+      // `input.principalId` is the TARGET of the elevation — the principal
+      // being granted power. Step-up is required to PERFORM the privileged act,
+      // so the assurance must belong to the actor: the security-admin granting
+      // it. Verifying against the target would let a caller authorize their own
+      // action with somebody else's (or the victim's) assurance, which is
+      // exactly the confusion S5 exists to prevent.
+      await this.stepUpVerifier.verifyStepUpEvidence({
+        tenantId: input.tenantId,
+        principalId: input.grantorPrincipalId,
+        assuranceId,
+        claimedAt,
+        maxAgeMs: this.stepUpMaxAgeMs,
+        sessionId: input.grantorSessionEventId,
+        now,
+      });
+    } catch (error) {
+      // Fail closed, and never echo the verifier's detail: it may carry
+      // identifiers from another tenant or principal.
+      const reason = error instanceof Error ? error.name : 'UnknownError';
+      throw new PrivilegeStoreError('STEP_UP_UNVERIFIED', `step-up evidence failed verification (${reason}); elevation refused (fail-closed).`);
+    }
+  }
 
   private async inTenant<T>(tenantId: string, fn: (scope: StorageWriteScope) => Promise<T>): Promise<T> {
     StorageModule.validateTenantId(tenantId);
@@ -348,6 +461,7 @@ export class PrivilegeStore {
   /** Grant an elevation (the grantor must durably hold a security-admin elevation). */
   async grantElevation(input: GrantElevationInput, now: number): Promise<PrivilegeElevationDoc> {
     assertValidGrant(input, now);
+    await this.#verifyStepUpEvidence(input, now);
     const grantorRequirement = {
       principalId: input.grantorPrincipalId,
       tenantId: input.scope === 'tenant' ? input.tenantId : PRIVILEGE_PLATFORM_TENANT,

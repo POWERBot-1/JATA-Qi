@@ -213,7 +213,7 @@ were caught by assertions that would have passed had the test been vacuous.
 | Tenant isolation | **TESTED** against real RLS |
 | Replay resistance under concurrency | **TESTED** (36 racers across 3 rounds) |
 | Step-up freshness enforced | **TESTED** |
-| `privilege-store` now *calls* `verifyStepUpEvidence` | **NOT DONE — DOCUMENTED ONLY.** S5 exposes the verification; wiring the existing plane to call it is a change to `privilege-store.ts`, which is P2-S3 territory and was **not** authorized here. The gap is therefore *closable* but **not yet closed in the plane**. |
+| `privilege-store` now *calls* `verifyStepUpEvidence` | **IMPLEMENTED + TESTED.** §16 closes this: the plane verifies the **grantor's** assurance before any write. 13 integration tests. |
 | Real KMS/HSM protection of the TOTP secret | **EXTERNAL DEPENDENCY.** Only a test seam exists; `kind:'external'` is a declaration, not proof. |
 | Recovery-authorization policy | **HUMAN-OWNED / EXTERNAL.** The caller supplies the validator; S5 refuses without one but does not judge sufficiency. |
 | Rate-limit policy adequacy | **UNVERIFIED.** Bounds are configurable; no production tuning evidence. |
@@ -243,11 +243,11 @@ harnesses (zero measured overlap, explicitly not authorized for preventive
 modification) · S6 break-glass · S8 · P3 · P4 · KMS/HSM integration ·
 `privilege-store.ts` (see §9).
 
-**One dependency discovered and reported rather than silently expanded:**
-closing the step-up gap *end to end* requires `privilege-store.grantElevation` to
-call `verifyStepUpEvidence` instead of trusting caller-supplied evidence. That is
-a change to the P2-S3 privileged plane. **STOP-and-report applied**: S5 ships the
-capability and the proof; wiring the plane is a separate authorization.
+**Scope note, corrected:** §8 of the S5 authorization requires that "privileged
+operations requiring stronger assurance must explicitly consume the MFA assurance
+signal". The first S5 commit stopped at *exposing* `verifyStepUpEvidence` and
+recorded the wiring as out of scope. That was wrong — the requirement is S5's own.
+§16 closes it.
 
 ---
 
@@ -255,7 +255,7 @@ capability and the proof; wiring the plane is a separate authorization.
 
 | # | Finding | Severity |
 |---|---|---|
-| 1 | `privilege-store` still trusts caller-supplied step-up evidence; S5's `verifyStepUpEvidence` is available but **not yet called by the plane** | **HIGH** (pre-existing; now closable) |
+| 1 | ~~`privilege-store` trusts caller-supplied step-up evidence~~ — **CLOSED in §16.** Residual: enforcement requires a verifier to be *configured*; `strictStepUp` makes a missing verifier fail-closed, but module wiring does not yet enable it by default | **MEDIUM** (was HIGH) |
 | 2 | No real KMS/HSM behind the TOTP secret — test seam only | MEDIUM (disclosed) |
 | 3 | Recovery-authorization policy is caller-supplied; adequacy unverified | MEDIUM (human-owned) |
 | 4 | Rate-limit bounds are untested against production traffic | LOW |
@@ -288,3 +288,85 @@ KMS/HSM · modify the three non-overlapping PostgreSQL harnesses · modify
 completeness.
 
 Merge authorization remains outstanding and is human-owned.
+
+
+---
+
+## 16. Closing the gap: the plane consumes S5 assurance
+
+The first S5 commit exposed `verifyStepUpEvidence()` but did not wire the
+privileged plane to call it, recording that as out of scope. Re-reading the
+authorization, §8 requires it: *"Privileged operations requiring stronger
+assurance must explicitly consume the MFA assurance signal."* That is S5's own
+requirement, so it is closed here.
+
+### What changed
+
+`packages/authentication/src/privilege-store.ts` — additive only:
+
+* `PrivilegeStore.open(source, options?)` now accepts an optional
+  `stepUpVerifier`, `strictStepUp`, and `stepUpMaxAgeMs`.
+* `StepUpEvidenceVerifier` is defined **structurally**, not by importing the MFA
+  module. The plane consumes an assurance *shape*; it does not own or implement
+  assurance. S5's `MfaFactorStore` satisfies it, and any future provider can.
+* `grantElevation` verifies **before any transaction**, so a failed verification
+  writes nothing.
+* New codes `STEP_UP_UNVERIFIED` and `INVALID_OPTIONS`.
+
+### Whose assurance? The GRANTOR's — a real design decision
+
+`GrantElevationInput.principalId` is the **target** of the elevation; the
+**grantor** is the security-admin performing the privileged act. Step-up is
+required to *perform* the act, so the assurance is verified against
+`grantorPrincipalId` and `grantorSessionEventId`. Verifying against the target
+would let a caller authorize their own action with somebody else's assurance —
+precisely the confusion S5 exists to prevent. A test proves the target's own
+genuine assurance cannot spend itself on a grant the target does not perform.
+
+### What is deliberately preserved
+
+With **no verifier configured and `strictStepUp` off**, behaviour is byte-for-byte
+the pre-S5 behaviour, so no existing caller is silently broken. That trade-off is
+stated rather than hidden: enforcement requires the verifier to be wired, and
+`strictStepUp` is the fail-closed switch for production. Test 9 asserts the
+unchanged path explicitly.
+
+### 13 integration tests (`p2-s5-stepup-integration.test.ts`, real PostgreSQL)
+
+Real assurance grants · **self-asserted evidence refused** · expired refused ·
+wrong-session refused · wrong-principal refused · target's assurance cannot
+authorize the grantor · strict mode refuses with no verifier · operator-class
+unaffected (spec §9.3) · unverified path unchanged · rogue grantor still refused
+by the **authority** check (proving no second authority was added) · invalid
+verifier refused at open · `MfaError` never leaks through the plane and no
+tenant/principal appears in the message.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| Build | exit 0, 50 workspaces, 0 `error TS` |
+| New suite | **13 / 0 fail / 0 skipped / 0 cancelled** |
+| Full regression | **1,544 · 0 fail · 0 skipped · 0 cancelled · 50/50** (was 1,531) |
+| **S3/S4 regression** | **none** — the change is additive; all existing privilege tests still pass |
+| Lint | 0 errors / **60** warnings (baseline) |
+| `scan:r2` | PASS, 0 findings |
+
+### Remaining residual
+
+The verifier must be **configured** for enforcement to bite. `strictStepUp`
+makes a missing verifier fail-closed, but `authentication-module` wiring does not
+yet enable it by default — so an operator can still construct an unverified
+plane. That is the same vacuity shape as P2-INV-08 and should be closed by a
+posture invariant when S6 lands. Recorded as finding 1 (now MEDIUM, was HIGH).
+
+### Sandbox re-clone during this work
+
+The sandbox was **re-cloned again** at `2026-09-11 13:00:35 UTC`, destroying
+`.git`, `dist` and `node_modules`. Unlike the earlier incident, all prior work
+was already pushed (`652cac3`), so nothing was lost; the uncommitted
+`privilege-store.ts` edit survived the workspace snapshot. Recovery:
+`git reset --mixed 652cac3` (working tree untouched), after which `git status`
+showed **only** `privilege-store.ts` modified — proving the tree matched the
+pushed head plus exactly that one edit. `npm ci` restored 178 packages / 50
+workspace links, and the whole gate was re-run from scratch.
