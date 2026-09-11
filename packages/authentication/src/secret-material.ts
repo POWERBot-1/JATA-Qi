@@ -33,6 +33,18 @@
 //    transaction as the data operation, so an operation that cannot be audited
 //    does not happen. Fail-closed is never weakened to improve audit
 //    availability; if anything it is tightened.
+//  * THIS SEAM DOES NOT AUTHORIZE. `actorPrincipalId` is REQUIRED on every
+//    operation and is written to the audit trail, but it is NEVER compared
+//    against `principalId`, and this module imports no identity or
+//    authorization authority. What the seam enforces is the BINDING (tenant,
+//    principal, purpose, secretId) and the sealing context — not a decision
+//    that the actor may act for that principal. That decision belongs to the
+//    existing identity/authorization authority, and a caller MUST obtain the
+//    binding from it. Standing up a second authorization system inside S7 was
+//    explicitly out of scope.
+//    In practice `secretId` is a UUID, so the binding tuple behaves as an
+//    unguessable capability — but a capability is not an authorization, and the
+//    difference matters for anything that can enumerate, leak, or replay ids.
 //  * NO MATERIAL IN DIAGNOSTICS — errors carry secretId/version/purpose only.
 
 import { randomUUID } from 'node:crypto';

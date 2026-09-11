@@ -189,9 +189,18 @@ export interface SealedBlob {
 }
 
 /**
- * The key-management seam (spec §12). Provider-neutral: a KMS, an HSM, a cloud
- * secret manager, or a Vault-like backend can all satisfy it. Nothing here
- * names a vendor.
+ * The key-management seam (spec §12).
+ *
+ * PROVIDER-NEUTRAL means nothing here DEPENDS ON a vendor: the seam is defined
+ * solely by this interface plus `ExternalKeyProviderAdapter`, so a cloud KMS, an
+ * HSM, a secrets manager, or a Vault-like backend can each implement the adapter
+ * without the seam changing. There is no vendor import, no vendor type, and no
+ * vendor-specific branch anywhere in this module.
+ *
+ * Accuracy note: vendor class names (KMS, HSM) and one product name used as an
+ * example ("Vault-like") do appear in these comments. An earlier revision of
+ * this comment claimed "Nothing here names a vendor", which was not true — the
+ * accurate claim is the one above: no vendor is depended upon.
  */
 export interface KeyManagementSeam {
   /** Seam identifier (for audit citations). Never secret. */

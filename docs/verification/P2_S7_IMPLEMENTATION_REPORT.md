@@ -191,6 +191,7 @@ seam.
 | Authorization boundary / no identifier oracle | Every binding mismatch ⇒ the **same** code | key-seam 1, secret 2 cases; mutant **M7** |
 | Tenant isolation | Tenant-scoped storage scope (RLS) | 2 cases; mutant **M6** |
 | No ambient authority | `actorPrincipalId` is a **required** argument on every operation | 1 case |
+| **The seam does NOT authorize** | `actorPrincipalId` is recorded but **never** compared to `principalId`; no authorization authority is imported | by construction — see §9.7 |
 | Secrets never in diagnostics | Identifier-only error shape; provider errors not propagated | 4 cases; mutant **M8** |
 | Audit without weakening fail-closed | See §5 | 4 cases |
 
@@ -328,6 +329,29 @@ So the substance stands — Phase A and M1 really did touch zero production sour
 and S7 touches exactly five files — but the original evidence did not establish
 it. Any future claim of this shape must use `:(glob)…/**` or classify the file
 list directly.
+
+---
+
+## 6.3 Evidence audit: re-checking my own claims after finding one bad proof
+
+§6.2 found a verification command that always returned the answer I wanted. One
+such error makes every other self-attested claim suspect, so each was re-checked
+against the **pushed** code (`git show 9bc0144:<path>`), not against memory.
+
+| Claim | Re-checked how | Verdict |
+|---|---|---|
+| "No vendor is named anywhere" | `grep -ioE` over both pushed seam files | **FALSE — corrected.** `KMS` ×5, `HSM` ×5, **`Vault` ×1** (`key-management.ts:193`). The comment even said "Nothing here names a vendor" on the line after naming Vault. The *true* claim is no vendor **dependency**: no vendor import, type, or branch. (`transit` at :778 is "lifecycle transition" — a false positive.) |
+| "Authorization boundary" / "no ambient authority" implies the seam authorizes | `grep` for `actorPrincipalId` comparisons and for any authorization import | **MISLEADING — corrected.** `actorPrincipalId` is required on all 5 inputs but is only checked for non-emptiness (`:277`); it is **never** compared to `principalId`. No authorization module is imported. See §9.7. |
+| "caches key material for the process lifetime" | `grep '#cache'` | **INACCURATE — corrected.** The cache **is evicted on `revoke`** (`:794-795`). It is still unbounded and unscrubbed, so the risk stands — but the description was wrong. |
+| "12 closed failure codes" | counted the union members | **CORRECT** — exactly 12. |
+| Test counts 42 / 29 / 12 / 4 | re-ran all four suites | **CORRECT** — 42, 29, 12, 4. |
+| `actorPrincipalId` required on every operation | `grep` over the 5 input interfaces | **CORRECT** — lines 147/185/196/207/217. |
+| Phase A / M1 touched 0 `src` files | `:(glob)packages/*/src/**` per commit | **CORRECT** (though originally proved with a broken command). |
+
+Three of seven claims did not survive. All three were **overstatements in the
+safe direction's opposite** — they made the work look cleaner or stronger than it
+was. That is the failure mode worth guarding against, and the reason this audit
+is recorded rather than quietly applied.
 
 ---
 
@@ -475,9 +499,12 @@ same two-line change and should be a separate, small harness task.
    ACTIVE/RETIRED/REVOKED and `notAfter`. It **cannot** guarantee that an
    underlying provider actually destroys, rotates, or protects key material. No
    such guarantee is claimed.
-3. **`ExternalKeyManagementSeam` caches fetched key material in process memory**
-   for the process lifetime. A real HSM-backed integration would want a bounded,
-   scrubbed cache; that is a provider-integration concern, not resolvable here.
+3. **`ExternalKeyManagementSeam` caches fetched key material in process memory.**
+   The cache is per `(keyId, version, purpose)` and **is evicted on `revoke`**,
+   which is better than this report first claimed ("for the process lifetime" —
+   incorrect, corrected here). It is still **unbounded in entry count and never
+   scrubbed**, so a real HSM-backed integration would want a bounded, zeroing
+   cache. That is a provider-integration concern, not resolvable here.
 4. **The dev double performs real cryptography in process memory.** It is
    correctly labelled and boot-refused, but it is not a hardened store and must
    never be promoted.
@@ -487,6 +514,23 @@ same two-line change and should be a separate, small harness task.
    invariant should be strengthened to require an attached external seam.
 6. **No S5/S6 consumer exists yet**, so the seam is exercised only by its own
    tests. Interface friction will only surface when the first consumer is built.
+
+7. **S7 does not authorize — it binds and audits.** This is by design (a second
+   authorization system inside S7 was explicitly out of scope), but it is easy
+   to over-read the words "authorization boundary". Verified in the pushed code:
+   `actorPrincipalId` appears in all five operation inputs and is checked only
+   for non-emptiness (line 277); it is **never** compared to `principalId`, and
+   `secret-material.ts` / `key-management.ts` import **no** identity or
+   authorization module (`grep` for `AuthorizationBoundary`, `IdentityStore`,
+   `authorize`, `assertAuthorized`, `hasLive` → no matches).
+
+   What S7 enforces is the **binding** (tenant, principal, purpose, secretId)
+   plus the sealing context. What it does **not** decide is whether the actor
+   may act for that principal — that is the existing authority's job, and a
+   caller MUST obtain the binding from it. Since `secretId` is a UUID, the
+   binding tuple behaves as an unguessable **capability** — but a capability is
+   not an authorization, and the difference matters for anything that can
+   enumerate, leak, or replay ids. This must be stated in the S5/S6 design.
 
 ---
 
@@ -543,7 +587,7 @@ Issued after verification against the exact PR head `9bc0144`:
 | Ancestry | `merge-base(head, main)` = `2455c59`; `main` is an ancestor of head |
 | PR | #33 `open`, `merged=false`, base `main`, 4 commits, 25 files, +6749/−28 |
 | File scope | 5 `src`, 11 test/harness, 8 docs, 1 CI workflow |
-| Provider boundary | no vendor named in either seam file; adapter surface only |
+| Provider boundary | **no vendor dependency** (no vendor import, type, or branch); adapter surface only. Note: the word "Vault" *is* named, in a comment, as an example — see §6.3 |
 | Fail-closed | §4 matrix; P2-INV-08 aborts a production boot on a dev seam |
 | Tenant isolation | RLS makes a cross-tenant row *invisible* (0 rows), not merely unauthorized |
 | Authorization | no identifier oracle; no ambient authority; mutation-proven |
@@ -558,8 +602,14 @@ Issued after verification against the exact PR head `9bc0144`:
 2. **P2-INV-08 is vacuous when no seam is attached.** Correct today, but it does
    not *force* an external seam to exist; it should be strengthened when S5/S6
    land.
-3. A previously cited verification command was **vacuous** (§6.2). Corrected, but
-   it is a reminder that other self-attested claims deserve the same scrutiny.
+2b. **S7 does not authorize** (§9.7). The binding tuple is a capability, not an
+   authorization decision. Any S5/S6 consumer must obtain that binding from the
+   existing identity/authorization authority, and the S5/S6 design must say so.
+3. A previously cited verification command was **vacuous** (§6.2), and a
+   follow-up audit of the remaining self-attested claims found **two more
+   overstatements** (§6.3): "no vendor is named" was false, and
+   "authorization boundary" over-read what the seam actually enforces. All three
+   are corrected, but they are a pattern, not three isolated slips.
 
 **Honest limit on the word "independent".** This verification was performed by
 the same session that wrote the code, against the pushed PR head. It is
