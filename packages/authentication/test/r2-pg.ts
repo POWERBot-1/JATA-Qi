@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import EmbeddedPostgres from 'embedded-postgres';
@@ -13,6 +14,12 @@ import { createTestKernel } from '@jataqi/core-kernel/testing';
 import type { Kernel } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
+
+/**
+ * Tenant used only to force the driver's first (lazy) connection during boot
+ * readiness. It writes nothing: the transaction body is a no-op.
+ */
+const PG_READINESS_PROBE_TENANT = 'acme';
 
 export interface R2Postgres {
   server: EmbeddedPostgres;
@@ -41,8 +48,41 @@ async function removeClusterDir(databaseDir: string): Promise<void> {
   }
 }
 
+/**
+ * P1C-OBS-01 (extension) — collision-free port allocation.
+ *
+ * The per-suite port windows are 250 wide, but the `portBase` values callers
+ * pass are only tens apart (e.g. 59400 / 59450 / 59500 / 59700 here, and
+ * 56800 / 56810 / 56910 / 56980 in the CLI harness), so the windows OVERLAP.
+ * A plain `base + random(250)` can therefore hand the SAME port to two suites
+ * running concurrently; the losing postmaster fails to bind and the other
+ * suite sees ECONNREFUSED — a red suite on an unmodified tree.
+ *
+ * Verify the candidate is actually free before handing it to embedded-postgres.
+ * Exhaustion THROWS (fail-hard, consistent with this harness's contract); it
+ * never skips and never silently reuses a busy port.
+ */
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(port, '127.0.0.1');
+  });
+}
+
+async function pickFreePort(portBase: number, label: string): Promise<number> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const candidate = portBase + Math.floor(Math.random() * 250);
+    if (await portIsFree(candidate)) return candidate;
+  }
+  throw new Error(`${label}: no free port in [${portBase}, ${portBase + 250}) after 60 attempts (fail-closed).`);
+}
+
 export async function bootR2Postgres(label: string, portBase: number): Promise<R2Postgres> {
-  const port = portBase + Math.floor(Math.random() * 250);
+  const port = await pickFreePort(portBase, 'bootR2Postgres');
   const user = 'postgres';
   const password = 'postgres';
   const databaseDir = path.join(os.tmpdir(), `jataqi-${label}-${process.pid}`);
@@ -123,6 +163,17 @@ export async function bootR2StorageKernel(
     kernel.register(storage);
     try {
       await kernel.boot();
+      // P1C-OBS-01 (extension): the PostgreSQL driver connects LAZILY, so
+      // `kernel.boot()` opens no socket and the bounded transient retry above
+      // never actually covered the first connection — the ECONNREFUSED simply
+      // surfaced later, inside the caller's first store open (e.g.
+      // `IdentityStore.open` → `driver.ensureReady`), where nothing retried it.
+      // Force the first connection HERE, inside the loop, with a no-op
+      // tenant-scoped transaction, so a postmaster that logged "ready to accept
+      // connections" before its TCP listener was actually accepting is retried.
+      // Semantics are unchanged: a transient is retried boundedly and then
+      // THROWS; genuine absence still THROWS. Nothing here ever skips.
+      await storage.atomically(async () => undefined, { tenantId: PG_READINESS_PROBE_TENANT });
       return { kernel, storage, driver };
     } catch (error) {
       lastError = error;

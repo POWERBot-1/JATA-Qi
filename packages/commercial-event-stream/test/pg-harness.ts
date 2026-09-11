@@ -30,6 +30,34 @@ async function removeClusterDir(databaseDir: string): Promise<void> {
   }
 }
 
+/**
+ * P1C-OBS-01 remediation — transient-readiness signature + bounded retry.
+ * See `packages/storage-postgres/test/pg-test-harness.ts` for the full rationale.
+ * Mirrors the proven `r2-pg.ts` (O-2) pattern.
+ */
+const PG_TRANSIENT_RE = /ECONNREFUSED|connection refused|not accepting|could not connect|terminating|terminated|the database system is (starting up|shutting down)/i;
+
+export function isTransientPgError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.message} ${String((error as { code?: string }).code ?? '')}` : String(error);
+  return PG_TRANSIENT_RE.test(message);
+}
+
+async function withPgReadinessRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      // Only the readiness race is retried; a genuine capability absence
+      // surfaces immediately.
+      if (!isTransientPgError(error) || attempt === attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 let server:
   | { pg: EmbeddedPostgres; port: number; user: string; password: string; databaseDir: string; started: boolean }
   | undefined;
@@ -54,15 +82,29 @@ async function ensureServer(): Promise<NonNullable<typeof server>> {
     onError: () => {},
   });
   try {
-    await pg.initialise();
-    await pg.start();
+    // P1C-OBS-01: bounded readiness retry on the two post-boot-adjacent calls.
+    // embedded-postgres resolves `start()` on the postmaster log line, which can
+    // precede the TCP listener accepting; under concurrent per-file boots this
+    // races and surfaces as ECONNREFUSED.
+    await withPgReadinessRetry(() => pg.initialise());
+    await withPgReadinessRetry(() => pg.start());
     server = { pg, port, user, password, databaseDir, started: true };
   } catch (error) {
-    console.warn('[t05-pg] PostgreSQL unavailable:', String((error as Error)?.message ?? error));
-    server = { pg, port, user, password, databaseDir, started: false };
     // A failed boot may have left a partial cluster behind.
     await pg.stop().catch(() => undefined);
     await removeClusterDir(databaseDir);
+    // P1C-OBS-01: this harness already declares PostgreSQL a HARD requirement,
+    // so a transient readiness failure must fail loudly rather than degrade the
+    // suite into a false-negative. Only a genuine capability absence (no
+    // binaries) may report unavailable.
+    if (isTransientPgError(error)) {
+      throw new Error(
+        `[t05-pg] PostgreSQL boot failed with a TRANSIENT readiness error after bounded retry ` +
+        `(binaries are present; refusing to degrade the suite). cause=${String((error as Error)?.message ?? error)}`,
+      );
+    }
+    console.warn('[t05-pg] PostgreSQL unavailable:', String((error as Error)?.message ?? error));
+    server = { pg, port, user, password, databaseDir, started: false };
   }
   return server;
 }
@@ -85,7 +127,8 @@ export async function freshDb(): Promise<{ database: string; connectionString: s
   const s = await ensureServer();
   if (!s.started) throw new Error('DATABASE INTEGRATION NOT EXECUTED: embedded PostgreSQL failed to start.');
   const database = `t05_${process.pid}_${dbCounter++}_${randomUUID().slice(0, 8)}`;
-  await s.pg.createDatabase(database);
+  // P1C-OBS-01: bounded readiness retry on the first post-boot connection.
+  await withPgReadinessRetry(() => s.pg.createDatabase(database));
   const connectionString = `postgres://${s.user}:${s.password}@127.0.0.1:${s.port}/${database}`;
   return { database, connectionString, config: { connectionString, requireExplicitConfig: true, max: 6 } };
 }

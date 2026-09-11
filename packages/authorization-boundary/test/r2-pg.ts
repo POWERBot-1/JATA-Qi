@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
+import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import EmbeddedPostgres from 'embedded-postgres';
@@ -41,8 +42,42 @@ async function removeClusterDir(databaseDir: string): Promise<void> {
   }
 }
 
+/**
+ * P1C-OBS-01 (extension) — collision-free port allocation.
+ *
+ * The per-suite port windows are 250 wide, but the `portBase` values callers
+ * pass can be closer together than that, so the windows OVERLAP. In this
+ * package that is not theoretical: bases 58500 / 58600 / 58700 / 58800 are only
+ * 100 apart, giving a four-way overlap across 58600-58949. A plain
+ * `base + random(250)` can hand the SAME port to two suites running
+ * concurrently; the losing postmaster fails to bind and the other suite sees
+ * ECONNREFUSED — a red suite on an unmodified tree.
+ *
+ * Verify the candidate is actually free before handing it to embedded-postgres.
+ * Exhaustion THROWS (fail-hard, consistent with this harness's contract); it
+ * never skips and never silently reuses a busy port.
+ */
+function portIsFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(port, '127.0.0.1');
+  });
+}
+
+async function pickFreePort(portBase: number, label: string): Promise<number> {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const candidate = portBase + Math.floor(Math.random() * 250);
+    if (await portIsFree(candidate)) return candidate;
+  }
+  throw new Error(`${label}: no free port in [${portBase}, ${portBase + 250}) after 60 attempts (fail-closed).`);
+}
+
 export async function bootR2Postgres(label: string, portBase: number): Promise<R2Postgres> {
-  const port = portBase + Math.floor(Math.random() * 250);
+  const port = await pickFreePort(portBase, 'bootR2Postgres');
   const user = 'postgres';
   const password = 'postgres';
   const databaseDir = path.join(os.tmpdir(), `jataqi-${label}-${process.pid}`);

@@ -275,3 +275,105 @@ export type {
   DelegationStateAuthority,
 } from './delegation-types.js';
 export { DelegationStore } from './delegation-store.js';
+
+// ---------------------------------------------------------------------------
+// P2-S7 — credential material: key-management seam + secret-material store.
+// ---------------------------------------------------------------------------
+export {
+  KeyManagementError,
+  isKeyPurpose,
+  isDevelopmentKeySeam,
+  assertProductionKeySeam,
+  InMemoryKeyManagementSeam,
+  ExternalKeyManagementSeam,
+  RECOGNIZED_KEY_STATUSES,
+  RECOGNIZED_KEY_PURPOSES,
+  DEFAULT_RETIRED_KEY_GRACE_MS,
+} from './key-management.js';
+export type {
+  KeySeamKind,
+  KeyPurpose,
+  KeyStatus,
+  KeyManagementFailureCode,
+  KeyRef,
+  Signer,
+  Verifier,
+  Encryptor,
+  Decryptor,
+  SealedBlob,
+  KeyManagementSeam,
+  ExternalKeyProviderAdapter,
+} from './key-management.js';
+export {
+  SecretMaterialStore,
+  SecretMaterialError,
+  deriveSecretContext,
+  isSecretPurpose,
+  isDevelopmentSecretSeam,
+  assertProductionSecretSeam,
+  newSecretId,
+  RECOGNIZED_SECRET_PURPOSES,
+  SECRET_MATERIAL_COLLECTION,
+  SECRET_ACCESS_COLLECTION,
+  DEV_SECRET_SEAM_KEY_ID,
+} from './secret-material.js';
+export type {
+  SecretPurpose,
+  SecretStatus,
+  SecretOperation,
+  SecretAccessResult,
+  SecretMaterialFailureCode,
+  SecretMaterialDoc,
+  SecretAccessRecord,
+  SecretAccessAuditSink,
+  SecretRef,
+  SealSecretInput,
+  OpenSecretInput,
+  RotateSecretInput,
+  RevokeSecretInput,
+} from './secret-material.js';
+export type { AuthenticationCredentialMaterialConfig } from './authentication-module.js';
+
+// ---------------------------------------------------------------------------
+// P2-S5 — MFA / stronger identity assurance.
+//
+// S5 produces an authentication ASSURANCE signal for the EXISTING authority
+// plane. It is not an authorization engine: a satisfied MFA challenge proves
+// something about who is presenting a factor, not what that principal may do.
+// ---------------------------------------------------------------------------
+
+export {
+  DEFAULT_MFA_STEP_UP_MAX_AGE_MS,
+  DEFAULT_MFA_THROTTLE_POLICY,
+  DEFAULT_TOTP_PARAMETERS,
+  MFA_ASSURANCE_COLLECTION,
+  MFA_ASSURANCE_RANK,
+  MFA_EVENT_COLLECTION,
+  MFA_FACTOR_COLLECTION,
+  MFA_THROTTLE_COLLECTION,
+  MfaError,
+  MfaFactorStore,
+  base32Decode,
+  base32Encode,
+  totpAt,
+  totpVerifyStep,
+} from './mfa.js';
+export type {
+  EnrollInput,
+  EnrollResult,
+  MfaAssuranceDoc,
+  MfaAssuranceLevel,
+  MfaAuditSink,
+  MfaEventKind,
+  MfaEventRecord,
+  MfaFactorDoc,
+  MfaFactorKind,
+  MfaFactorStatus,
+  MfaFailureCode,
+  MfaOperation,
+  MfaThrottlePolicy,
+  StepUpEvidenceInput,
+  TotpParameters,
+  VerifyInput,
+  VerifyResult,
+} from './mfa.js';

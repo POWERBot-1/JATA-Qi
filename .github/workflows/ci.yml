@@ -53,18 +53,50 @@ jobs:
         run: npm run lint
 
       - name: Test (all workspaces)
-        run: npm test
+        run: |
+          # P1C-OBS-01: capture this run's own output so the PostgreSQL-skip
+          # detector below inspects the SAME run it is judging. Previously the
+          # detector re-ran the entire suite (~6 min, doubling CI cost) and
+          # therefore sampled a DIFFERENT run — a transient skip in the judged
+          # run could be missed entirely because it did not reproduce.
+          set -o pipefail
+          npm test 2>&1 | tee /tmp/jataqi-test-output.log
 
       - name: PostgreSQL integration status
         if: always()
         run: |
           echo "PostgreSQL integration suites are gated on a real embedded PostgreSQL."
           echo "If the runner could not start it, those suites report SKIP and this run"
-          echo "must NOT be read as PostgreSQL-verified. Inspect the storage-postgres and"
-          echo "loop-host suite output above for 'SKIPPED: PostgreSQL integration'."
-          npx --yes --no-install true || true
-          if npm test --silent 2>&1 | grep -qi 'SKIPPED: PostgreSQL integration'; then
-            echo "RESULT: DATABASE INTEGRATION NOT EXECUTED (suites skipped)."
-          else
-            echo "RESULT: PostgreSQL integration suites did not report SKIP in this environment."
+          echo "must NOT be read as PostgreSQL-verified."
+          LOG=/tmp/jataqi-test-output.log
+          if [ ! -f "$LOG" ]; then
+            echo "RESULT: no captured test output (the test step did not run); nothing to assert."
+            exit 0
           fi
+          if grep -qi 'SKIPPED: PostgreSQL integration' "$LOG"; then
+            echo "RESULT: DATABASE INTEGRATION NOT EXECUTED (suites skipped)."
+            echo "Offending lines:"
+            grep -i 'SKIPPED: PostgreSQL integration' "$LOG" | head -20
+            # CI runners DO provide the embedded-postgres binaries — the
+            # fail-hard r2-pg suites boot real PostgreSQL in this same job. A
+            # SKIP here therefore means a boot race was misreported as an
+            # absent capability, i.e. a false-negative green. Fail loudly
+            # rather than let it pass unverified.
+            echo "Failing: PostgreSQL skipped on a runner where the binaries are available."
+            exit 1
+          fi
+          echo "RESULT: PostgreSQL integration suites executed (no SKIP reported)."
+
+      - name: Embedded-PostgreSQL readiness diagnostics
+        if: always()
+        run: |
+          # P1C-OBS-01: surface the readiness-retry evidence in the job log so a
+          # future failure is attributable from the log alone, without needing
+          # the Azure blob download that G10 proved unreachable.
+          LOG=/tmp/jataqi-test-output.log
+          [ -f "$LOG" ] || exit 0
+          echo "--- transient-readiness signatures observed in this run ---"
+          grep -iE 'ECONNREFUSED|connection refused|not accepting|the database system is starting up' "$LOG" | head -30 || true
+          echo "--- harness readiness outcomes ---"
+          grep -iE '\[pg-test\]|\[loophost-pg\]|\[t05-pg\]' "$LOG" | head -30 || true
+          echo "--- end diagnostics ---"
