@@ -5,8 +5,9 @@
 | Specification | `JATA-P0-95-v1.1` (adopted; canonical at `docs/rubric/JATA-P0-95-v1.1.md`) |
 | Scorecard status | **PROVISIONAL — v1.0 numeric schedule UNRECOVERED** (see `docs/verification/P0R_RUB_03_PROVENANCE_RECONSTRUCTION.md`) |
 | Canonical SHA scored | `2455c59e8462ca203e9d57788792acb32e5cdad9` |
-| Date of assessment | 2026-09-11 (UTC) |
+| Date of assessment | 2026-09-11 (UTC) — **refreshed at M1 closure** (see `docs/verification/M1_CLOSURE_RECORD.md` §6) |
 | Assessment type | Fresh, source-verified, at the exact canonical SHA above — **not** a carry-forward of a historical report |
+| **Numerical 95% score** | **NOT COMPUTABLE** — v1.0 numeric schedule UNRECOVERED |
 | **Published percentage** | **NONE.** No total, no per-dimension percentage, and no delta is published. Only the one fully-specified unit (D07b) is scored, as v1.1 permits. |
 
 ---
@@ -276,13 +277,13 @@ where their *thresholds* are not.
 
 | Field | Value |
 |---|---|
-| Capability status | **IMPLEMENTED (strong)** — **1,411 tests, 0 skipped, 0 failed**; fail-hard embedded-PostgreSQL harness (`test/r2-pg.ts` **throws**, never skips); 20-case adversarial matrix; lint 0 errors; secret scan 0 findings |
+| Capability status | **IMPLEMENTED (strong)** — **1,417 tests, 0 skipped, 0 failed**; fail-hard embedded-PostgreSQL harness (`test/r2-pg.ts` **throws**, never skips); 20-case adversarial matrix; lint 0 errors; secret scan 0 findings |
 | Evidence status | **VERIFICATION** — full suite re-executed this phase at this SHA |
-| Freshness | **CURRENT (2026-09-11)** |
+| Freshness | **CURRENT (2026-09-11, M1)** |
 | Verified score | **UNSCORABLE** |
-| Remaining gap | S2 evidence class (PR-ATTESTATION → VERIFICATION); P1C-OBS-01 harness bounded-retry; G10 attribution |
-| Blocking gates | **G10 OPEN** — "no unexplained mandatory CI/test failure" |
-| Required next evidence | G10 attribution from an egress-capable environment; harness remediation |
+| Remaining gap | P1C-OBS-01 **RESOLVED at M1** (4 harnesses remediated; false-negative skip path eliminated; CI detector made deterministic and failing; +6 mutation-proven regression tests). Still open: G10 attribution |
+| Blocking gates | **G10 OPEN** — "no unexplained mandatory CI/test failure" (now formally dispositioned as evidence-blocked: log retained server-side, egress-unreachable) |
+| Required next evidence | G10 log retrieval from an egress-capable environment |
 
 ### D15 — Governance / autonomy
 
@@ -292,9 +293,9 @@ where their *thresholds* are not.
 | Evidence status | **VERIFICATION** — ruleset read live via API this phase |
 | Freshness | **CURRENT** |
 | Verified score | **UNSCORABLE** |
-| Remaining gap | AG-1/R-9 merge-gate hardening (**blocked in this phase by token scope** — see the Phase A governance record); report-durability rule |
+| Remaining gap | AG-1/R-9 merge-gate hardening — **still NOT applied at M1 closure**; the exact reversible payload and read-back verification are prepared and the item is formally dispositioned **HUMAN ADMIN REQUIRED** (`administration:write` not granted to the available token; 403 confirmed, no bypass attempted). Also: report-durability rule |
 | Blocking gates | independent verification; human merge authorization |
-| Required next evidence | post-change ruleset read-back showing both controls active |
+| Required next evidence | post-change ruleset read-back showing `required_approving_review_count: 1` and a `required_status_checks` rule with context `build · lint · test` |
 
 ---
 

@@ -38,6 +38,38 @@ function removeClusterDir(databaseDir: string): void {
   }
 }
 
+/**
+ * P1C-OBS-01 remediation — bounded readiness retry.
+ *
+ * This harness is already fail-hard (it rethrows, so the suite FAILS rather than
+ * skipping), which is the correct posture. What it lacked was the bounded retry:
+ * a transient ECONNREFUSED during the readiness race therefore produced a RED run
+ * on an unmodified tree — a FALSE-POSITIVE failure, the mirror image of the
+ * false-negative skip in the other harnesses and the same underlying race.
+ *
+ * Mirrors the proven `r2-pg.ts` (O-2) pattern.
+ */
+const PG_TRANSIENT_RE = /ECONNREFUSED|connection refused|not accepting|could not connect|terminating|terminated|the database system is (starting up|shutting down)/i;
+
+function isTransientPgError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.message} ${String((error as { code?: string }).code ?? '')}` : String(error);
+  return PG_TRANSIENT_RE.test(message);
+}
+
+async function withPgReadinessRetry<T>(operation: () => Promise<T>, attempts = 4): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientPgError(error) || attempt === attempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
 export async function bootP1Postgres(label: string, portBase: number): Promise<P1Postgres> {
   const port = portBase + Math.floor(Math.random() * 250);
   const databaseDir = path.join(os.tmpdir(), `jataqi-${label}-${process.pid}`);
@@ -55,10 +87,12 @@ export async function bootP1Postgres(label: string, portBase: number): Promise<P
     onError: () => {},
   });
   try {
-    await server.initialise();
-    await server.start();
+    // P1C-OBS-01: bounded readiness retry on boot and on the first post-boot
+    // connection (see the block comment above).
+    await withPgReadinessRetry(() => server.initialise());
+    await withPgReadinessRetry(() => server.start());
     const database = `${label.replace(/[^a-z0-9]/gi, '_')}_${process.pid}_${randomUUID().slice(0, 8)}`.toLowerCase();
-    await server.createDatabase(database);
+    await withPgReadinessRetry(() => server.createDatabase(database));
     const adminConnectionString = `postgres://postgres:postgres@127.0.0.1:${port}/${database}`;
     const admin = new pg.Pool({ connectionString: adminConnectionString, max: 4 });
     const appRole = `p1app_${randomUUID().slice(0, 8).replace(/-/g, '')}`;

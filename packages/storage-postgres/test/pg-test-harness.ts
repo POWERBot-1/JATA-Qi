@@ -24,6 +24,61 @@ async function removeClusterDir(databaseDir: string): Promise<void> {
   }
 }
 
+/**
+ * P1C-OBS-01 remediation — transient-readiness signature.
+ *
+ * embedded-postgres resolves `start()` on the postmaster's "ready to accept
+ * connections" log line, which can PRECEDE the TCP listener actually accepting
+ * connections. Under the concurrent boot that `node --test` produces (one
+ * embedded PostgreSQL per test file, several files per workspace) a runner can
+ * therefore observe ECONNREFUSED against a server that is about to be ready.
+ *
+ * This is an infrastructure race, not a product failure and not an absence of
+ * PostgreSQL. It must be retried — and, critically, it must NOT be allowed to
+ * masquerade as "PostgreSQL is unavailable in this environment".
+ */
+const PG_TRANSIENT_RE = /ECONNREFUSED|connection refused|not accepting|could not connect|terminating|terminated|the database system is (starting up|shutting down)/i;
+
+/** True when an error looks like the readiness race rather than a missing capability. */
+export function isTransientPgError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.message} ${String((error as { code?: string }).code ?? '')}` : String(error);
+  return PG_TRANSIENT_RE.test(message);
+}
+
+/** P1C-OBS-01: bounded readiness retry, mirroring the proven `r2-pg.ts` (O-2) pattern. */
+async function withPgReadinessRetry<T>(
+  label: string,
+  operation: () => Promise<T>,
+  attempts = 4,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      // Only the readiness race is retried. A genuine capability absence
+      // (binaries missing, initdb unsupported) is surfaced immediately so the
+      // honest-skip path still behaves as documented.
+      if (!isTransientPgError(error) || attempt === attempts) throw error;
+      pgDiagnostics.retries[label] = (pgDiagnostics.retries[label] ?? 0) + 1;
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * P1C-OBS-01 diagnostics: published so a future failure is attributable from
+ * the job log alone instead of requiring an unretained blob download.
+ */
+export const pgDiagnostics: {
+  attempts: Record<string, number>;
+  retries: Record<string, number>;
+  outcome: 'STARTED' | 'UNAVAILABLE' | 'TRANSIENT_FAILURE' | 'NOT_ATTEMPTED';
+  detail?: string;
+} = { attempts: {}, retries: {}, outcome: 'NOT_ATTEMPTED' };
+
 let serverState: {
   pg: EmbeddedPostgres;
   port: number;
@@ -55,16 +110,45 @@ async function ensureServer(): Promise<typeof serverState> {
     },
   });
   try {
-    await pg.initialise();
-    await pg.start();
+    pgDiagnostics.attempts.initialise = (pgDiagnostics.attempts.initialise ?? 0) + 1;
+    await withPgReadinessRetry('initialise', () => pg.initialise());
+    pgDiagnostics.attempts.start = (pgDiagnostics.attempts.start ?? 0) + 1;
+    await withPgReadinessRetry('start', () => pg.start());
   } catch (error) {
-    console.warn('[pg-test] PostgreSQL integration unavailable; tests will SKIP:', String((error as Error)?.message ?? error));
-    serverState = { pg, port, user, password, databaseDir, started: false };
     // A failed boot may have left a partial cluster behind.
     await pg.stop().catch(() => undefined);
     await removeClusterDir(databaseDir);
+
+    // P1C-OBS-01: the decisive distinction.
+    //
+    // BEFORE: every boot error set `started: false`, so a transient readiness
+    // race silently degraded a real PostgreSQL integration suite into a
+    // trivially-passing "SKIPPED" placeholder — a FALSE-NEGATIVE green run.
+    //
+    // AFTER: a transient error that survives bounded retry means the binaries
+    // exist and the server merely lost a readiness race. That is a real
+    // infrastructure failure and MUST fail loudly. Only a non-transient error
+    // (no binaries / unsupported platform) keeps the documented honest skip.
+    if (isTransientPgError(error)) {
+      pgDiagnostics.outcome = 'TRANSIENT_FAILURE';
+      pgDiagnostics.detail = String((error as Error)?.message ?? error);
+      throw new Error(
+        `[pg-test] PostgreSQL boot failed with a TRANSIENT readiness error after bounded retry ` +
+        `(this is NOT "PostgreSQL unavailable" — the binaries are present; refusing to silently skip). ` +
+        `diagnostics=${JSON.stringify(pgDiagnostics)} cause=${pgDiagnostics.detail}`,
+      );
+    }
+
+    pgDiagnostics.outcome = 'UNAVAILABLE';
+    pgDiagnostics.detail = String((error as Error)?.message ?? error);
+    console.warn(
+      '[pg-test] PostgreSQL integration genuinely unavailable (non-transient); tests will SKIP:',
+      pgDiagnostics.detail,
+    );
+    serverState = { pg, port, user, password, databaseDir, started: false };
     return serverState;
   }
+  pgDiagnostics.outcome = 'STARTED';
   serverState = { pg, port, user, password, databaseDir, started: true };
   return serverState;
 }
@@ -93,7 +177,13 @@ export async function newTestDb(): Promise<{ database: string; config: PostgresD
   const state = await ensureServer();
   if (!state || !state.started) return undefined;
   const database = `jata_test_${process.pid}_${dbCounter++}_${randomUUID().slice(0, 8)}`;
-  await state.pg.createDatabase(database);
+  // P1C-OBS-01: this was the SECOND unguarded post-boot connection (the first
+  // being boot itself). A transient ECONNREFUSED here previously threw straight
+  // out of the suite — producing a RED run on an unmodified tree, which is the
+  // signature shared by 9 of the 10 historical CI failures. Bounded retry, then
+  // a genuine failure (never a skip).
+  pgDiagnostics.attempts.createDatabase = (pgDiagnostics.attempts.createDatabase ?? 0) + 1;
+  await withPgReadinessRetry('createDatabase', () => state.pg.createDatabase(database));
   const config: PostgresDriverConfig = {
     connectionString: `postgres://${state.user}:${state.password}@127.0.0.1:${state.port}/${database}`,
     requireExplicitConfig: true,
