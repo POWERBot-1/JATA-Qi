@@ -472,20 +472,28 @@ cancelled and skipped nothing; anything else is retried (bounded) and then
 reported as **INCONCLUSIVE — infrastructure failure**, never as "survived" and
 never as a pass.
 
-### Open finding (pre-existing, NOT fixed here)
+### Open finding — narrowed by measurement, then fixed
 
-The same `portBase + random(250)` allocation exists in **four harnesses S7 does
-not touch**, and remains a latent flake source:
+I first wrote that the same defect existed in "four harnesses S7 does not touch".
+That was **too broad**. Measuring the actual caller bases per package
+(`grep` the `bootR2Postgres` bases, then test every pair for `b < a+250`):
 
-* `packages/authorization-boundary/test/r2-pg.ts:45`
-* `packages/commercial-control-plane/test/r2-pg.ts:45`
-* `packages/human-approval/test/r2-pg.ts:45`
-* `packages/loop-host/test/r2-pg.ts:45`
+| Package | PG suites | Overlapping base pairs |
+|---|---|---|
+| `authorization-boundary` | **13** | **5** — (58500,58600), (58500,58700), (58600,58700), (58600,58800), (58700,58800) |
+| `loop-host` | 2 | **0** |
+| `commercial-control-plane` | 1 | **0** |
+| `human-approval` | 1 | **0** |
 
-These are recorded as **OPEN** rather than silently left. They were not changed
-because no S7 suite runs against them and changing them would widen S7's diff
-into packages whose suites this change did not re-verify. Fixing them is the
-same two-line change and should be a separate, small harness task.
+So only **one** of the four had a real exposure. `authorization-boundary` was
+therefore fixed with the identical bind-probe helper, and its full suite
+re-verified: **183 tests · 0 fail · 0 cancelled · 0 skipped**.
+
+The other three still use the fragile `portBase + random(250)` pattern but have
+**zero current overlap**, so changing them would be preventive rather than a fix.
+They are left alone deliberately, and the residual exposure is stated precisely:
+it reappears the moment someone adds a second PG suite with a base within 250 of
+an existing one. That is a one-line change if and when it happens.
 
 ---
 
@@ -597,8 +605,9 @@ Issued after verification against the exact PR head `9bc0144`:
 
 **Why B and not A.** Three findings are real but non-blocking:
 
-1. The port-allocation defect remains in **four harnesses** S7 does not touch
-   (§8.1) — a latent flake source elsewhere in the repo.
+1. The port-allocation pattern remains in **three harnesses** with **zero
+   current overlap** (§8.1) — preventive only. The one harness that did have a
+   real 5-pair overlap (`authorization-boundary`) is now fixed and re-verified.
 2. **P2-INV-08 is vacuous when no seam is attached.** Correct today, but it does
    not *force* an external seam to exist; it should be strengthened when S5/S6
    land.
