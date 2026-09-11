@@ -56,6 +56,7 @@ const KEY_SEAM = 'src/key-management.ts';
 const SECRETS = 'src/secret-material.ts';
 const MFA = 'src/mfa.ts';
 const PRIVILEGE = 'src/privilege-store.ts';
+const AUTH_MODULE = 'src/authentication-module.ts';
 
 interface Edit {
   readonly find: string;
@@ -282,6 +283,23 @@ const MUTANTS: readonly Mutant[] = [
     ],
     target: 'p2-s5-stepup-integration.test.js',
   },
+  {
+    id: 'M-S3-3',
+    control: 'the production composition wires the assurance provider and fails closed without one',
+    file: AUTH_MODULE,
+    edits: [
+      {
+        find: `      this.#privilegeStore = await PrivilegeStore.open(storage, {
+        ...(this.#mfa ? { stepUpVerifier: this.#mfa } : {}),
+        strictStepUp: true,
+      });`,
+        replace: `      // MUTANT M-S3-3: the production plane is built with no assurance
+      // provider and no strict mode — the pre-fix vacuity.
+      this.#privilegeStore = await PrivilegeStore.open(storage);`,
+      },
+    ],
+    target: 'p2-s5-stepup-integration.test.js',
+  },
 ];
 
 /** Bytes of every file this suite mutates, captured before any mutation. */
@@ -403,10 +421,10 @@ describe('P2-S7 mutation suite (the security tests kill the mutations)', () => {
   it('captures pristine sources', async () => {
     // Every file any mutant touches must be snapshotted here, or the harness
     // refuses to run that mutant (it cannot guarantee byte-for-byte restore).
-    for (const file of [KEY_SEAM, SECRETS, MFA, PRIVILEGE]) {
+    for (const file of [KEY_SEAM, SECRETS, MFA, PRIVILEGE, AUTH_MODULE]) {
       PRISTINE.set(file, await readSource(file));
     }
-    assert.equal(PRISTINE.size, 4);
+    assert.equal(PRISTINE.size, 5);
   });
 
   // Registered synchronously so node:test collects every case up front.

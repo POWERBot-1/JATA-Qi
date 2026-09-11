@@ -25,6 +25,9 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { StorageModule } from '@jataqi/storage';
+import { PostgresDriver } from '@jataqi/storage-postgres';
+import { createTestKernel } from '@jataqi/core-kernel/testing';
+import { AuthenticationModule } from '../src/index.js';
 import {
   DEV_SECRET_SEAM_KEY_ID,
   InMemoryKeyManagementSeam,
@@ -350,6 +353,106 @@ describe('P2-S5 §8 — the privilege plane consumes MFA assurance (real Postgre
       (error: unknown) => code(error) === 'STEP_UP_UNVERIFIED',
       'a replaced factor must not keep authorizing elevations with its old assurance',
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // SECURE BY DEFAULT — the PRODUCTION construction path.
+  //
+  // Before this test, authentication-module.ts:148 called
+  // `PrivilegeStore.open(storage)` with NO options, so the only production
+  // composition of the privilege plane had no step-up verifier and no strict
+  // mode: the §8 enforcement existed in the library but was never wired.
+  // That is the P2-INV-08-style vacuity. This test boots the REAL module and
+  // asserts the plane it hands out actually enforces assurance.
+  // -----------------------------------------------------------------------
+
+  it('the module-wired production plane enforces step-up verification by default', async () => {
+    const kernel = createTestKernel();
+    const moduleStorage = new StorageModule({
+      driverInstance: new PostgresDriver({ connectionString: pg.connectionString, requireExplicitConfig: true, max: 5 }),
+    });
+    kernel.register(moduleStorage);
+    const seam = new InMemoryKeyManagementSeam();
+    await seam.createKey(DEV_SECRET_SEAM_KEY_ID, 'encryption');
+    const auth = new AuthenticationModule({
+      durableSessions: { enabled: true },
+      credentialMaterial: { keySeam: seam, encryptionKeyId: DEV_SECRET_SEAM_KEY_ID },
+    });
+    kernel.register(auth);
+    await kernel.boot();
+    try {
+      const modulePlane = auth.getPrivilegeStore();
+      const tenantId = `acme-mod-${Date.now()}`;
+      const principalId = `secadmin-mod-${Date.now()}`;
+      await modulePlane.bootstrapFirstElevation({ principalId, tenantId, reason: 'module wiring test' }, Date.now());
+
+      // Self-asserted step-up evidence through the MODULE-WIRED plane.
+      await assert.rejects(
+        modulePlane.grantElevation(
+          {
+            principalId: `target-mod-${Date.now()}`,
+            tenantId,
+            scope: 'tenant',
+            planeRole: 'tenant-admin',
+            operationClasses: ['tenant-admin'],
+            sessionEventId: 'kernel:bootstrap',
+            stepUpEventId: 'kernel:bootstrap',
+            stepUpAt: Date.now(),
+            grantedBy: 'module-wiring-test',
+            grantorPrincipalId: principalId,
+            grantorSessionEventId: 'kernel:bootstrap',
+            reason: 'must be refused: the evidence is self-asserted',
+          },
+          Date.now(),
+        ),
+        (error: unknown) => code(error) === 'STEP_UP_UNVERIFIED',
+        'the production composition must verify step-up assurance, not accept it on assertion',
+      );
+    } finally {
+      await kernel.shutdown();
+    }
+  });
+
+  it('the module-wired plane refuses step-up grants when NO assurance provider exists (fail-closed, not vacuous)', async () => {
+    const kernel = createTestKernel();
+    const moduleStorage = new StorageModule({
+      driverInstance: new PostgresDriver({ connectionString: pg.connectionString, requireExplicitConfig: true, max: 5 }),
+    });
+    kernel.register(moduleStorage);
+    // No credentialMaterial ⇒ no secret store ⇒ no MFA store ⇒ no verifier.
+    // A plane that cannot verify step-up evidence must NOT accept it.
+    const auth = new AuthenticationModule({ durableSessions: { enabled: true } });
+    kernel.register(auth);
+    await kernel.boot();
+    try {
+      const modulePlane = auth.getPrivilegeStore();
+      const tenantId = `acme-nomat-${Date.now()}`;
+      const principalId = `secadmin-nomat-${Date.now()}`;
+      await modulePlane.bootstrapFirstElevation({ principalId, tenantId, reason: 'module wiring test' }, Date.now());
+      await assert.rejects(
+        modulePlane.grantElevation(
+          {
+            principalId: `target-nomat-${Date.now()}`,
+            tenantId,
+            scope: 'tenant',
+            planeRole: 'tenant-admin',
+            operationClasses: ['tenant-admin'],
+            sessionEventId: 'kernel:bootstrap',
+            stepUpEventId: 'kernel:bootstrap',
+            stepUpAt: Date.now(),
+            grantedBy: 'module-wiring-test',
+            grantorPrincipalId: principalId,
+            grantorSessionEventId: 'kernel:bootstrap',
+            reason: 'must be refused: no assurance provider is configured',
+          },
+          Date.now(),
+        ),
+        (error: unknown) => code(error) === 'STEP_UP_UNVERIFIED',
+        'an unverifiable plane must fail closed rather than silently accept asserted evidence',
+      );
+    } finally {
+      await kernel.shutdown();
+    }
   });
 
   it('MFA verification is still not authorization: MfaError never leaks through the plane', async () => {

@@ -23,6 +23,7 @@ import { SessionTokenService } from './session-tokens.js';
 import { PrivilegeStore } from './privilege-store.js';
 import { DelegationStore } from './delegation-store.js';
 import { SecretMaterialStore } from './secret-material.js';
+import { MfaFactorStore } from './mfa.js';
 import type { KeyManagementSeam } from './key-management.js';
 import type { ServerAuthenticator } from './types.js';
 
@@ -115,6 +116,7 @@ export class AuthenticationModule implements IModule {
   #delegationStore: DelegationStore | undefined;
   #keySeam: KeyManagementSeam | undefined;
   #secretMaterial: SecretMaterialStore | undefined;
+  #mfa: MfaFactorStore | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -142,19 +144,15 @@ export class AuthenticationModule implements IModule {
       // opened (and failing closed) in the same step as S-8/S-9.
       this.#identityStore = await IdentityStore.open(storage);
       this.#jtiReplay = await JtiReplayStore.open(storage);
-      // P2-S3: the durable privileged access plane (elevations) over the same
-      // authoritative substrate. Fails closed at open exactly like the other
-      // durable stores (a non-transactional source refuses the plane).
-      this.#privilegeStore = await PrivilegeStore.open(storage);
-      // P2-S4: the durable delegation + policy store over the same
-      // authoritative substrate. Fails closed at open exactly like the other
-      // durable stores (a non-transactional source refuses delegation state).
-      this.#delegationStore = await DelegationStore.open(storage);
       // P2-S7: the credential-material seam over the SAME authoritative
       // substrate. Only opened when a seam was EXPLICITLY configured — the
       // module never constructs a development seam, so a composition that
       // forgets it fails closed at first use rather than silently storing
       // secrets against an in-memory double.
+      //
+      // Opened BEFORE the privilege plane on purpose: the plane needs the S5
+      // assurance provider at construction time, and a store cannot be handed
+      // to a constructor that has already run.
       if (this.#config.credentialMaterial) {
         this.#keySeam = this.#config.credentialMaterial.keySeam;
         this.#secretMaterial = await SecretMaterialStore.open(
@@ -162,7 +160,30 @@ export class AuthenticationModule implements IModule {
           this.#config.credentialMaterial.keySeam,
           this.#config.credentialMaterial.encryptionKeyId,
         );
+        // P2-S5: the MFA factor store over the same substrate and the same
+        // sealing key. Its secrets use S7's reserved 'totp' purpose.
+        this.#mfa = await MfaFactorStore.open(storage, this.#secretMaterial);
       }
+      // P2-S3: the durable privileged access plane (elevations) over the same
+      // authoritative substrate. Fails closed at open exactly like the other
+      // durable stores (a non-transactional source refuses the plane).
+      //
+      // P2-S5 SECURE BY DEFAULT. This is the ONLY production composition of the
+      // privilege plane, and it previously passed no options — so the §8
+      // step-up enforcement existed in the library but was never wired, the
+      // same vacuity shape as P2-INV-08. The plane is now constructed
+      // `strictStepUp: true` ALWAYS: when an assurance provider exists its
+      // evidence is verified, and when none exists a step-up-requiring grant is
+      // REFUSED rather than accepted on assertion. A plane that cannot verify
+      // step-up evidence must not accept it.
+      this.#privilegeStore = await PrivilegeStore.open(storage, {
+        ...(this.#mfa ? { stepUpVerifier: this.#mfa } : {}),
+        strictStepUp: true,
+      });
+      // P2-S4: the durable delegation + policy store over the same
+      // authoritative substrate. Fails closed at open exactly like the other
+      // durable stores (a non-transactional source refuses delegation state).
+      this.#delegationStore = await DelegationStore.open(storage);
       // P2-S2: the session-token lifecycle service over the same durable
       // substrate (mint/verify/rotate/revoke + identity-state gate). The
       // session lifetime is wired from the SAME configuration as the
@@ -302,6 +323,20 @@ export class AuthenticationModule implements IModule {
       throw new Error('Authentication module has no credential-material seam (credentialMaterial not configured; no dev fallback exists).');
     }
     return this.#keySeam;
+  }
+
+  /**
+   * P2-S5: the MFA factor store, or a refusal. Like the other S7/S5 accessors
+   * this NEVER constructs a fallback — a composition without
+   * `credentialMaterial` has no MFA capability, and the privilege plane is
+   * built `strictStepUp` so it fails closed rather than accepting asserted
+   * step-up evidence.
+   */
+  getMfa(): MfaFactorStore {
+    if (!this.#mfa) {
+      throw new Error('Authentication module has no MFA factor store (credentialMaterial not configured; no dev fallback exists).');
+    }
+    return this.#mfa;
   }
 
   /** P2-S7 secret-material store; throws when no seam was configured. */
