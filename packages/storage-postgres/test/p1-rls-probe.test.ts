@@ -19,6 +19,7 @@ import * as fs from 'node:fs/promises';
 import EmbeddedPostgres from 'embedded-postgres';
 import pg from 'pg';
 import { PostgresDriver, verifyRlsPosture, P1_SECURITY_COLLECTIONS, deriveTableName, ensureTenantIsolation } from '../src/index.js';
+import { redactPgDiagnostics, waitForPgReady, withPgReadiness } from './pg-readiness.js';
 
 let server: EmbeddedPostgres;
 let port: number;
@@ -49,10 +50,18 @@ before(async () => {
     initdbFlags: ['--no-locale', '--encoding=UTF8'],
     postgresFlags: [],
     onLog: () => {},
-    onError: () => {},
+    onError: (e) => {
+      // G10: postmaster diagnostics are preserved (previously swallowed), redacted.
+      console.warn('[p1-rls-probe] embedded postgres stderr:', redactPgDiagnostics(String((e as Error)?.message ?? e)));
+    },
   });
-  await server.initialise();
-  await server.start();
+  // G10: bounded readiness protection. embedded-postgres can resolve
+  // start() before the TCP listener accepts; the first unguarded
+  // connection would then ECONNREFUSED before any RLS assertion runs.
+  // Bounded transient-only retry; permanent failures still fail hard.
+  await withPgReadiness('p1-rls-probe/initialise', () => server.initialise());
+  await withPgReadiness('p1-rls-probe/start', () => server.start());
+  await waitForPgReady({ host: '127.0.0.1', port, user: 'postgres', password: 'postgres', database: 'postgres', label: 'p1-rls-probe' });
   adminPool = new pg.Pool({ connectionString: `postgres://postgres:postgres@127.0.0.1:${port}/postgres`, max: 4 });
 });
 

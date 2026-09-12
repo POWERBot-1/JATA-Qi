@@ -9,6 +9,7 @@ import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { isEventEnvelope, type EventEnvelope, type Kernel } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
+import { redactPgDiagnostics, waitForPgReady, withPgReadiness } from '@jataqi/storage-postgres/test/pg-readiness';
 import {
   CommercialControlPlaneModule,
   type CommercialActor,
@@ -76,10 +77,16 @@ before(async () => {
     initdbFlags: ['--no-locale', '--encoding=UTF8'],
     postgresFlags: [],
     onLog: () => {},
-    onError: () => {},
+    onError: (e) => {
+      // G10: postmaster diagnostics are preserved (previously swallowed), redacted.
+      console.warn('[f01-event-fabric-pg] embedded postgres stderr:', redactPgDiagnostics(String((e as Error)?.message ?? e)));
+    },
   });
-  await server.initialise();
-  await server.start();
+  // G10: bounded readiness protection — see pg-readiness.ts. Bounded
+  // transient-only retry; permanent failures still fail hard.
+  await withPgReadiness('f01-event-fabric-pg/initialise', () => server.initialise());
+  await withPgReadiness('f01-event-fabric-pg/start', () => server.start());
+  await waitForPgReady({ host: '127.0.0.1', port, user, password, database: 'postgres', label: 'f01-event-fabric-pg' });
   const database = `f01_${process.pid}_${randomUUID().slice(0, 8)}`;
   await server.createDatabase(database);
   pg = { server, port, user, password, database };

@@ -39,6 +39,7 @@ import { createTestKernel } from '@jataqi/core-kernel/testing';
 import type { Kernel } from '@jataqi/core-kernel';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
+import { redactPgDiagnostics, waitForPgReady, withPgReadiness } from '@jataqi/storage-postgres/test/pg-readiness';
 import { VectorSearchModule } from '@jataqi/vector-search';
 import { KnowledgeService } from '@jataqi/knowledge-service';
 import { KnowledgeGraphModule } from '../src/index.js';
@@ -71,14 +72,21 @@ before(async () => {
     initdbFlags: ['--no-locale', '--encoding=UTF8'],
     postgresFlags: [],
     onLog: () => {},
-    onError: () => {},
+    onError: (e) => {
+      // G10: postmaster diagnostics are preserved (previously swallowed), redacted.
+      console.warn('[t06-kg-pg] embedded postgres stderr:', redactPgDiagnostics(String((e as Error)?.message ?? e)));
+    },
   });
   try {
-    await server.initialise();
-    await server.start();
+    // G10: bounded readiness protection — see pg-readiness.ts. Bounded
+    // transient-only retry; permanent failures still fail the suite (PG is a
+    // hard requirement here — no silent skip).
+    await withPgReadiness('t06-kg-pg/initialise', () => server.initialise());
+    await withPgReadiness('t06-kg-pg/start', () => server.start());
+    await waitForPgReady({ host: '127.0.0.1', port, user: 'postgres', password: 'postgres', database: 'postgres', label: 't06-kg-pg' });
     pg = { server, port, started: true };
   } catch (error) {
-    console.warn('[t06-kg-pg] PostgreSQL unavailable:', String((error as Error)?.message ?? error));
+    console.warn('[t06-kg-pg] PostgreSQL unavailable:', redactPgDiagnostics(String((error as Error)?.message ?? error)));
     pg = { server, port, started: false };
   }
 });

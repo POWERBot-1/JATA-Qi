@@ -30,6 +30,7 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { createTestKernel } from '@jataqi/core-kernel/testing';
 import { StorageModule } from '@jataqi/storage';
 import { PostgresDriver } from '@jataqi/storage-postgres';
+import { redactPgDiagnostics, waitForPgReady, withPgReadiness } from '@jataqi/storage-postgres/test/pg-readiness';
 // R1 (§6 TEST KERNEL REPAIR): this fixture installs the REAL A-01
 // AuthorizationBoundaryModule — the same module the production composition
 // installs. It is NOT a mock, a stub, or a bypass. Legitimate kernel-internal
@@ -71,14 +72,21 @@ before(async () => {
     initdbFlags: ['--no-locale', '--encoding=UTF8'],
     postgresFlags: [],
     onLog: () => {},
-    onError: () => {},
+    onError: (e) => {
+      // G10: postmaster diagnostics are preserved (previously swallowed), redacted.
+      console.warn('[t07-finalize-pg] embedded postgres stderr:', redactPgDiagnostics(String((e as Error)?.message ?? e)));
+    },
   });
   try {
-    await server.initialise();
-    await server.start();
+    // G10: bounded readiness protection — see pg-readiness.ts. Bounded
+    // transient-only retry; permanent failures still fail the suite (PG is a
+    // hard requirement here — no silent skip).
+    await withPgReadiness('t07-finalize-pg/initialise', () => server.initialise());
+    await withPgReadiness('t07-finalize-pg/start', () => server.start());
+    await waitForPgReady({ host: '127.0.0.1', port, user: 'postgres', password: 'postgres', database: 'postgres', label: 't07-finalize-pg' });
     pg = { server, port, started: true };
   } catch (error) {
-    console.warn('[t07-finalize-pg] PostgreSQL unavailable:', String((error as Error)?.message ?? error));
+    console.warn('[t07-finalize-pg] PostgreSQL unavailable:', redactPgDiagnostics(String((error as Error)?.message ?? error)));
     pg = { server, port, started: false };
   }
 });
