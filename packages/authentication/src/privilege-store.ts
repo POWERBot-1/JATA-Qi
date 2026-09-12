@@ -107,6 +107,30 @@ export interface BootstrapElevationInput {
 }
 
 /** Revocation input. */
+/** P2-S6: mint a break-glass elevation after the S6 store has already verified step-up + sealed. */
+export interface GrantBreakGlassElevationInput {
+  readonly breakGlassId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
+  readonly scope: PrivilegeScope;
+  readonly operationClasses: readonly PrivilegeOperationClass[];
+  readonly sessionEventId: string;
+  readonly stepUpEventId: string;
+  readonly stepUpAt: number;
+  readonly reason: string;
+  readonly issuedAt: number;
+  readonly expiresAt: number;
+  readonly correlationId?: string;
+}
+
+export interface RevokeBreakGlassElevationInput {
+  readonly elevationId: string;
+  readonly tenantId: string;
+  readonly scope: PrivilegeScope;
+  readonly reason: string;
+  readonly now: number;
+}
+
 export interface RevokeElevationInput {
   readonly elevationId: string;
   /** The tenant the elevation belongs to (tenant-scoped revocations). */
@@ -457,6 +481,107 @@ export class PrivilegeStore {
   }
 
   // -- grant / bootstrap / revoke -------------------------------------------
+
+  /**
+   * P2-S6: mint a `planeRole: 'break-glass'` elevation AFTER BreakGlassStore
+   * has verified S5 step-up and sealed via S7. The standing `grantElevation`
+   * path still refuses `break-glass`. Lifetime is taken from the S6 window
+   * (already capped at 60 min).
+   */
+  async grantBreakGlassElevation(input: GrantBreakGlassElevationInput): Promise<PrivilegeElevationDoc> {
+    if (!isNonBlank(input.breakGlassId) || !isNonBlank(input.principalId) || !isNonBlank(input.reason)) {
+      throw new PrivilegeStoreError('INVALID_INPUT', 'break-glass elevation requires id, principal, and reason (fail-closed).');
+    }
+    if (!Array.isArray(input.operationClasses) || input.operationClasses.length === 0) {
+      throw new PrivilegeStoreError('INVALID_INPUT', 'break-glass elevation requires operationClasses (fail-closed).');
+    }
+    for (const cls of input.operationClasses) {
+      if (!isPrivilegeOperationClass(cls)) {
+        throw new PrivilegeStoreError('INVALID_INPUT', 'unrecognized operation class on break-glass elevation (fail-closed).');
+      }
+    }
+    const lifetime = input.expiresAt - input.issuedAt;
+    if (!Number.isFinite(lifetime) || lifetime <= 0 || lifetime > MAX_ELEVATION_LIFETIME_MS) {
+      throw new PrivilegeStoreError('INVALID_LIFETIME', 'break-glass elevation window is out of bounds (fail-closed).');
+    }
+    const id = randomUUID();
+    const insert = async (scope: StorageWriteScope): Promise<PrivilegeElevationDoc> => {
+      const doc: PrivilegeElevationDoc = {
+        id,
+        principalId: input.principalId,
+        tenantId: input.scope === 'tenant' ? input.tenantId : PRIVILEGE_PLATFORM_TENANT,
+        scope: input.scope,
+        planeRole: 'break-glass',
+        operationClasses: [...input.operationClasses],
+        sessionEventId: input.sessionEventId,
+        stepUpEventId: input.stepUpEventId,
+        stepUpAt: input.stepUpAt,
+        grantedBy: `break-glass:${input.breakGlassId}`,
+        reason: input.reason.trim(),
+        issuedAt: input.issuedAt,
+        expiresAt: input.expiresAt,
+        status: 'ACTIVE',
+        updatedAt: input.issuedAt,
+      };
+      assertElevationDocumentShape(doc as unknown as Record<string, unknown>, ELEVATION_FIELDS, 'elevation');
+      const elevations = await scope.collection<PrivilegeElevationDoc>(PRIVILEGED_ELEVATIONS_COLLECTION);
+      const res = await elevations.cas(id, (cur) => cur === undefined, () => ({ ...doc }));
+      if (!res.ok) {
+        throw new PrivilegeStoreError('ELEVATION_ID_CONFLICT', `elevation id already exists (fail-closed).`);
+      }
+      const event = this.elevationEvent(
+        'PRIVILEGE_ELEVATION',
+        doc,
+        `break-glass:${input.breakGlassId}`,
+        input.sessionEventId,
+        'break-glass-granted',
+        input.correlationId,
+        `planeRole=break-glass;classes=${doc.operationClasses.join(',')};scope=${doc.scope};expiresAt=${doc.expiresAt};bg=${input.breakGlassId}`,
+      );
+      await this.appendEventInTx(scope, event);
+      return doc;
+    };
+    if (input.scope === 'tenant') {
+      return this.inTenant(input.tenantId, insert);
+    }
+    return this.inSystem(insert);
+  }
+
+  async revokeBreakGlassElevation(input: RevokeBreakGlassElevationInput): Promise<void> {
+    if (!isNonBlank(input.elevationId) || !isNonBlank(input.reason)) {
+      throw new PrivilegeStoreError('INVALID_INPUT', 'break-glass elevation revoke requires id and reason (fail-closed).');
+    }
+    const doRevoke = async (scope: StorageWriteScope): Promise<void> => {
+      const elevations = await scope.collection<PrivilegeElevationDoc>(PRIVILEGED_ELEVATIONS_COLLECTION);
+      const res = await elevations.cas(
+        input.elevationId,
+        (cur) => cur !== undefined && cur.status === 'ACTIVE' && cur.planeRole === 'break-glass',
+        (cur) => ({ ...cur, status: 'REVOKED' as const, revokedAt: input.now, revocationReason: input.reason.trim(), updatedAt: input.now }),
+      );
+      if (res.ok) {
+        const doc = res.doc as PrivilegeElevationDoc;
+        const event = this.elevationEvent(
+          'PRIVILEGE_REVOKED',
+          doc,
+          'break-glass-revoke',
+          doc.sessionEventId,
+          'break-glass-revoked',
+          undefined,
+          `reason=${input.reason.trim()}`,
+        );
+        await this.appendEventInTx(scope, event);
+        return;
+      }
+      const current = await elevations.get(input.elevationId);
+      if (current && (current.status === 'REVOKED' || current.status === 'EXPIRED')) return;
+      throw new PrivilegeStoreError('ELEVATION_NOT_FOUND', 'break-glass elevation not found (fail-closed).');
+    };
+    if (input.scope === 'tenant') {
+      await this.inTenant(input.tenantId, doRevoke);
+      return;
+    }
+    await this.inSystem(doRevoke);
+  }
 
   /** Grant an elevation (the grantor must durably hold a security-admin elevation). */
   async grantElevation(input: GrantElevationInput, now: number): Promise<PrivilegeElevationDoc> {

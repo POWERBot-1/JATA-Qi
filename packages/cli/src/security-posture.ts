@@ -29,7 +29,7 @@ import type {
   CredentialMaterialProvider,
 } from '@jataqi/authorization-boundary';
 import { isDevelopmentCredentialMaterialProvider, MIN_DURABLE_MANIFEST_LIFETIME_MS } from '@jataqi/authorization-boundary';
-import type { AuthenticationModule, IdentityStore, ServerAuthenticator } from '@jataqi/authentication';
+import type { AuthenticationModule, BreakGlassStore, IdentityStore, ServerAuthenticator } from '@jataqi/authentication';
 import { DeterministicTestAuthenticator, assertRegisterIntegrity, isDevelopmentKeySeam } from '@jataqi/authentication';
 
 /** The security posture of a composition. Default: `development`. */
@@ -627,6 +627,50 @@ export function declareProductionSecurityInvariants(kernel: KernelApi): void {
       if (isDevelopmentKeySeam(seam)) {
         const kind = (seam as { readonly kind?: string }).kind ?? 'unknown';
         return `the credential-material key seam is a development implementation (kind="${kind}"); production requires an external key provider and no dev fallback exists (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-06 (S6): no ACTIVE break-glass older than the 60 min hard cap;
+  // no standing-ability flags (reviewRequired must remain true).
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.break-glass-window',
+    description: 'no ACTIVE break-glass exceeds the 60 min hard cap; no standing emergency authority (spec §9.4; P2-INV-06)',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      let store: BreakGlassStore;
+      try {
+        store = auth.getBreakGlassStore();
+      } catch {
+        // No store ⇒ no emergency path at all (not standing authority).
+        return true;
+      }
+      try {
+        await store.assertNoStandingOrOverlong(Date.now());
+      } catch (error) {
+        return `P2-INV-06 violated: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
+      }
+      return true;
+    },
+  });
+
+  // P2-INV-07 (S6): no overdue unreviewed break-glass.
+  kernel.requireSecurityInvariant({
+    id: 'p2.production.break-glass-review',
+    description: 'no overdue unreviewed break-glass record (spec §9.4; P2-INV-07)',
+    async check(k: KernelApi): Promise<boolean | string> {
+      const auth = k.getModule<AuthenticationModule>('authentication');
+      let store: BreakGlassStore;
+      try {
+        store = auth.getBreakGlassStore();
+      } catch {
+        return true;
+      }
+      try {
+        await store.assertNoOverdueUnreviewed(Date.now());
+      } catch (error) {
+        return `P2-INV-07 violated: ${error instanceof Error ? error.message : String(error)} (fail-closed)`;
       }
       return true;
     },

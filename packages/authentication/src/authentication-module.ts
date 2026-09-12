@@ -24,6 +24,7 @@ import { PrivilegeStore } from './privilege-store.js';
 import { DelegationStore } from './delegation-store.js';
 import { SecretMaterialStore } from './secret-material.js';
 import { MfaFactorStore } from './mfa.js';
+import { BreakGlassStore } from './break-glass.js';
 import type { KeyManagementSeam } from './key-management.js';
 import type { ServerAuthenticator } from './types.js';
 
@@ -117,6 +118,7 @@ export class AuthenticationModule implements IModule {
   #keySeam: KeyManagementSeam | undefined;
   #secretMaterial: SecretMaterialStore | undefined;
   #mfa: MfaFactorStore | undefined;
+  #breakGlass: BreakGlassStore | undefined;
 
   constructor(config: AuthenticationModuleConfig = {}) {
     this.#config = { ...config };
@@ -184,6 +186,11 @@ export class AuthenticationModule implements IModule {
       // authoritative substrate. Fails closed at open exactly like the other
       // durable stores (a non-transactional source refuses delegation state).
       this.#delegationStore = await DelegationStore.open(storage);
+      // P2-S6: break-glass over the same substrate. Only opened when S5+S7 are
+      // present — activation must consume verified step-up and the S7 seal.
+      if (this.#secretMaterial && this.#mfa && this.#privilegeStore) {
+        this.#breakGlass = await BreakGlassStore.open(storage, this.#secretMaterial, this.#mfa, this.#privilegeStore);
+      }
       // P2-S2: the session-token lifecycle service over the same durable
       // substrate (mint/verify/rotate/revoke + identity-state gate). The
       // session lifetime is wired from the SAME configuration as the
@@ -254,6 +261,9 @@ export class AuthenticationModule implements IModule {
     }
     if (this.#delegationStore) {
       kernel.container.registerValue('authentication.delegation-store', this.#delegationStore);
+    }
+    if (this.#breakGlass) {
+      kernel.container.registerValue('authentication.break-glass-store', this.#breakGlass);
     }
     kernel.logger.info(
       `principal boundary initialized (T-03): ${this.#boundary.getPolicy().describe()}; ` +
@@ -337,6 +347,14 @@ export class AuthenticationModule implements IModule {
       throw new Error('Authentication module has no MFA factor store (credentialMaterial not configured; no dev fallback exists).');
     }
     return this.#mfa;
+  }
+
+  /** P2-S6 break-glass store; throws when S5/S7 are not configured. */
+  getBreakGlassStore(): BreakGlassStore {
+    if (!this.#breakGlass) {
+      throw new Error('Authentication module has no break-glass store (credentialMaterial/S5 not configured; no standing emergency path exists).');
+    }
+    return this.#breakGlass;
   }
 
   /** P2-S7 secret-material store; throws when no seam was configured. */
