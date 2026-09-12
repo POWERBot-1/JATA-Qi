@@ -335,6 +335,32 @@ export type {
 export type { AuthenticationCredentialMaterialConfig } from './authentication-module.js';
 
 // ---------------------------------------------------------------------------
+// P2-S6 — Break-Glass + Administrative Controls.
+// ---------------------------------------------------------------------------
+export {
+  BREAK_GLASS_COLLECTION,
+  BREAK_GLASS_CLOCK_SKEW_MS,
+  DEFAULT_BREAK_GLASS_LIFETIME_MS,
+  DEFAULT_BREAK_GLASS_REVIEW_DEADLINE_MS,
+  MAX_BREAK_GLASS_LIFETIME_MS,
+  MAX_BREAK_GLASS_OPERATION_CLASSES,
+  BreakGlassError,
+  BreakGlassStore,
+  breakGlassActiveClaimId,
+  isBreakGlassExpired,
+  isBreakGlassReviewOverdue,
+} from './break-glass.js';
+export type {
+  ActivateBreakGlassInput,
+  BreakGlassBus,
+  BreakGlassDoc,
+  BreakGlassFailureCode,
+  BreakGlassStatus,
+  ReviewBreakGlassInput,
+  RevokeBreakGlassInput,
+} from './break-glass.js';
+
+// ---------------------------------------------------------------------------
 // P2-S5 — MFA / stronger identity assurance.
 //
 // S5 produces an authentication ASSURANCE signal for the EXISTING authority
