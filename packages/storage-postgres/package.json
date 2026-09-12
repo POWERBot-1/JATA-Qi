@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
+    },
+    "./test/pg-readiness": {
+      "types": "./dist/test/pg-readiness.d.ts",
+      "import": "./dist/test/pg-readiness.js"
     }
   },
   "scripts": {
