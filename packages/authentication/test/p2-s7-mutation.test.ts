@@ -57,6 +57,7 @@ const SECRETS = 'src/secret-material.ts';
 const MFA = 'src/mfa.ts';
 const PRIVILEGE = 'src/privilege-store.ts';
 const AUTH_MODULE = 'src/authentication-module.ts';
+const BREAK_GLASS = 'src/break-glass.ts';
 
 interface Edit {
   readonly find: string;
@@ -300,6 +301,33 @@ const MUTANTS: readonly Mutant[] = [
     ],
     target: 'p2-s5-stepup-integration.test.js',
   },
+  {
+    id: 'M-S6-1',
+    control: 'break-glass activation actually invokes S5 step-up verification',
+    file: BREAK_GLASS,
+    edits: [
+      {
+        find: `      await this.stepUp.verifyStepUpEvidence({`,
+        replace: `      // MUTANT M-S6-1: step-up evidence is accepted on assertion.
+      if (false) await this.stepUp.verifyStepUpEvidence({`,
+      },
+    ],
+    target: 'p2-s6-break-glass.test.js',
+  },
+  {
+    id: 'M-S6-2',
+    control: 'blank reason is refused at activation (A-12d)',
+    file: BREAK_GLASS,
+    edits: [
+      {
+        find: `    if (!isNonBlank(input.reason) || input.reason.trim().length === 0) {
+      throw new BreakGlassError('BG_REASON_REQUIRED', 'activation reason is mandatory and non-blank (A-12d; fail-closed).');
+    }`,
+        replace: `    // MUTANT M-S6-2: reason is no longer mandatory.`,
+      },
+    ],
+    target: 'p2-s6-break-glass.test.js',
+  },
 ];
 
 /** Bytes of every file this suite mutates, captured before any mutation. */
@@ -421,10 +449,10 @@ describe('P2-S7 mutation suite (the security tests kill the mutations)', () => {
   it('captures pristine sources', async () => {
     // Every file any mutant touches must be snapshotted here, or the harness
     // refuses to run that mutant (it cannot guarantee byte-for-byte restore).
-    for (const file of [KEY_SEAM, SECRETS, MFA, PRIVILEGE, AUTH_MODULE]) {
+    for (const file of [KEY_SEAM, SECRETS, MFA, PRIVILEGE, AUTH_MODULE, BREAK_GLASS]) {
       PRISTINE.set(file, await readSource(file));
     }
-    assert.equal(PRISTINE.size, 5);
+    assert.equal(PRISTINE.size, 6);
   });
 
   // Registered synchronously so node:test collects every case up front.
