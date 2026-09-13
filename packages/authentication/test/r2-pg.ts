@@ -21,6 +21,74 @@ import { PostgresDriver } from '@jataqi/storage-postgres';
  */
 const PG_READINESS_PROBE_TENANT = 'acme';
 
+/**
+ * P1C-OBS-01 (extension, parity with the canonical storage-postgres harness) —
+ * transient-readiness signature.
+ *
+ * embedded-postgres resolves `start()` on the postmaster's "ready to accept
+ * connections" log line, which can PRECEDE the TCP listener actually accepting
+ * connections. Under the concurrent boot that `node --test` produces (one
+ * embedded PostgreSQL per suite, several suites per workspace) a runner can
+ * therefore observe ECONNREFUSED against a server that is about to be ready.
+ *
+ * This is an infrastructure race, not a product failure and not an absence of
+ * PostgreSQL. It must be retried boundedly — and it must NEVER be allowed to
+ * masquerade as "PostgreSQL is unavailable" (this harness fails hard; it never
+ * skips).
+ */
+const R2_PG_TRANSIENT_RE =
+  /ECONNREFUSED|connection refused|not accepting|could not connect|terminating|terminated|the database system is (starting up|shutting down)/i;
+
+/** True when an error looks like the readiness race rather than a missing capability. */
+function isR2TransientPgError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? `${error.message} ${String((error as { code?: string }).code ?? '')}` : String(error);
+  return R2_PG_TRANSIENT_RE.test(message);
+}
+
+/**
+ * Bounded readiness retry (parity with the canonical harnesses): at least
+ * 4 attempts with controlled linear backoff. Only the readiness race is
+ * retried; any other error rethrows immediately so a genuine absence still
+ * FAILS hard (never skips, never masks a real outage).
+ *
+ * Every retry and every terminal outcome is surfaced under the `[r2-pg]` tag
+ * so a future failure is attributable from the GitHub job log alone — the
+ * embedded server's own stdout/stderr is mirrored under the same tag by
+ * `bootR2Postgres` (previously discarded, which made run 34714876835's
+ * attempt-1 ECONNREFUSED unattributable beyond the driver stack).
+ */
+async function withR2PgReadinessRetry<T>(
+  label: string,
+  phase: string,
+  operation: () => Promise<T>,
+  attempts = 4,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await operation();
+      if (attempt > 1) {
+        console.warn(`[r2-pg] ${label}/${phase}: ready after ${attempt} attempt(s) — transient readiness race bridged.`);
+      }
+      return result;
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isR2TransientPgError(error) || attempt === attempts) {
+        console.warn(`[r2-pg] ${label}/${phase}: FAILED after ${attempt} attempt(s) (fail-hard, never skip): ${message}`);
+        throw error;
+      }
+      const backoffMs = 750 * attempt;
+      console.warn(
+        `[r2-pg] ${label}/${phase}: transient readiness error (attempt ${attempt}/${attempts}), retrying in ${backoffMs}ms: ${message}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+  throw lastError;
+}
+
 export interface R2Postgres {
   server: EmbeddedPostgres;
   port: number;
@@ -96,13 +164,24 @@ export async function bootR2Postgres(label: string, portBase: number): Promise<R
     createPostgresUser: false,
     initdbFlags: ['--no-locale', '--encoding=UTF8'],
     postgresFlags: [],
-    onLog: () => {},
-    onError: () => {},
+    // P1C-OBS-01 (extension): mirror the embedded server's own stdout/stderr
+    // under the `[r2-pg]` tag (parity with `[pg-test]`/`[loophost-pg]`). The
+    // postmaster's own diagnostics are what distinguishes a slow TCP listener
+    // from a crashed/restarting server — discarding them (the previous
+    // behaviour) left readiness failures unattributable from the job log.
+    onLog: (message) => {
+      console.warn(`[r2-pg] ${label} embedded postgres stdout: ${message}`);
+    },
+    onError: (messageOrError) => {
+      console.warn(`[r2-pg] ${label} embedded postgres stderr: ${String((messageOrError as Error)?.message ?? messageOrError)}`);
+    },
   });
   try {
     // Fail-hard: any failure here rejects and fails the suite (no skip).
-    await server.initialise();
-    await server.start();
+    // Each lifecycle phase is bounded-retried for the readiness race only;
+    // a genuine absence still throws (never skips).
+    await withR2PgReadinessRetry(label, 'initialise', () => server.initialise());
+    await withR2PgReadinessRetry(label, 'start', () => server.start());
     const database = `${label.replace(/[^a-z0-9]/gi, '_')}_${process.pid}_${randomUUID().slice(0, 8)}`;
     // Startup-readiness retry (O-2): embedded-postgres resolves `start()` at
     // the postmaster's "ready to accept connections" log line, which can
@@ -111,18 +190,7 @@ export async function bootR2Postgres(label: string, portBase: number): Promise<R
     // previously unguarded — the only post-boot connection without the bounded
     // retry that `bootR2StorageKernel` already applies. Retry it the same way,
     // then FAIL (never skip; never mask a real outage).
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        await server.createDatabase(database);
-        break;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (!/ECONNREFUSED|connection refused|not accepting|terminated/i.test(message) || attempt === 3) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 750 * attempt));
-      }
-    }
+    await withR2PgReadinessRetry(label, 'createDatabase', () => server.createDatabase(database));
     const connectionString = `postgres://${user}:${password}@127.0.0.1:${port}/${database}`;
     return {
       server,
@@ -155,34 +223,23 @@ export async function bootR2StorageKernel(
   // Embedded PostgreSQL has a known startup-readiness flake (a fresh
   // server occasionally refuses the first pool connection). Retry the
   // boot boundedly, then FAIL (never skip).
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  return withR2PgReadinessRetry('storage-kernel', 'kernel-boot', async () => {
     const driver = new PostgresDriver({ connectionString, requireExplicitConfig: true, max });
     const kernel = createTestKernel();
     const storage = new StorageModule({ driverInstance: driver });
     kernel.register(storage);
-    try {
-      await kernel.boot();
-      // P1C-OBS-01 (extension): the PostgreSQL driver connects LAZILY, so
-      // `kernel.boot()` opens no socket and the bounded transient retry above
-      // never actually covered the first connection — the ECONNREFUSED simply
-      // surfaced later, inside the caller's first store open (e.g.
-      // `IdentityStore.open` → `driver.ensureReady`), where nothing retried it.
-      // Force the first connection HERE, inside the loop, with a no-op
-      // tenant-scoped transaction, so a postmaster that logged "ready to accept
-      // connections" before its TCP listener was actually accepting is retried.
-      // Semantics are unchanged: a transient is retried boundedly and then
-      // THROWS; genuine absence still THROWS. Nothing here ever skips.
-      await storage.atomically(async () => undefined, { tenantId: PG_READINESS_PROBE_TENANT });
-      return { kernel, storage, driver };
-    } catch (error) {
-      lastError = error;
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/ECONNREFUSED|connection refused|not accepting|terminated/i.test(message) || attempt === 3) {
-        throw error;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 750 * attempt));
-    }
-  }
-  throw lastError;
+    await kernel.boot();
+    // P1C-OBS-01 (extension): the PostgreSQL driver connects LAZILY, so
+    // `kernel.boot()` opens no socket and the bounded transient retry above
+    // never actually covered the first connection — the ECONNREFUSED simply
+    // surfaced later, inside the caller's first store open (e.g.
+    // `IdentityStore.open` → `driver.ensureReady`), where nothing retried it.
+    // Force the first connection HERE, inside the retry boundary, with a no-op
+    // tenant-scoped transaction, so a postmaster that logged "ready to accept
+    // connections" before its TCP listener was actually accepting is retried.
+    // Semantics are unchanged: a transient is retried boundedly and then
+    // THROWS; genuine absence still THROWS. Nothing here ever skips.
+    await storage.atomically(async () => undefined, { tenantId: PG_READINESS_PROBE_TENANT });
+    return { kernel, storage, driver };
+  });
 }
