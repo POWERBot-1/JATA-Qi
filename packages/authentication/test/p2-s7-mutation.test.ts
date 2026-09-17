@@ -1,10 +1,11 @@
 // P2-S7 — MUTATION SUITE. Proves the S7 tests actually kill the mutations that
-// would defeat the seam.
+// would defeat the seam. (P2-S8 migrated execution to a disposable copy;
+// the mutants, anchors, and kill criteria below are unchanged.)
 //
 // This is not a stand-in test. Each mutant edits the REAL TypeScript source,
-// compiles the real package to a scratch outDir (the shipped `dist/` is never
-// touched), runs the REAL target suite against it, and asserts the suite FAILS.
-// A mutant that survives is a real gap in the security tests, and fails here.
+// compiles the real package, runs the REAL target suite against it, and
+// asserts the suite FAILS. A mutant that survives is a real gap in the
+// security tests, and fails here.
 //
 // The four mutation classes the S7 mandate calls out are all covered:
 //   * production falls back to / accepts dev-inmemory  → M1, M9, M10
@@ -14,14 +15,19 @@
 // plus the key-lifecycle controls: M2 (retirement), M3 (revocation),
 // M4 (context/AAD binding), M5 (purpose separation).
 //
-// HYGIENE: every mutant is reverted in a `finally`, the restore is verified
-// byte-for-byte, and the scratch outDir is removed. A final test re-reads both
-// source files and asserts they match the bytes captured before the suite ran,
-// so a crash mid-suite cannot leave the tree silently modified.
+// HYGIENE (P2-S8): every mutant executes against a DISPOSABLE package copy
+// under os.tmpdir() — staged per mutant, mutated there, compiled there, run
+// there, removed in a `finally`. The tracked working tree is NEVER written:
+// there is no restore step because there is nothing to restore, so a
+// SIGKILL/crash mid-suite cannot contaminate the tree with mutant code. A
+// closing test asserts the tracked sources still equal the bytes captured
+// before the suite ran, and p2-s8-mutation-hygiene.test.ts pins the absence
+// of any write path structurally.
 
 import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { after, describe, it } from 'node:test';
@@ -333,21 +339,37 @@ const MUTANTS: readonly Mutant[] = [
 /** Bytes of every file this suite mutates, captured before any mutation. */
 const PRISTINE = new Map<string, string>();
 
-async function readSource(file: string): Promise<string> {
+async function readTracked(file: string): Promise<string> {
   return fs.readFile(path.join(PKG, file), 'utf8');
 }
 
-async function restoreAll(): Promise<void> {
-  for (const [file, bytes] of PRISTINE) {
-    await fs.writeFile(path.join(PKG, file), bytes, 'utf8');
-  }
+/**
+ * Stage a disposable package copy for one mutant: real `src/` + `test/` +
+ * configs, with `node_modules` symlinked (read-only resolution of the
+ * workspace + hoisted dependencies). The mutant is applied inside the stage;
+ * the tracked tree is never written.
+ *
+ * The link target is the REPO-ROOT node_modules: npm workspaces hoist all
+ * dependencies there (the package directory itself has no node_modules), so
+ * the staged compile/run resolves `@jataqi/*`, `@types/*`, `pg`, and
+ * `embedded-postgres` exactly as the real package build does.
+ */
+async function stagePackage(mutant: Mutant): Promise<string> {
+  const stage = await fs.mkdtemp(path.join(os.tmpdir(), `jataqi-mutation-${mutant.id.toLowerCase()}-`));
+  await fs.cp(path.join(PKG, 'src'), path.join(stage, 'src'), { recursive: true });
+  await fs.cp(path.join(PKG, 'test'), path.join(stage, 'test'), { recursive: true });
+  await fs.copyFile(path.join(PKG, 'package.json'), path.join(stage, 'package.json'));
+  await fs.copyFile(path.join(PKG, 'tsconfig.json'), path.join(stage, 'tsconfig.json'));
+  await fs.copyFile(path.join(PKG, 'tsconfig.test.json'), path.join(stage, 'tsconfig.test.json'));
+  await fs.symlink(path.resolve(PKG, '..', '..', 'node_modules'), path.join(stage, 'node_modules'), 'dir');
+  return stage;
 }
 
 /**
- * Apply a mutant, compile, run the real target suite, and require it to FAIL.
+ * Apply a mutant inside a disposable stage, compile, run the real target
+ * suite, and require it to FAIL.
  */
 async function assertMutantKilled(mutant: Mutant): Promise<void> {
-  const srcPath = path.join(PKG, mutant.file);
   const pristine = PRISTINE.get(mutant.file);
   assert.ok(pristine !== undefined, `no pristine bytes captured for ${mutant.file}`);
 
@@ -363,14 +385,14 @@ async function assertMutantKilled(mutant: Mutant): Promise<void> {
     source = source.replace(edit.find, edit.replace);
   }
 
-  const outDir = path.join(PKG, 'dist', '.mutation', mutant.id.toLowerCase());
+  const stage = await stagePackage(mutant);
+  const outDir = path.join(stage, 'mutant-out');
   try {
-    await fs.writeFile(srcPath, source, 'utf8');
-    await fs.rm(outDir, { recursive: true, force: true });
+    await fs.writeFile(path.join(stage, mutant.file), source, 'utf8');
 
     // The mutant must still COMPILE — otherwise it proves nothing.
     const build = spawnSync(process.execPath, [TSC, '-p', 'tsconfig.test.json', '--outDir', outDir], {
-      cwd: PKG,
+      cwd: stage,
       encoding: 'utf8',
       env: childEnv(),
     });
@@ -379,6 +401,13 @@ async function assertMutantKilled(mutant: Mutant): Promise<void> {
       0,
       `${mutant.id}: the mutant did not compile, so it proves nothing.\n${build.stdout}\n${build.stderr}`,
     );
+    // Mirror the package build's .mjs worker copy step so staged suites that
+    // spawn workers resolve them (same semantics as dist/, inside the stage).
+    for (const entry of await fs.readdir(path.join(stage, 'test'))) {
+      if (entry.endsWith('.mjs')) {
+        await fs.copyFile(path.join(stage, 'test', entry), path.join(outDir, 'test', entry));
+      }
+    }
 
     // Run the target suite, retrying ONLY an inconclusive run.
     //
@@ -397,7 +426,7 @@ async function assertMutantKilled(mutant: Mutant): Promise<void> {
     let lastSummary = '';
     for (let attempt = 1; attempt <= MAX_CHILD_ATTEMPTS; attempt += 1) {
       const run = spawnSync(process.execPath, ['--test', path.join(outDir, 'test', mutant.target)], {
-        cwd: PKG,
+        cwd: stage,
         encoding: 'utf8',
         maxBuffer: 32 * 1024 * 1024,
         env: childEnv(),
@@ -439,18 +468,20 @@ async function assertMutantKilled(mutant: Mutant): Promise<void> {
       `${mutant.id}: the mutated suite reported failures but exited 0; the runner is not propagating results`,
     );
   } finally {
-    await fs.writeFile(srcPath, pristine as string, 'utf8');
-    assert.equal(await readSource(mutant.file), pristine, `${mutant.id}: source must be restored byte-for-byte`);
-    await fs.rm(outDir, { recursive: true, force: true });
+    await fs.rm(stage, { recursive: true, force: true });
+    // The tracked tree was never written: prove it (byte equality + no
+    // mutant marker), rather than restoring.
+    assert.equal(await readTracked(mutant.file), pristine, `${mutant.id}: tracked source must be untouched byte-for-byte`);
+    assert.ok(!(await readTracked(mutant.file)).includes('MUTANT M'), `${mutant.id}: tracked source carries no mutant marker`);
   }
 }
 
 describe('P2-S7 mutation suite (the security tests kill the mutations)', () => {
   it('captures pristine sources', async () => {
     // Every file any mutant touches must be snapshotted here, or the harness
-    // refuses to run that mutant (it cannot guarantee byte-for-byte restore).
+    // refuses to run that mutant (it cannot prove the tracked tree untouched).
     for (const file of [KEY_SEAM, SECRETS, MFA, PRIVILEGE, AUTH_MODULE, BREAK_GLASS]) {
-      PRISTINE.set(file, await readSource(file));
+      PRISTINE.set(file, await readTracked(file));
     }
     assert.equal(PRISTINE.size, 6);
   });
@@ -460,16 +491,15 @@ describe('P2-S7 mutation suite (the security tests kill the mutations)', () => {
     it(`${mutant.id} kills: ${mutant.control}`, () => assertMutantKilled(mutant));
   }
 
-  it('every mutated source file is restored byte-for-byte after the suite', async () => {
+  it('every tracked source file is untouched byte-for-byte after the suite', async () => {
     for (const [file, bytes] of PRISTINE) {
-      assert.equal(await readSource(file), bytes, `${file} was left modified by the mutation suite`);
+      assert.equal(await readTracked(file), bytes, `${file} was modified by the mutation suite`);
     }
   });
 });
 
 after(async () => {
-  // Belt and braces: even if a case threw mid-mutation, the tracked sources are
-  // put back before the process exits.
-  await restoreAll();
+  // The tracked tree was never written, so there is nothing to restore.
+  // Best-effort removal of any pre-S8 scratch dir (absent on a clean tree).
   await fs.rm(path.join(PKG, 'dist', '.mutation'), { recursive: true, force: true });
 });

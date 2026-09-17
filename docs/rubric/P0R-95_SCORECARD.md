@@ -331,5 +331,19 @@ where their *thresholds* are not.
 
 ---
 
+---
+
+## 6. Addendum — P2-S8 first post-P2 assessment (2026-09-17, UTC)
+
+| Item | Value |
+|---|---|
+| Assessment record | `docs/verification/P2_POST_MILESTONE_V11_REASSESSMENT.md` (assessment-only; no projection) |
+| Artifact | S8 tree on base `2c1cad0` (exact final SHA in `docs/verification/P2_S8_IMPLEMENTATION_REPORT.md` §9) |
+| Published percentage | **9.484375% — FROZEN, change 0.0000000 pp** |
+| D02 / D03 / D14 minima | **UNSCORABLE** (schedule still unrecovered; evidence movement recorded without numeric credit) |
+| D07b | **0.0000000 / 2.25** (inputs untouched; `q_07b = 0` exactly) |
+| Production readiness | **NOT READY** (unchanged) |
+| Why frozen | (a) S8 is verification-only — zero production-code change, so no `C` input moved; (b) no numeric schedule recovered — no unit rescorable, no renormalization (v1.1 X1/X2); (c) D07b recomputation yields the identical 0. Full note in the assessment record §1. |
+
 *End of P0R-95 provisional scorecard. One unit scored; fifty-nine unscorable; no
 percentage fabricated.*
