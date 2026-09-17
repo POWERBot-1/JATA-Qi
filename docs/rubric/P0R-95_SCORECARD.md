@@ -135,7 +135,7 @@ where their *thresholds* are not.
 
 | Field | Value |
 |---|---|
-| Capability status | **PARTIAL** — OIDC (JWKS-pinned, provider-neutral), identity/session/privilege/delegation stores, JTI replay, 8 `p2.production.*` posture invariants. **Absent:** MFA/TOTP, SAML, ABAC, ReBAC, PAM, KMS/HSM, break-glass (all contract-only) |
+| Capability status | **PARTIAL** — OIDC (JWKS-pinned, provider-neutral), identity/session/privilege/delegation stores, JTI replay, 8 `p2.production.*` posture invariants; **MFA/TOTP + step-up, break-glass, and the secret-material seam now EXIST at `08adbd9`** (`packages/authentication/src/{mfa,break-glass,key-management,secret-material}.ts`) — see the C-1 correction in `P0_V11_ASSESSMENT_AT_08ADBD9.md` §5. **Still absent:** SAML, ABAC, ReBAC, PAM, KMS/HSM **provider** (D2; seam is contract + honestly-labelled dev double only) |
 | Evidence status | **VERIFICATION** (S4, this phase); **PR-ATTESTATION** for S2; **VERIFICATION** for S3 |
 | Evidence coefficient | numeric **UNRECOVERED** |
 | Freshness | **CURRENT** for S4; historical for S2/S3 |
@@ -164,9 +164,9 @@ where their *thresholds* are not.
 | Evidence status | **VERIFICATION** (execution + enforcement suites) |
 | Freshness | **CURRENT** |
 | Verified score | **UNSCORABLE** |
-| Remaining gap | containment (P3); distributed execution; kill-9 mid-transaction harness |
+| Remaining gap | containment (P3); distributed execution. ~~kill-9 mid-transaction harness~~ **corrected (C-2): the kill-9-in-transaction and restart harnesses now exist** (S8 A-17, `packages/authentication/test/p2-s8-restart-recovery.test.ts`) |
 | Blocking gates | P3 containment |
-| Required next evidence | node-loss / kill-9 harness; contained-execution proof |
+| Required next evidence | ~~node-loss / kill-9 harness~~ **DELIVERED (C-2)** — `p2-s8-restart-recovery.test.ts` (SIGKILL inside an open tx) + `p2-s8-outage-matrix.test.ts`; **contained-execution proof still outstanding** (P3) |
 
 ### D05 — AI / model intelligence
 
@@ -253,13 +253,13 @@ where their *thresholds* are not.
 
 | Field | Value |
 |---|---|
-| Capability status | **PARTIAL** — 8-/32-process contention, restart/orphan-lease/GC evidence, 911 transactions with **0 serialization and 0 deadlock retries** (`docs/verification/r2-perf.json`). **Absent:** kill-9 mid-transaction harness |
+| Capability status | **PARTIAL** — 8-/32-process contention, restart/orphan-lease/GC evidence, 911 transactions with **0 serialization and 0 deadlock retries** (`docs/verification/r2-perf.json`). ~~Absent: kill-9 mid-transaction harness~~ **corrected (C-3): kill-9-in-tx, outage, failover, skew and tamper/duplicate harnesses now exist** (S8 A-17…A-23); **production HA/DR remains absent and unclaimed (A-20 is test-class)** |
 | Evidence status | **VERIFICATION** (multi-process suites re-run green this phase) |
 | Freshness | **CURRENT** |
 | Verified score | **UNSCORABLE** |
 | Remaining gap | kill-9/node-loss harness; failover; outage injection (S8) |
 | Blocking gates | S8 requires S1–S7 |
-| Required next evidence | A-17…A-23 on the exact final artifact |
+| Required next evidence | ~~A-17…A-23 on the exact final artifact~~ **DELIVERED (C-3)** — S8 suites present at `08adbd9` and CI-green on the exact SHA (CI class; **PRIMARY evidence only, E4 capped** — see `P2_ASSURANCE_CAP_DISPOSITION.md`) |
 
 ### D13 — Observability / operations
 
@@ -289,13 +289,13 @@ where their *thresholds* are not.
 
 | Field | Value |
 |---|---|
-| Capability status | **PARTIAL** — normal Git history, PR-based merges, `docs/verification` durability convention, posture invariants, honest SKIP-vs-PASS CI step. **Defect:** ruleset `20134880` has `required_approving_review_count: 0` and **no `required_status_checks`** |
+| Capability status | **PARTIAL** — normal Git history, PR-based merges, `docs/verification` durability convention, posture invariants, honest SKIP-vs-PASS CI step. ~~**Defect:** ruleset `20134880` has `required_approving_review_count: 0` and **no `required_status_checks`**~~ **corrected (C-4/C-5, live read 2026-09-17): the merge gate is now LIVE** — 1 required approval, required check `build · lint · test`, strict checks, thread resolution, deletion protection, no bypass actors. **Residual defects:** no `non_fast_forward` (force-push) rule; `dismiss_stale_reviews_on_push` and `require_last_push_approval` are `false`; the hardening had **no committed read-back** until `P2_S8_POSTMERGE_VERIFICATION.md` §5 |
 | Evidence status | **VERIFICATION** — ruleset read live via API this phase |
 | Freshness | **CURRENT** |
 | Verified score | **UNSCORABLE** |
-| Remaining gap | AG-1/R-9 merge-gate hardening — **still NOT applied at M1 closure**; the exact reversible payload and read-back verification are prepared and the item is formally dispositioned **HUMAN ADMIN REQUIRED** (`administration:write` not granted to the available token; 403 confirmed, no bypass attempted). Also: report-durability rule |
+| Remaining gap | AG-1/R-9 merge-gate hardening — the gate itself is **now applied** (C-4/C-5); what remains is **human-admin residual**: restore `non_fast_forward`, decide the stale-review controls, and keep the read-back record current. Also: report-durability rule — and, since 2026-09-17, the **permanent P2 E4 cap** (`P2_ASSURANCE_CAP_DISPOSITION.md`) |
 | Blocking gates | independent verification; human merge authorization |
-| Required next evidence | post-change ruleset read-back showing `required_approving_review_count: 1` and a `required_status_checks` rule with context `build · lint · test` |
+| Required next evidence | ~~post-change ruleset read-back showing `required_approving_review_count: 1` and a `required_status_checks` rule with context `build · lint · test`~~ **DELIVERED** — read-back recorded in `docs/verification/P2_S8_POSTMERGE_VERIFICATION.md` §5 (both controls present; force-push residual recorded). Any further change (force-push rule, stale-review controls) is a human-admin decision |
 
 ---
 
@@ -344,6 +344,26 @@ where their *thresholds* are not.
 | D07b | **0.0000000 / 2.25** (inputs untouched; `q_07b = 0` exactly) |
 | Production readiness | **NOT READY** (unchanged) |
 | Why frozen | (a) S8 is verification-only — zero production-code change, so no `C` input moved; (b) no numeric schedule recovered — no unit rescorable, no renormalization (v1.1 X1/X2); (c) D07b recomputation yields the identical 0. Full note in the assessment record §1. |
+
+---
+
+## 7. Addendum — assessment at the post-P2 canonical artifact `08adbd9` (2026-09-17, UTC)
+
+| Item | Value |
+|---|---|
+| Assessment record | `docs/verification/P0_V11_ASSESSMENT_AT_08ADBD9.md` (assessment-only; no projection) |
+| Artifact | **`08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe`** (post-merge `main`, PR #37) |
+| Post-merge record | `docs/verification/P2_S8_POSTMERGE_VERIFICATION.md` |
+| Assurance cap | `docs/verification/P2_ASSURANCE_CAP_DISPOSITION.md` — **`P2 E4: NOT ACHIEVED` (permanent, owner-authorized 2026-09-17)** |
+| Published percentage | **9.484375% — FROZEN, change 0.0000000 pp** |
+| Capability / integration indices | 44.375% / 36.6875% — quoted frozen (no schedule to recompute them) |
+| D02 / D03 / D14 minima | **UNSCORABLE** (schedule still unrecovered; capability movement documented, not credited) |
+| D07b | **0.0000000 / 2.25** (nine modality groundings re-verified at this SHA; `q_07b = 0` exactly) |
+| Units scored / unscorable | **1 of 60 / 59 of 60** |
+| Production readiness | **NOT READY** (unchanged) |
+| Figures changed by this assessment | **NONE** |
+| Documentary corrections applied | **C-1** D02 (MFA/break-glass/seam now exist) · **C-2** D04 (kill-9 harness) · **C-3** D12 (S8 harnesses; HA/DR still absent) · **C-4/C-5** D15 (merge gate now live; force-push residual) · **C-6** A-01 inventory does not cover the LLM/embedding/JWKS egress seams (detailed in `P3_A_SECURITY_THREAT_MODEL_AND_BASELINE.md`) |
+| Why frozen | (a) no scored-modality capability was added — P2's production delta is confined to `authentication` + `cli`; (b) no numeric schedule recovered — 59/60 units unscorable, renormalization prohibited (X1/X2); (c) D07b recomputes to the identical 0; (d) **the permanent E4 cap removes the only route by which P2 work could have raised its evidence class** |
 
 *End of P0R-95 provisional scorecard. One unit scored; fifty-nine unscorable; no
 percentage fabricated.*
