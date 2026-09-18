@@ -278,7 +278,7 @@ export function targetMatches(
     `^${pattern.resourcePattern
       .split('*')
       .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-      .join('.*')}$`,
+      .join('[^/.]*')}$`,
   );
   return regex.test(resource);
 }
