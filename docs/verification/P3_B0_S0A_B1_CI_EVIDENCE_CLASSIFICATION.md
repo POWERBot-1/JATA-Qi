@@ -38,7 +38,7 @@ curl -s -o /dev/null -D - \
   | grep -i '^location:'
 ```
 
-The returned `productionresultssa14.blob.core.windows.net/.../job-logs.txt?...&sig=...` URL was then fetched with a server-side page-retrieval tool (188 chunks), which succeeded. **No repository file, workflow, or CI configuration was modified to obtain this evidence, and CI was not re-run.**
+The returned `productionresultssa14.blob.core.windows.net/.../job-logs.txt?...&sig=...` URL was then fetched with a server-side page-retrieval tool (188 chunks), which succeeded. **No repository file, workflow, or CI configuration was modified to obtain this evidence, and CI was not re-run *at the time of this slice*** — see §8: a single authorized normal re-run was performed later, on the unchanged head, and passed.
 
 ---
 
@@ -222,7 +222,7 @@ What this does **and does not** change:
 3. **Absence of reproduction is not proof of absence.** Ten clean local executions bound the flake's rate loosely; they cannot show it is rare in CI.
 4. **The log was obtained through a workaround path** (§0). It is the authentic Step-8 job log (it reconciles exactly with the API-level job/step metadata, the annotations, and the source line mappings), but the retrieval route is unconventional and is documented so the owner can re-verify.
 5. **Node-version nuance.** The Actions runtime warns that Node 20 is deprecated and the *actions* are forced onto Node 24; the job's own test runtime is the workflow-provisioned Node 20, which is what local verification used. The nuance is recorded, not resolved.
-6. **No repository file was modified by this slice**, and CI was not re-run.
+6. ~~**No repository file was modified by this slice**, and CI was not re-run.~~ **Amended by §8:** no repository file was modified by this slice (still true), and CI was not re-run *during* this slice — a single authorized normal re-run was performed **subsequently**, at the unchanged head `ab9914a`, and **passed**.
 
 ---
 
@@ -235,4 +235,65 @@ What this does **and does not** change:
 
 ---
 
-*— End of B-1 read-only CI evidence retrieval and classification. No remediation performed; no CI re-run; awaiting separate explicit owner authorization. —*
+## 8. POST-DISPOSITION UPDATE — SUCCESSFUL RE-RUN (CORROBORATING EVIDENCE)
+
+*Added 2026-09-18, documentation-only, under explicit owner authorization for a single normal CI re-run at the unchanged head. This section **updates** the record; it does not rewrite it.*
+
+**§6.6 above ("CI was not re-run") is superseded by this section.** CI was subsequently re-run **once**, normally, at the unchanged head, and it **passed**.
+
+### 8.1 Verified facts
+
+| Field | Value |
+|---|---|
+| Run | **`35334202868`, attempt 2** — `.github/workflows/ci.yml` (`CLI`, workflow_id `350321572`) |
+| Conclusion | **`completed` / `success`** |
+| Head SHA | **`ab9914a4d8a6c389645b358d0fdfa07ebb9cc7f7`** — unchanged |
+| Merge tree tested | `c03bce24c0bd6441d391583b2d859fca09237aac` — **identical to attempt 1** |
+| Job / check run | `105651676282`, `build · lint · test`, **`success`**, 2026-09-18T15:11:49Z → 15:30:03Z |
+| Triggered by | `triggering_actor = POWERBot-1` (owner, normal mechanism) |
+| Prior attempt | attempt 1, job `105565178475`, **`failure`** — **preserved, not expunged** |
+
+### 8.2 Effect on the classification in this document: **CORROBORATED, NOT CHANGED**
+
+The classification stands exactly as written in §4: **KNOWN TRANSIENT FLAKE / NO S0a CAUSATION.**
+
+The single most probative fact is that **the same merge tree produced a failure on attempt 1 and a pass on attempt 2.** Nothing in the tested content differed between the two attempts:
+
+- `refs/pull/40/merge` was `c03bce24` in **both** attempts;
+- the branch still carries exactly two commits (`503e67b`, `ab9914a`) and exactly six changed files (+895/−2) against `6b61256`;
+- `.github/workflows/ci.yml` is blob `cf8a5d00443b4cccbb5b2bd9dbe2e332edab078f` at **both** `ab9914a` and `main`;
+- no lockfile, `package.json`, tsconfig, or config change.
+
+A failure that appears and disappears across identical inputs is, by definition, **non-deterministic**. That is direct empirical confirmation of the transient-race reading in §4 and of the §6.3 caution that the rate was unmeasured.
+
+**Direct log corroboration:** in attempt 2 the previously failing assertion now reads
+
+```
+ok 2 - deprovision + validate race: validators end denying; the cascade claims the row
+  duration_ms: 44.548207
+```
+
+inside `ok 15 - P2-S2 lifecycle races (real PostgreSQL)` — versus `not ok 2` (`ERR_ASSERTION`, 528.223213 ms) in attempt 1. The attempt-2 log tail completes with **no** `##[error]Process completed with exit code 1.`
+
+### 8.3 Two things this does **not** license
+
+1. **It is not "S0a fixed the failure."** S0a was present in **both** attempts. A factor constant across the failing and passing cases cannot discriminate between them. The correct statement is: *the failure did not recur on the identical tree.* Any claim of causation or of a "fix" is **false** and must not be made.
+2. **It is not a flake rate, and the race is not thereby harmless.** n = 2. The bounded poll budget and the race are **unchanged and un-remediated**; recurrence remains possible. §6.3 and §7.3 are unaffected: the only authorized remedy would remain a **test-only** de-flake, and **none is authorized or performed.**
+
+### 8.4 State of §7 recommendations
+
+- **§7.1 — satisfied.** The B-1 record has been amended; the prior "undetermined" status is closed, and the located root cause is confirmed by the successful re-run.
+- **§7.2 — now answered by execution, for the check itself.** The required check did reach a passing conclusion at `ab9914a`. **This document still does not decide the merge question and does not authorize a merge.**
+- **§7.3 — unchanged.** No de-flake performed, none authorized.
+- **§7.4 — standing, with one material amendment recorded separately:** the repository has since been made **private**, which on a free User-plan account renders ruleset `20134880` **unenforceable**. See `docs/verification/P3_B0_S0A_CI_RERUN_ATTEMPT_RECORD.md` §11.
+
+### 8.5 Limitations added by this update
+
+1. **n = 2 is not a rate.** One failure, one pass. The flake's frequency in CI remains **unmeasured**.
+2. **No runner scheduling trace was obtained for either attempt**, so the interleaving that inverted the assertion is still **inferred, not demonstrated** (§6.1 stands).
+3. The R-17 conformance suite's individual result line was **not separately retrieved** in this slice; its passing is established **logically** — the aggregate run succeeded, and the required check covers all workspaces including `authorization-boundary`. This is recorded as an inference from the green aggregate, not as a directly observed log line.
+4. The attempt-2 log was obtained through the **same unconventional workaround path** documented in §0; §6.4 applies unchanged.
+
+---
+
+*— End of B-1 read-only CI evidence retrieval and classification. Classification CORROBORATED by an authorized, verified, successful re-run on the unchanged tree; the historical failure preserved; no remediation performed; no merge authorized. —*
