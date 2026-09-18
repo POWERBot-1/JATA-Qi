@@ -155,4 +155,21 @@ None of these is authorized or performed by this record:
 
 ---
 
+## 9. ADDENDUM — RETRY AFTER OWNER ELECTED THE PERMISSION-GRANT PATH
+
+Immediately after the owner selected *"Grant the Arena app `actions: write`, then I re-run"*, one further run-level re-run attempt was issued to test whether the widened permission was already in effect:
+
+```
+POST /repos/POWERBot-1/JATA-Qi/actions/runs/35334202868/rerun
+-> HTTP/2.0 403 Forbidden
+   X-Accepted-Github-Permissions: actions=write
+   {"message":"Resource not accessible by integration","status":403}
+```
+
+**Result unchanged: still refused; `run_attempt` still 1; `updated_at` still `2026-09-18T10:29:39Z`; no run created.** Cumulative refused attempts: **5**, runs created: **0**. The permission grant had not yet propagated to the session token at the moment of this retry.
+
+The re-run remains **outstanding** and will be executed — once, and only once — as soon as `actions: write` is actually carried by the session token, or by the owner clicking *"Re-run all jobs"* in the GitHub UI (§7.1).
+
+---
+
 *— End of re-run attempt record. The authorized re-run could not be executed: the session's GitHub App token lacks `actions: write`. No run was created; the required check remains historically red at the unchanged head `ab9914a`. No evidence was manufactured and no conclusion about the flake was drawn. STOPPED — awaiting the owner's chosen path from §7. —*
