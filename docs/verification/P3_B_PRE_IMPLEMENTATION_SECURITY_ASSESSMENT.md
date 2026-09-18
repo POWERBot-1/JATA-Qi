@@ -8,6 +8,9 @@
 | **Audited commit SHA** | **`6b61256c6115a02da2d3ad6ba42771831b550f81`** |
 | Baseline verification | local `HEAD` == `origin/main` == audited SHA; working tree clean at audit start (§3) |
 | Assessment date/time (UTC) | **2026-09-18T06:30:28Z** (measured via `date -u`) |
+| **Revision** | **R2 — evidence correction**, 2026-09-18T07:14Z. Corrects defects **D-1…D-6** found during read-only verification of PR #39. See **§24 Correction Record** |
+| **Correction authorization** | **DOCUMENTATION/EVIDENCE CORRECTION ONLY** (owner, 2026-09-18). **This revision remediates no security condition.** It does not authorize P3-B, P3-B₀, remediation, merge, or E4 |
+| **Correction scope** | **One file** — this document. **Zero** production/test/config/CI/dependency/schema/infrastructure/ruleset changes (§24.3) |
 | Assessment type | **FRESH RE-MEASUREMENT.** No prior assessment was available to copy; every finding below was independently re-derived from source at the audited SHA, from read-only GitHub metadata, or from a labelled behavioural probe (§20). |
 | Evidence provenance | (a) source file:line at `6b61256`; (b) remote blob-SHA comparison against `08adbd9`; (c) read-only GitHub API (`gh pr view`, `gh run list`, `gh api`); (d) four isolated behavioural probes executed **outside** the repository (§20) |
 | **Evidence class** | **PRIMARY (source-verified at the audited SHA) + CI-metadata class + measured-transport class** |
@@ -44,8 +47,8 @@ structural prohibition enforced by an existing, deliberately tested security inv
 | ID | Blocker | Fresh evidence | Class |
 |---|---|---|---|
 | **B-1** | The manifest **monotonic-narrowing invariant forbids the two changes P3-B needs**: adding a destination to `allowedTargets` is rejected as *"widens target scope"*, and raising an understated impact ceiling is rejected as *"raises the impact ceiling"* | `capability-manifests.ts:130` (`isNarrowing`), `:140`, `:162`, `:164-165`; enforced at registration `:213` | **VERIFIED DEFECT-BLOCKER** (structural) |
-| **B-2** | The egress call sites carry **no identity whatsoever**, and there is **no ambient-context mechanism** to supply it | `llm.ts` `LLMRequest` = `{messages, tools?, temperature?, maxTokens?, signal?}` — **0** hits for `principal\|tenant\|agentId\|runId\|correlation` in the whole file; `AsyncLocalStorage`/`async_hooks` = **0** hits in `packages/*/src` **and 0 across all of `packages/`** | **VERIFIED DEFECT-BLOCKER** (architectural) |
-| **B-3** | The destination matcher P3-B would inherit implements an **unbounded `.*` glob**, not the *"simple segment glob"* its own documentation promises | `capability-manifests.ts:267-284`; doc comments at `:262-265` (*"within a segment-delimited resource"*) and `types.ts:404` (*"simple segment glob"*); consumed at `policy-engine.ts:304`. **Bypass proven by probe** (§20.1) | **VERIFIED DEFECT** (HIGH for P3-B; latent today) |
+| **B-2** | The egress call sites carry **no identity whatsoever**, and there is **no ambient-context mechanism** to supply it | `llm.ts:18-24` `LLMRequest` = **5 fields**: `{messages, tools?, temperature?, maxTokens?, signal?}` — **0** hits for `principal\|tenant\|agentId\|runId\|correlationId\|actor\|subject\|sessionId` in the whole file; `AsyncLocalStorage`/`async_hooks` = **0** hits in `packages/*/src` **and 0 across all of `packages/`**. Identity **does** exist upstream (`agent.ts:132-140`) — this is a **seam/propagation** gap | **VERIFIED DEFECT-BLOCKER** (architectural) |
+| **B-3** | The destination matcher P3-B would inherit implements an **unbounded `.*` glob**, not the *"simple segment glob"* its own documentation promises — and it exists in **TWO textually identical implementations across two packages** | `capability-manifests.ts:267-284` (`.join('.*')` at `:281`), doc comments `:262-265` and `types.ts:404`; consumed at `policy-engine.ts:304`. **[D-1]** Second site: `authentication/src/delegation-types.ts:385-402` `delegationTargetMatches` (`.join('.*')` at `:399`) — **byte-identical regex body**, documented at `:381` as mirroring A-01 *"exactly"*, consumed at `:439` for **delegation grant assessment**, exported at `index.ts:253`. **Bypass proven by probe** (§20.1) | **VERIFIED DEFECT** (HIGH for P3-B; latent today; **scope corrected to two sites**) |
 
 ### 1.3 Two further closed-set contracts block P3-B's own evidence requirements
 
@@ -91,10 +94,12 @@ embeddings.ts:109      credentialed POST of JSON.stringify({ model, input: texts
 
 1. **The authorization record understates the behaviour.** It records an internal `READ` against
    `tenant-knowledge`; the actual behaviour is external transmission of `INTERNAL` data.
-2. **`READ` decisions are unboundedly repeatable.** `gate.ts:407-408` — *"Replay protection:
-   non-READ decisions are consumed exactly once"* — `if (verified.impact !== 'READ')`. A `READ`
-   envelope is therefore **not consumed**, so one authorization permits **unlimited repeat
-   transmission** (also `gate.ts:12`, `:453`).
+2. **`READ` decisions are unboundedly repeatable — at three independent sites.** `gate.ts:407-408` —
+   *"Replay protection: non-READ decisions are consumed exactly once"* — `if (verified.impact !==
+   'READ')`; also `gate.ts:12` and `:453`; and, in the **durable** store, `consumption-stores.ts:75` —
+   `if (input.impact === 'READ') return { consumed: false };` (**[D-2]**, documented as intentional at
+   `:60-61`). A `READ` envelope is therefore **never consumed**, so one authorization permits
+   **unlimited repeat transmission**.
 3. **No destination is recorded anywhere**, so the transmission is forensically invisible.
 4. **Correcting it is blocked by B-1**: raising `impact` from `READ` to `EXTERNAL_SIDE_EFFECT` is
    rejected by `isNarrowing` at `capability-manifests.ts:164-165`.
@@ -420,7 +425,7 @@ finding was refuted.
 
 | Line | Measured behaviour |
 |---|---|
-| `:130` | `export function isNarrowing(previous, next): boolean` — a new manifest version must be **narrower** than its predecessor |
+| `:130` | `export function isNarrowing(previous: A01CapabilityManifest, next: A01CapabilityManifest): { ok: boolean; violation?: string }` — a new manifest version must be **narrower** than its predecessor. **[D-3 corrected]** The return type is a **result object**, not a bare `boolean`: the caller inspects `check.ok` and surfaces `check.violation` (`:213-217`) |
 | `:140` | rejects any version that **adds** an `allowedTargets` entry — *"widens target scope"* |
 | `:162` | rejects any version that **raises** `maxDataClassification` — classification ceiling |
 | `:164-165` | rejects any version that **raises** `maxImpact` — impact ceiling |
@@ -459,13 +464,27 @@ tempted into weakening `isNarrowing` — trading a verified control for a new on
 
 **Fresh evidence:**
 
-- `packages/agent-runtime/src/llm.ts` — `LLMRequest` comprises exactly **6 fields**
-  (`messages`, `tools?`, `temperature?`, `maxTokens?`, `signal?`, and the model/type discriminant).
-  Search for `principal`, `tenant`, `agentId`, `runId`, `correlation` across the entire file:
-  **0 hits.**
+- `packages/agent-runtime/src/llm.ts:18-24` — `LLMRequest` comprises exactly **5 fields**:
+  `messages` (`:19`), `tools?` (`:20`), `temperature?` (`:21`), `maxTokens?` (`:22`),
+  `signal?` (`:23`). **[D-4 corrected]** An earlier revision of this document asserted **6** fields
+  including a *"model/type discriminant"*; **no such field exists**. The correct count is **5**,
+  confirmed by direct enumeration of the interface body.
+  Search for `principal`, `tenant`, `agentId`, `runId`, `correlationId`, `actor`, `subject`,
+  `sessionId` across the entire file: **0 hits for each.**
 - `AsyncLocalStorage` in `packages/*/src`: **0 hits.** `async_hooks`: **0 hits.**
 - Widened to **all of `packages/`** (including tests): **0 hits for both.** There is no ambient
   context mechanism anywhere in the product, not even partially built.
+
+**Precision required by this correction — what B-2 does and does not claim:** B-2 is a
+**propagation/seam gap, not an absence of identity from the system.** Identity **does** exist
+upstream, in the agent runtime: `agent.ts:132-135` resolves `auth?.runId`, `auth?.correlationId`, and
+`auth?.agentId`, and `agent.ts:138-140` fail-closes on a missing verified principal
+(*"A missing verified principal is fail-closed: the decision is a DENY (`MISSING_PRINCIPAL`)"*).
+The authorization envelope therefore carries principal, tenant, agent, run, and correlation identity.
+**What is absent is any mechanism to carry that identity from the envelope to the egress seam**:
+`LLMRequest` has no identity field, and no ambient context exists to supply one out-of-band. The gap
+is the **last hop**, not the whole chain — which is why B-2 is an architectural *plumbing* problem
+with a bounded (if non-trivial) solution space, rather than a missing identity model.
 
 **Consequence:** at the moment the outbound call is constructed, **there is nothing to decide
 against.** An egress PDP placed at N-1/N-2 would receive a payload and no subject. P3-B therefore
@@ -535,9 +554,79 @@ destination pattern, because no egress decision exists (§5.1). The matcher's ex
 limited to whatever `allowedTargets` entries currently exist. **The severity escalates precisely
 because P3-B proposes to route destination authorization through it.**
 
+### 7.3.1 **[D-1 corrected]** A SECOND, TEXTUALLY IDENTICAL implementation exists in a different package and trust domain
+
+**The original revision of this assessment recorded B-3 at one site only
+(`capability-manifests.ts:267`). That was a material omission.** Independent inspection during
+verification, re-confirmed against source for this correction, establishes that the same matching
+weakness exists in **two** implementations, in **two** packages, on **two** sides of a declared
+package dependency boundary.
+
+**Second implementation — `packages/authentication/src/delegation-types.ts:385-402`,
+`delegationTargetMatches`:**
+
+| Line | Measured content |
+|---|---|
+| `:380-384` | doc comment: *"Target-scope matching (**mirrors the A-01 `targetMatches` semantics exactly**: exact system match; `resourcePattern` undefined ⇒ resource must be absent; no `*` ⇒ exact resource match; `*` ⇒ **simple segment glob**)."* — it repeats the **same inaccurate** "segment glob" description |
+| `:385-389` | `export function delegationTargetMatches(pattern: DelegationTargetScope \| undefined, system: string, resource: string \| undefined): boolean` |
+| `:390-394` | identical guard sequence to `targetMatches:272-276` |
+| `:395-400` | `new RegExp('^' + …split('*')…replace(/[.*+?^${}()|[\]\\]/g,'\\$&')…` **`.join('.*')`** at `:399` `+ '$')` — **the same unbounded join** |
+| `:401` | `return regex.test(resource)` |
+
+**Textual identity established by direct comparison, not by eye:** extracting
+`capability-manifests.ts:277-283` and `delegation-types.ts:395-401` and diffing them yields
+**no differences** — the two regex-construction bodies are **byte-identical**. Repo-wide search for
+`.join('.*')` returns **exactly these two sites** (`delegation-types.ts:399`,
+`capability-manifests.ts:281`) and **zero** occurrences in test code.
+
+**The second site is not dormant — it is an authoritative decision path:**
+
+| Evidence | Measured content |
+|---|---|
+| `delegation-types.ts:364-367` | *"This is the fail-closed subset notion used at grant time and in the **A-16 live-manifest re-verification**; the **authoritative per-decision resource check is `delegationTargetMatches`** against both the grant and the live manifest."* |
+| `delegation-types.ts:438-440` | `targetsContain(...)` ⇒ `targets.some((t) => delegationTargetMatches(t, system, resource))` — the **live consumer** |
+| `delegation-types.ts:442-445` | that consumer serves the *"Pure, deterministic grant assessment (spec §8.2.1–8.2.8, in order). Only `VALID` is non-denying. Used by the store's **in-transaction reads** AND the decider's **enforcement re-check** (one semantics, **two enforcement sites**)."* |
+| `authentication/src/index.ts:253` | `delegationTargetMatches` is **exported from the package's public surface** |
+
+**An explicit identity invariant couples the two implementations.** `delegation-types.ts:404-409`
+states that the locally mirrored orderings exist *"so the delegation store can compare ceilings
+without depending on the authorization-boundary package — the dependency direction is
+authorization-boundary → authentication"* and that *"These **MUST stay identical** to
+`A01_CLASSIFICATION_ORDER` / `A01_IMPACT_ORDER`."* Combined with the `:381` claim that the matcher
+*"mirrors the A-01 `targetMatches` semantics exactly"*, the codebase **asserts an intentional
+equivalence** between the two implementations.
+
+**Consequences — why this materially changes B-3's remediation shape:**
+
+1. **Two trust domains are affected, not one.** The first site gates **capability authorization**
+   (authorization-boundary). The second gates **delegation grant assessment** (authentication) — i.e.
+   whether a delegated grant legitimately covers a target. **Delegation narrowing is a privilege
+   boundary**, so an unbounded glob there can make a grant appear to cover a target it should not.
+2. **Remediation must account for both implementations.** Fixing `targetMatches` alone leaves
+   `delegationTargetMatches` vulnerable, and — because the two are documented as semantically
+   identical — **silently breaks the stated identity invariant**, producing divergent authorization
+   behaviour between the capability path and the delegation path. Any fix must therefore be applied
+   to **both**, or the two must be **deliberately de-coupled** with the "mirrors exactly" /
+   "MUST stay identical" comments corrected.
+3. **The intended identity invariant must be preserved and verified, not assumed.** This assessment
+   does **not** assert that a shared helper is the correct resolution — that is an engineering
+   decision requiring separate authorization. It asserts only that **whatever remediation is chosen
+   must (a) cover both sites, and (b) either preserve the equivalence or explicitly and verifiably
+   revoke it.**
+4. **Severity for P3-B is raised, not lowered.** P3-B would route destination authorization through
+   matching semantics that are **duplicated across a package boundary**. A destination allowlist
+   built on either site inherits the suffix-confusion, leading-wildcard, and dot-segment defects
+   proven in §20.1 — and a fix applied to only one site would leave the other reachable.
+
+**Classification of this correction:** the *underlying defect* (B-3) was already **VERIFIED**; what
+changes is its **scope** — from one implementation to **two**. **Class: VERIFIED DEFECT, scope
+corrected. No security condition was remediated by this documentation correction** (§24).
+
 **Decision required:** OD-4 (§19) — remediate B-3 **before** P3-B (as a separately authorized P2/
 authorization-boundary change), or **inside** P3-B with its own tests. Bundling it silently into
-P3-B would make a P3 slice responsible for changing a tested P2 matcher.
+P3-B would make a P3 slice responsible for changing a tested P2 matcher. **[D-1]** OD-4 must now be
+read as covering **both** `targetMatches` **and** `delegationTargetMatches`, plus the identity
+invariant that couples them.
 
 ### 7.4 F-3 — `vector.search` is authorized as an internal READ yet causes credentialed external transmission
 
@@ -563,10 +652,16 @@ P3-B would make a P3 slice responsible for changing a tested P2 matcher.
 
 **Four aggravating properties, each separately verified:**
 
-1. **Unbounded repeatability.** `gate.ts:407-408` — *"Replay protection: non-READ decisions are
-   consumed exactly once"* — implemented as `if (verified.impact !== 'READ')`. Because the impact is
-   `READ`, the envelope is **not consumed** (also `gate.ts:12`, `:453`). **One authorization therefore
-   permits unlimited repeat external transmission.**
+1. **Unbounded repeatability, enforced at THREE independent sites.** `gate.ts:407-408` — *"Replay
+   protection: non-READ decisions are consumed exactly once"* — implemented as
+   `if (verified.impact !== 'READ')`. Because the impact is `READ`, the envelope is **not consumed**
+   (also `gate.ts:12`, `:453`). **[D-2 corrected]** A **third** site exists in the **durable**
+   consumption store: `consumption-stores.ts:75` — `if (input.impact === 'READ') return { consumed:
+   false };` — documented at `:60-61` as *"READ envelopes are never consumed (R1 parity) and return
+   `{ consumed: false }`."* This is a **deliberate design decision, not an oversight**, which means
+   correcting it requires a **policy change to the replay model**, not merely a code fix. **One
+   authorization therefore permits unlimited repeat external transmission, and that permission is
+   consistent across the in-memory gate, the pre-await consumption path, and the durable store.**
 2. **No destination recorded.** `A01AuditRecord` has no destination field (§5.1) — the transmission is
    forensically invisible.
 3. **No input validation on `query`.** `tools.ts` `validateInput` performs **required-key presence
@@ -608,24 +703,50 @@ HTTP 308: followed=YES target=127.0.0.1:35813 auth=(ABSENT) body={"model":"probe
 
 **Read precisely — this measurement *narrows* the naive reading and must not be inflated:**
 
-| Property | Measured result | Correct interpretation |
-|---|---|---|
-| Redirects followed? | **YES on all five statuses** (301/302/303/307/308) | Real defect: traversal to **arbitrary destinations**, including internal addresses |
-| `Authorization` forwarded cross-origin? | **ABSENT on all five** | **Credential theft is NOT demonstrated.** Do **not** claim the bearer token leaks via redirect |
-| Request body on 301/302/303 | **EMPTY** | Payload not forwarded on these statuses |
-| Request body on **307/308** | **FULL BODY FORWARDED**, including the probe's `TENANT-A-CONFIDENTIAL-CONTEXT` marker | **Real defect: tenant payload exfiltration** on method-preserving redirects |
+| Property | **CROSS-ORIGIN** redirect (different port ⇒ different origin; the attacker/internal-host case) | **SAME-ORIGIN** redirect (path redirect on the same host:port; the allowed-origin case) | Correct interpretation |
+|---|---|---|---|
+| Redirects followed? | **YES on all five** (301/302/303/307/308) | **YES on all five** | Real defect, **origin-independent**: traversal to arbitrary destinations, including internal addresses |
+| `Authorization` forwarded? | **STRIPPED on all five** | **FORWARDED on all five** | **Origin-dependent.** Cross-origin ⇒ **credential theft is NOT demonstrated**. Same-origin ⇒ the bearer credential **does** travel to the redirect target |
+| Request body on 301/302/303 | **EMPTY** | **EMPTY** | Payload not forwarded on these statuses, either origin relationship |
+| Request body on **307/308** | **FORWARDED** (probe marker `TENANT-A-CONFIDENTIAL-CONTEXT` received) | **FORWARDED** | Real defect, **origin-independent**: tenant payload exfiltration on method-preserving redirects |
 
-**Therefore the substantiated consequences are exactly two:**
+**[D-6 corrected]** An earlier revision stated flatly that *"`Authorization` [is] not forwarded"* and
+that it was *"stripped in every observed case."* That was **over-general**: it was true of the
+**cross-origin** trials only, because the original probe exercised a single origin relationship. A
+same-origin control added during verification shows the header **is** forwarded on all five statuses.
+The table above replaces the unqualified claim. **Neither variant overstates nor understates the risk:**
+
+- **Cross-origin credential theft remains REFUTED** (T-03). Node strips `Authorization` when the
+  redirect target is a different origin, so an attacker-controlled **host** does not receive the
+  bearer token by this mechanism.
+- **Same-origin credential forwarding is a genuine residual**, not a refutation. If a permitted origin
+  hosts an **open redirect** (or the provider endpoint itself redirects within its own origin), the
+  credential and — on 307/308 — the body are delivered to that same-origin target. This **raises** the
+  importance of R-02/R-03 (hostname-boundary-exact matching, URL normalization): an allowlist that can
+  be confused about what "the same origin" is (B-3, D-1) directly undermines the only property that
+  currently prevents credential exposure.
+- **Body exfiltration (T-02) is confirmed on 307/308 regardless of origin relationship.**
+
+**Therefore the substantiated consequences are exactly three:**
 
 1. **SSRF / arbitrary-destination traversal** — a redirect response from the configured endpoint (or
    any MITM position on it) can point the request at internal hosts, and the request will be followed
-   with **no re-authorization** and **no record**.
+   with **no re-authorization** and **no record**. *Origin-independent.*
 2. **Data exfiltration via 307/308** — the request **body** (which at N-2 contains tenant text
-   destined for embedding) is forwarded to the redirect target.
+   destined for embedding) is forwarded to the redirect target. *Origin-independent.*
+3. **Credential forwarding on same-origin redirects** — the `Authorization` bearer **is** delivered
+   when the redirect target shares the request's origin. *Origin-dependent; see the corrected table.*
 
-**Explicitly NOT substantiated:** credential theft via redirect (`Authorization` stripped in every
-observed case). Any P3-B requirement should target **traversal + body forwarding**, not header
-leakage — stating it otherwise would overstate the finding.
+**Explicitly NOT substantiated:** **cross-origin** credential theft via redirect (T-03). Node strips
+`Authorization` on all five statuses when the target is a different origin, so the specific claim
+*"a redirect to an attacker host steals the provider credential"* is **refuted under the measured
+transport behaviour**. **[D-6 corrected]** The earlier wording — *"stripped in every observed case"* —
+is withdrawn as over-general: it held only for the cross-origin trials the original probe ran.
+
+**Requirement consequence, stated so it neither overstates nor understates:** P3-B must target
+**traversal + body forwarding (both origin-independent) + same-origin header forwarding**, while
+**not** claiming cross-origin credential theft. Treating the refuted T-03 as live would overstate the
+finding; treating consequence 3 as refuted would understate it.
 
 **Note also:** the probe's redirect target was **loopback**, and the request **succeeded**, which
 independently corroborates §20.3: **internal addresses are reachable from this process.**
@@ -638,7 +759,7 @@ independently corroborates §20.3: **internal addresses are reachable from this 
 | Requirement | A post-merge verification claim must be backed by a committed canonical artifact naming the SHA, the checks, and the results |
 | Expected | An artifact for PR #38 recording 8/8 PASS |
 | Observed | **No file in the repository references PR #38 at all**, and no `8/8` occurrence relates to it |
-| Methodology | (a) `grep -rl -E '#38\|PR 38\|PR-38\|pull/38'` excluding `.git` ⇒ **0 files**; (b) enumerated every `8/8` occurrence and read its context; (c) read the sole post-merge record's own header and findings register; (d) read-only `gh pr view 38` |
+| Methodology | (a) `grep -rl -E '#38\|PR 38\|PR-38\|pull/38'` excluding `.git` ⇒ **0 files**; (b) enumerated every `8/8` occurrence and read its context; (c) enumerated **all** post-merge verification records in `docs/verification/` and read each one's subject header and findings register (**[D-5 corrected]** — an earlier revision said "the sole post-merge record"; there are **two**, and neither covers PR #38); (d) read-only `gh pr view 38` |
 | Confidence | **HIGH** that no canonical artifact exists |
 
 **Fresh measurements:**
@@ -652,10 +773,19 @@ independently corroborates §20.3: **internal addresses are reachable from this 
    post-remediation"*); `P2_S3_VERIFICATION_REPORT.md:135,:162`; `P2_S4_VERIFICATION_REPORT.md:375`
    (*"p2-s3-posture-invariants.test.ts 8/8"*);
    `PHASE_A_GOVERNANCE_AND_CRITICAL_PATH.md:405`. **None names PR #38.**
-3. **The sole post-merge verification record names a different PR and SHA.**
-   `P2_S8_POSTMERGE_VERIFICATION.md` header: *"Exact canonical artifact **`08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe`**"*,
-   *"Merge commit `08adbd9…` **(PR #37)**"*, post-merge CI run **`35252694561`**, dated 2026-09-17,
-   evidence class **"PRIMARY (same-agent, read-only) — NOT E4"**.
+3. **There are exactly TWO post-merge verification records in the repository, and NEITHER covers
+   PR #38.** **[D-5 corrected]** — an earlier revision of this document described
+   `P2_S8_POSTMERGE_VERIFICATION.md` as *"the sole post-merge verification record."* That is
+   **factually wrong**: enumeration of `docs/verification/` for `*POSTMERGE*` returns two files.
+
+   | Record | Subject | Verified SHA | Covers PR #38? |
+   |---|---|---|---|
+   | `P2_S8_POSTMERGE_VERIFICATION.md` | *"Exact canonical artifact **`08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe`**"*; *"Merge commit `08adbd9…` **(PR #37)**"*; post-merge CI run **`35252694561`**; dated 2026-09-17; evidence class **"PRIMARY (same-agent, read-only) — NOT E4"** | `08adbd9…` (**PR #37**) | **NO** — `grep -c -E '#38\|6b61256'` = **0** |
+   | `PR20_MERGE_POSTMERGE_VERIFICATION.md` | *"post-merge verification of canonical `main` **`700ae80`** (merge of PR #20)"*; verified SHA `700ae8000ee9303bf1ea6289d0eab90085ffb597`; merged 2026-09-07T01:23:53Z; CI run **`34072884374`** | `700ae80…` (**PR #20**) | **NO** — `grep -c -E '#38\|6b61256'` = **0** |
+
+   **The correction does not change F-8's conclusion — it strengthens it.** Both records name a
+   different PR and a different SHA, and neither contains any reference to PR #38 or to the audited
+   baseline `6b61256`. **No canonical post-merge verification artifact for PR #38 exists.**
 4. **That record is not 8/8.** Its register (PM-01…PM-08) is **3 PASS + 5 non-PASS**:
 
 | ID | Verbatim substance | Verdict |
@@ -732,8 +862,8 @@ read-only API achieves the same proof **without** altering repository state — 
 | Finding | Prior claim | Fresh result | Class now |
 |---|---|---|---|
 | **B-1** | Narrowing invariant blocks destination binding | **SUBSTANTIATED** (`:130,:140,:162,:164-165,:213`) | VERIFIED DEFECT-BLOCKER |
-| **B-2** | No identity at the seam; no ambient context | **SUBSTANTIATED** (6 fields; 0 identity hits; 0 `AsyncLocalStorage` across `packages/`) | VERIFIED DEFECT-BLOCKER |
-| **B-3** | Unbounded glob; doc/code mismatch | **SUBSTANTIATED + probe-confirmed** (3 distinct bypass classes) | VERIFIED DEFECT |
+| **B-2** | No identity at the seam; no ambient context | **SUBSTANTIATED** (**5** fields per `llm.ts:18-24`; 0 identity hits; 0 `AsyncLocalStorage` across `packages/`) — **[D-4 corrected]** field count reduced from an erroneous 6 | VERIFIED DEFECT-BLOCKER |
+| **B-3** | Unbounded glob; doc/code mismatch | **SUBSTANTIATED + probe-confirmed** (3 distinct bypass classes). **[D-1] SCOPE CORRECTED** — a second byte-identical implementation exists at `delegation-types.ts:385-402` | VERIFIED DEFECT (two sites) |
 | **F-3** | Internal READ causes external transmission | **SUBSTANTIATED**, plus unbounded repeatability via `gate.ts:407-408` | VERIFIED DEFECT |
 | **F-4** | Redirects followed; no policy | **SUBSTANTIATED and REFINED** — traversal + 307/308 body forwarding **yes**; credential theft **no** | VERIFIED DEFECT |
 | **F-8** | PR #38 8/8 PASS | **NOT SUBSTANTIATED** — 0 references; nearest record is PR #37 with 3 PASS + 5 gaps | **UNVERIFIED** |
@@ -763,14 +893,16 @@ others.**
 |---|---|---|---|---|
 | **T-01** | Redirect-driven traversal to internal hosts (SSRF) | A redirect response reachable on the egress path | **No redirect policy on N-1/N-2**; all 5 statuses followed (probe §20.2) | **VERIFIED — exploitable given precondition** |
 | **T-02** | Tenant-payload exfiltration via 307/308 | Same precondition | **Body forwarded verbatim on 307/308** (probe §20.2) | **VERIFIED — exploitable given precondition** |
-| **T-03** | Provider credential theft via redirect | Redirect to attacker host | **NOT demonstrated** — `Authorization` **ABSENT** on all 5 statuses | **REFUTED as stated** (recorded to prevent inflation) |
-| **T-04** | Allowlist bypass via suffix confusion (`api.openai.com.evil.com`) | A destination allowlist consuming `targetMatches` | Matcher **confirmed vulnerable** (probe §20.1); **no allowlist consumes it for egress yet** | **VERIFIED DEFECT — latent, escalates with P3-B** |
-| **T-05** | Allowlist bypass via leading wildcard | Same | `https://*/v1/embeddings` matches any host (probe §20.1) | **VERIFIED DEFECT — latent** |
-| **T-06** | Path traversal inside an allowed prefix | Same | `/v1/../../admin` matches (probe §20.1); no normalization | **VERIFIED DEFECT — latent** |
+| **T-03** | Provider credential theft via **cross-origin** redirect | Redirect to an attacker-controlled **host** (different origin) | **NOT demonstrated** — `Authorization` **STRIPPED** on all 5 statuses cross-origin | **REFUTED as stated** (recorded to prevent inflation). **[D-6]** scoped explicitly to cross-origin |
+| **T-15** | Provider credential forwarding via **same-origin** redirect | A permitted origin hosts an **open redirect**, or the provider endpoint redirects within its own origin | **DEMONSTRATED** — `Authorization` **FORWARDED** on all 5 statuses same-origin (probe §20.2 `P3B-PROBE-02b`) | **VERIFIED residual** — **[D-6, newly added]**; interacts with B-3/D-1, since an allowlist confused about host boundaries defeats the origin distinction that currently protects the credential |
+| **T-04** | Allowlist bypass via suffix confusion (`api.openai.com.evil.com`) | A destination allowlist consuming **either** matcher | **Both** matchers confirmed vulnerable (**[D-1]** `capability-manifests.ts:281` and `delegation-types.ts:399`, byte-identical; probe §20.1); **no allowlist consumes either for egress yet** | **VERIFIED DEFECT — latent for egress, escalates with P3-B** |
+| **T-05** | Allowlist bypass via leading wildcard | Same | `https://*/v1/embeddings` matches any host (probe §20.1) — applies to **both** implementations | **VERIFIED DEFECT — latent for egress** |
+| **T-06** | Path traversal inside an allowed prefix | Same | `/v1/../../admin` matches (probe §20.1); no normalization — applies to **both** implementations | **VERIFIED DEFECT — latent for egress** |
+| **T-16** | **Delegation target-scope confusion** via the duplicated matcher | A delegation grant whose `resourcePattern` contains `*`, assessed by `delegationTargetMatches` | **[D-1, newly added]** Unlike T-04…T-06 this consumer is **live today**: `delegation-types.ts:439` `targetsContain` → the grant assessment at `:442-445`, used by *"the store's in-transaction reads AND the decider's enforcement re-check."* The matcher's glob weakness is therefore **already reachable** on a privilege-narrowing path. **Whether an exploitable pattern is actually registered depends on live grant data, which this audit did NOT measure** | **VERIFIED DEFECT in the matcher; exploitability UNKNOWN** (no grant corpus inspected) |
 | **T-07** | Cloud-metadata credential theft | Metadata service reachable + network-layer filtering absent | `169.254.169.254` **reached the network layer** (HTTP 501 from the sandbox egress path). **No production metadata service was contacted** | **PARTIAL — reachability VERIFIED; metadata theft NOT demonstrated** |
 | **T-08** | Non-HTTP scheme abuse (`file://`, `gopher://`, `ftp://`) | Transport permits the scheme | **All three failed** — `TypeError: fetch failed` (probe §20.3) | **REFUTED for this transport** |
 | **T-09** | DNS rebinding against an IP allowlist | An IP-based check + attacker DNS | **No IP/resolver control exists at all** (0 hits for private-range terms, §5.4) | **UNVERIFIED — control absent, so moot until built** |
-| **T-10** | Unbounded repeat external transmission under one authorization | A `READ`-impact capability that transmits | `gate.ts:407-408` does **not** consume `READ` envelopes | **VERIFIED** |
+| **T-10** | Unbounded repeat external transmission under one authorization | A `READ`-impact capability that transmits | `gate.ts:407-408` does **not** consume `READ` envelopes; **[D-2]** corroborated at `gate.ts:453` **and** in the durable store at `consumption-stores.ts:75` (`{ consumed: false }`), documented as intentional *"R1 parity"* at `:60-61` — **three sites, one consistent policy** | **VERIFIED** |
 | **T-11** | Model-controlled argument reaching the wire unvalidated | Tool passes model input to an egress call | `validateInput` = **presence-only** (§11.2) | **VERIFIED** |
 | **T-12** | Undetected destination substitution by a compromised adapter default | Operator never sets an endpoint | **0** `endpoint` occurrences in `bootstrap.ts`/`config.ts` | **VERIFIED — no operator override path** |
 | **T-13** | Ambient-context loss silently disabling enforcement | P3-B adopts `AsyncLocalStorage` | **Not yet applicable** — 0 hits today; must be designed fail-closed | **ASSUMED/FUTURE** |
@@ -815,9 +947,18 @@ a blocker rather than an inconvenience: **there is no existing decision point to
 
 ### 9.3 Identity propagation to the egress seam — the gap
 
-**Measured: identity does not reach N-1 or N-2.** `LLMRequest` has 6 fields and 0 identity fields
-(B-2). There is no `AsyncLocalStorage`, no `async_hooks`, no context object, and no correlation
-identifier anywhere in `packages/`.
+**Measured: identity does not reach N-1 or N-2.** `LLMRequest` (`llm.ts:18-24`) has **5** fields and
+**0** identity fields (B-2). There is no `AsyncLocalStorage`, no `async_hooks`, no context object, and
+no correlation identifier anywhere in `packages/`.
+
+**[D-4 corrected]** This is a **seam gap, not a system-wide identity gap.** The authorization envelope
+upstream **does** carry principal, tenant, agent, run, and correlation identity
+(`agent.ts:132-135` resolves `auth?.runId` / `auth?.correlationId` / `auth?.agentId`; `:138-140`
+fail-closes with `MISSING_PRINCIPAL` when no verified principal exists). The identity is simply
+**not carried the final hop** into `LLMRequest` or the embedding interface. **Consequence for P3-B
+design:** the required work is **extending an existing identity to a new call site**, not
+**constructing an identity model** — a materially smaller problem than the raw "no identity" reading
+implies, though still cross-package (§19.4).
 
 **Consequence for P3-B:** any per-principal, per-tenant egress policy is **unenforceable at the seam
 today**. The identity-propagation work is a **prerequisite**, not a P3-B sub-task.
@@ -866,8 +1007,9 @@ dangerous** class, not the least. This is the correct polarity and should be pre
 | Req | Requirement | Gap it closes | Currently present? |
 |---|---|---|---|
 | **R-01** | **Deny-by-default** destination allowlist; no destination ⇒ no egress | §5.1 (0 egress concept) | **NO** |
-| **R-02** | **Hostname-boundary-exact** matching; reject suffix confusion | B-3 / T-04 | **NO** (matcher vulnerable) |
-| **R-03** | **URL normalization before comparison** (reject/resolve dot-segments) | T-06 | **NO** (`new URL(` used once, for a PG DSN) |
+| **R-02** | **Hostname-boundary-exact** matching; reject suffix confusion. **[D-1]** Must be satisfied in **BOTH** `targetMatches` and `delegationTargetMatches`, or the two must be deliberately de-coupled and their "mirrors exactly" contract corrected | B-3 / T-04 / T-16 | **NO** (both matchers vulnerable) |
+| **R-03** | **URL normalization before comparison** (reject/resolve dot-segments) — **[D-1]** at both sites | T-06 | **NO** (`new URL(` used once, for a PG DSN) |
+| **R-17** | **[D-1, newly added]** If the two matcher implementations are kept, their **intended identity invariant must be enforced by a test** rather than by a code comment, so they cannot silently diverge during remediation | D-1 / `delegation-types.ts:381,:404-409` | **NO** — equivalence is asserted only in comments; 0 test occurrences of `.join('.*')` |
 | **R-04** | **Scheme allowlist** limited to `https` (and `http` only in explicit dev posture) | T-08 (defence in depth) | **PARTIAL** — `jwt.ts:229` only, N-3 |
 | **R-05** | **Redirect policy**: refuse by default (`redirect:'error'`), or re-authorize **every** hop | F-4 / T-01 | **NO** on N-1/N-2; **YES** on N-3 |
 | **R-06** | **Per-hop body-forwarding control** (block 307/308 body re-send) | T-02 | **NO** |
@@ -893,7 +1035,7 @@ dangerous** class, not the least. This is the correct polarity and should be pre
 | **R-14** | **B-4** — `SecretPurpose` is a closed 3-value set | **OD-7** |
 | Correcting F-3's impact ceiling | **B-1** — raising `maxImpact` rejected at `:164-165` | **OD-5** |
 
-**This table is the single most important output of the audit.** Five of sixteen egress requirements
+**This table is the single most important output of the audit.** Five of seventeen egress requirements
 cannot be implemented as scoped without either a new data model or a change to a tested P2 invariant.
 
 ### 10.4 Revocation and policy integrity (scope C)
@@ -1194,7 +1336,7 @@ explicitly out of scope.**
 | **OD-1** | How are permitted egress destinations represented, given `isNarrowing` forbids adding `allowedTargets` (`:140`)? | (a) **new** destination-policy model outside manifests; (b) authorized change to `isNarrowing` | **P3-B cannot be implemented.** (b) weakens a tested P2 control |
 | **OD-2** | Where does the destination value come from, given the operator never supplies an endpoint (§5.3)? | (a) add operator endpoint config; (b) hardcode per-provider allowlist; (c) derive from adapter default | Without (a) or (b), R-01 has nothing to enforce against |
 | **OD-3** | Identity propagation architecture | (a) explicit threading through `LLMRequest`/embedding interfaces; (b) `AsyncLocalStorage` with **fail-closed on absent context** | **P3-B cannot decide per-principal.** (b) has zero codebase precedent |
-| **OD-4** | Is B-3 remediated **before** P3-B or **inside** it? | (a) separate authorization-boundary change first; (b) inside P3-B with dedicated tests | Bundling makes a P3 slice modify a tested P2 matcher without separate review |
+| **OD-4** | Is B-3 remediated **before** P3-B or **inside** it? **[D-1]** The decision now covers **BOTH** `capability-manifests.ts:267` `targetMatches` **AND** `delegation-types.ts:385` `delegationTargetMatches`, whose regex bodies are byte-identical and which are documented as semantically equivalent (`:381` *"mirrors … exactly"*, `:408` *"MUST stay identical"*) | (a) separate change across **both** packages first; (b) inside P3-B with dedicated tests at **both** sites; (c) unify into one shared matcher and delete the duplicate | Bundling makes a P3 slice modify tested P2 matchers without separate review. **Fixing only one site leaves the other reachable AND silently breaks the declared identity invariant, diverging capability-path from delegation-path authorization behaviour** |
 | **OD-5** | Is F-3 (impact-ceiling correction) a separate remediation? | (a) separate slice; (b) accept the mischaracterization | Collides with B-1 (`:164-165`) if attempted inside P3-B |
 | **OD-6** | Egress audit record: widen the closed `ALLOWED_AUDIT_FIELDS` (`audit.ts:29`) or introduce a **separate** egress record type? | (a) widen; (b) separate type | (a) weakens the anti-smuggling property; (b) preserves it |
 | **OD-7** | Is `SecretPurpose` (`secret-material.ts:64-70`) extended with an egress purpose? | (a) extend (P2 contract change); (b) leave provider key ungoverned and accept TA-1 | (b) leaves R-14 unsatisfied and F-13 open |
@@ -1215,14 +1357,20 @@ explicitly out of scope.**
 
 | Req | Blocked by | Resolvable without weakening a tested control? |
 |---|---|---|
-| R-01, R-02 | **B-1**, **B-3** | ✅ if a **new** destination model is used (OD-1a) and the matcher is fixed (OD-4) |
+| R-01, R-02 | **B-1**, **B-3** | ✅ if a **new** destination model is used (OD-1a) and **both** matchers are fixed (OD-4, **[D-1]**) |
+| R-17 | — | ✅ pure addition; **[D-1]** requires a test asserting the two matcher implementations stay equivalent (or an explicit, verified de-coupling) |
 | R-03…R-09 | — | ✅ pure addition, no collision |
 | **R-10** | **B-2** | ⚠️ requires architectural change (OD-3) |
 | **R-11** | **B-5** | ✅ via a **separate** record type (OD-6b) |
 | R-12, R-13, R-15, R-16 | — | ✅ pure addition |
 | **R-14** | **B-4** | ⚠️ requires a P2 contract change (OD-7) |
 
-**Read: 4 of 16 requirements are blocked; 12 are implementable without collision.** This is the
+**Read: 5 of 17 requirements are blocked (R-01, R-02, R-10, R-11, R-14); 12 are implementable
+without collision.** **[D-1 correction side-effect]** The denominator rose from 16 to 17 because R-17
+was added. The numerator is also corrected here: an earlier revision of this document said *"4 of 16"*
+in this section while §10.3 said *"Five of sixteen"* — the matrix has always listed **five** blocked
+requirements, so **"4" was an internal arithmetic error** and is now reconciled to **5 of 17**
+throughout. This is the
 quantified basis for recommending a **bounded P3-B₀ design phase** rather than either abandoning P3-B
 or authorizing implementation as scoped.
 
@@ -1271,14 +1419,49 @@ build did on this machine*.
 - **Purpose:** determine what Node's default `fetch` does on each redirect status when the request
   carries an `Authorization` header and a JSON body — i.e. what N-1/N-2 inherit by setting **no**
   `redirect` option.
-- **Method:** local ephemeral listener on `127.0.0.1` (random port per case); origin responds with
-  301/302/303/307/308 pointing at the listener; listener records whether the request arrived, whether
-  `Authorization` was present, and the body received. Marker payload
-  `TENANT-A-CONFIDENTIAL-CONTEXT` used to detect body forwarding.
-- **Result:** verbatim output reproduced at **§7.5**. All five **followed**; `Authorization`
-  **ABSENT** in all five; body **EMPTY** on 301/302/303 and **FULLY FORWARDED** on 307/308.
-- **Conclusion:** traversal + 307/308 body exfiltration **confirmed**; credential theft **not
-  demonstrated**. Confidence **HIGH** for observation, **MEDIUM-HIGH** for Node 20 parity (§21.2).
+- **Method (original run):** local ephemeral listener on `127.0.0.1` (random port per case); origin
+  responds with 301/302/303/307/308 pointing at the listener; listener records whether the request
+  arrived, whether `Authorization` was present, and the body received. Marker payload
+  `TENANT-A-CONFIDENTIAL-CONTEXT` used to detect body forwarding. **The redirect target was on a
+  different port, i.e. a CROSS-ORIGIN target** — a property the original write-up did not state and
+  which turns out to be decisive.
+- **Result (original, cross-origin):** verbatim output reproduced at **§7.5**. All five **followed**;
+  `Authorization` **ABSENT** in all five; body **EMPTY** on 301/302/303 and **FULLY FORWARDED** on
+  307/308.
+- **Methodological defect found during verification:** the original probe exercised **only one**
+  origin relationship, so its `Authorization` result could not distinguish "Node strips this header on
+  redirect" from "Node strips this header on **cross-origin** redirect." A **same-origin control** was
+  therefore added.
+
+**`P3B-PROBE-02b` — same-origin vs cross-origin control, verbatim output** (fresh run during the
+D-6 correction, 2026-09-18T07:05:48Z, Node v22.22.3, `/tmp/d6-probe/d6.mjs`, outside the repository
+and since deleted):
+
+```
+node v22.22.3 | D-6 correction probe | 2026-09-18T07:05:48.942Z
+
+--- CROSS-ORIGIN (port A -> different port B) = attacker/internal-host case ---
+  HTTP 301: followed=YES  Authorization=STRIPPED   request-body=empty
+  HTTP 302: followed=YES  Authorization=STRIPPED   request-body=empty
+  HTTP 303: followed=YES  Authorization=STRIPPED   request-body=empty
+  HTTP 307: followed=YES  Authorization=STRIPPED   request-body=FORWARDED
+  HTTP 308: followed=YES  Authorization=STRIPPED   request-body=FORWARDED
+
+--- SAME-ORIGIN (path redirect on same host:port) = allowed-origin case ---
+  HTTP 301: followed=YES  Authorization=FORWARDED  request-body=empty
+  HTTP 302: followed=YES  Authorization=FORWARDED  request-body=empty
+  HTTP 303: followed=YES  Authorization=FORWARDED  request-body=empty
+  HTTP 307: followed=YES  Authorization=FORWARDED  request-body=FORWARDED
+  HTTP 308: followed=YES  Authorization=FORWARDED  request-body=FORWARDED
+```
+
+- **Result (control):** the cross-origin arm **reproduces the original run exactly**, confirming the
+  original observation was accurate. The same-origin arm shows `Authorization` **FORWARDED on all
+  five statuses**. **Redirect-following and 307/308 body forwarding are origin-independent;
+  `Authorization` stripping is origin-DEPENDENT.**
+- **Conclusion:** traversal + 307/308 body exfiltration **confirmed** (both origin relationships);
+  **cross-origin** credential theft **not demonstrated**; **same-origin** credential forwarding
+  **demonstrated**. Confidence **HIGH** for observation, **MEDIUM-HIGH** for Node 20 parity (§21.2).
 - **Corollary:** the loopback target **was reached**, independently corroborating §20.3.
 
 ### 20.3 `P3B-PROBE-03` — scheme and address reachability (T-07, T-08)
@@ -1429,11 +1612,14 @@ governance risk the owner must accept explicitly:**
 > (F-3 + T-10) permits **unbounded repeat external transmission of tenant data under an authorization
 > record that misdescribes it as an internal READ**.
 >
-> But **4 of 16 derived egress requirements are blocked** by conditions that are themselves
+> But **5 of 17 derived egress requirements are blocked** by conditions that are themselves
 > **correct, tested P2 controls**: the monotonic-narrowing invariant (**B-1**), the absence of any
 > identity at the seam or any ambient-context mechanism (**B-2**), the closed audit field set
 > (**B-5**), and the closed secret-purpose vocabulary (**B-4**) — plus an unsafe destination matcher
-> (**B-3**) that P3-B would promote to security-critical.
+> (**B-3**) that P3-B would promote to security-critical, and which **[D-1]** exists as **two
+> byte-identical implementations in two packages** (`capability-manifests.ts:267` and
+> `delegation-types.ts:385`), coupled by a declared "MUST stay identical" invariant — so it cannot be
+> fixed at one site alone.
 >
 > **Authorizing implementation now would force one of three unacceptable outcomes:** (i) the work
 > fails its own manifest-registration step; (ii) tested P2 invariants are weakened inside a P3 slice
@@ -1469,7 +1655,75 @@ unblocks P3-B without weakening any tested control. **It is not authorized by th
 | **P3-B₀** | **NOT AUTHORIZED** |
 | **Production readiness** | **PRODUCTION NOT READY** |
 | Remediation performed by this audit | **NONE — zero findings remediated** |
+| Remediation performed by revision R2 | **NONE — documentation/evidence correction only (§24.2)** |
+| Document revision | **R2** — D-1…D-6 corrected; register strictly **more adverse** than R1 (2 findings added, 1 scope broadened, 1 evidence strengthened, nothing closed) |
+| Independent verification of R2 | **STILL REQUIRED** — same-agent correction does not satisfy the separate-party gate (§24.4) |
 | Independence of this document | **SAME-AGENT. NOT E4. NOT INDEPENDENT VERIFICATION.** |
+
+---
+
+## 24. CORRECTION RECORD — REVISION R2 (D-1…D-6)
+
+**Authorization:** DOCUMENTATION/EVIDENCE CORRECTION ONLY, granted by the owner 2026-09-18 following
+read-only verification of PR #39 at head `30938f3b7b36e27ae72f9239dba93f2ac9b1d988`.
+
+**Evidence discipline applied to this revision:** per the correction authorization, every correction
+was **re-derived from repository source before incorporation** — the verification report was treated
+as a *lead*, not as evidence. `delegation-types.ts`, `consumption-stores.ts`, `llm.ts`, `agent.ts`,
+`capability-manifests.ts`, and both `*POSTMERGE*` records were re-read directly, and the redirect
+behaviour was **re-probed** (`P3B-PROBE-02b`, §20.2) rather than quoted from the prior run.
+
+### 24.1 Corrections applied
+
+| ID | Defect | Correction | Class of change |
+|---|---|---|---|
+| **D-1** | **Material omission (HIGH).** B-3 recorded at one site only | Added **§7.3.1** establishing `delegation-types.ts:385-402` `delegationTargetMatches` as a **second, byte-identical** implementation (diff of the two regex bodies ⇒ identical; repo-wide `.join('.*')` ⇒ exactly 2 sites, 0 in tests), documenting its live consumer (`:439`→`:442-445`), public export (`index.ts:253`), the "mirrors exactly" (`:381`) and "MUST stay identical" (`:408`) invariants, and the four consequences for remediation. Propagated to §1.2, §8.2 (new **T-16**), §10.2 (**R-02/R-03** amended, new **R-17**), §19.1 (**OD-4**), §19.3, §7.8, Appendix A | **Scope correction** — defect already VERIFIED; extent was understated |
+| **D-2** | **Omitted evidence.** F-3's repeatability cited two sites | Added **`consumption-stores.ts:75`** — the **durable** store's `if (input.impact === 'READ') return { consumed: false };`, documented as intentional at `:60-61` (*"READ envelopes are never consumed (R1 parity)"*). Recorded that correcting it is a **replay-policy change**, not a code fix. Propagated to §1.5, §7.4, §8.2 (T-10), Appendix A | **Strengthening** — evidence added; no claim weakened |
+| **D-3** | **Citation error.** `isNarrowing` typed as returning `boolean` | Corrected to the actual signature `isNarrowing(previous: A01CapabilityManifest, next: A01CapabilityManifest): { ok: boolean; violation?: string }`, with the caller's use of `check.ok` / `check.violation` (`:213-217`) noted | **Precision fix** — substance unaffected |
+| **D-4** | **Quantitative error.** `LLMRequest` asserted to have **6** fields including a non-existent *"model/type discriminant"* | Corrected to **5** fields with per-line citation (`llm.ts:18-24`); the invented field is **withdrawn**. All **five** occurrences reconciled (§1.2, §7.2, §7.8, §9.3, Appendix A). Added the required nuance: identity **does** exist upstream (`agent.ts:132-135`, fail-closed `MISSING_PRINCIPAL` at `:138-140`), so B-2 is a **seam/propagation gap**, not a system-wide identity absence | **Precision fix + nuance added** — B-2 conclusion unchanged |
+| **D-5** | **Factual error.** `P2_S8_POSTMERGE_VERIFICATION.md` called the *"sole"* post-merge record | Corrected: **two** records exist. Added a table covering `P2_S8_POSTMERGE_VERIFICATION.md` (PR #37 / `08adbd9`) **and** `PR20_MERGE_POSTMERGE_VERIFICATION.md` (PR #20 / `700ae80`), with `grep -c -E '#38\|6b61256'` = **0** for **both**. **F-8 remains UNVERIFIED** — the correction *strengthens* it and does **not** resurrect the withdrawn "8/8 PASS" claim | **Precision fix** — F-8 conclusion unchanged and reinforced |
+| **D-6** | **Over-generalization.** "`Authorization` not forwarded" / "stripped in every observed case" stated without an origin qualifier | Replaced with an origin-distinguished measurement table; added probe **`P3B-PROBE-02b`** (§20.2) with verbatim same-origin **and** cross-origin output. **Cross-origin**: `Authorization` STRIPPED on all 5 (T-03 remains **REFUTED**). **Same-origin**: `Authorization` **FORWARDED** on all 5 (new **T-15**). Body forwarding on 307/308 is **origin-independent** (T-02 remains **CONFIRMED**). Consequences restated as **three**, not two. Propagated to §7.5, §8.2, §20.2, Appendix A | **Qualification added** — neither inflated nor deflated |
+
+**Incidental consistency fix (disclosed):** adding **R-17** raised the derived-requirement count from
+16 to **17**, and reconciling it exposed a **pre-existing arithmetic inconsistency** — §19.3 and §23.1
+said *"4 of 16"* while §10.3 said *"Five of sixteen"*, though the matrix has always listed **five**
+blocked requirements (R-01, R-02, R-10, R-11, R-14). All occurrences are now **"5 of 17"**. This was
+a documentation error, not a change in technical conclusion.
+
+### 24.2 What this revision does NOT do
+
+- **No security condition was remediated.** B-1, B-2, B-3, F-3, F-4, F-9, T-15, T-16 and every other
+  finding remain **OPEN**. `delegation-types.ts` was **not** modified. `consumption-stores.ts` was
+  **not** modified. No matcher, manifest, redirect handler, audit schema, secret purpose, or identity
+  propagation path was changed.
+- **No conclusion was weakened to remove a discrepancy.** D-1 and D-2 **broadened** findings; D-6
+  **added** a residual (T-15) while keeping T-03 refuted; D-3/D-4/D-5 corrected precision without
+  altering any determination.
+- **The determination is unchanged:** P3-B is **NOT READY TO BE AUTHORIZED AS PREVIOUSLY SCOPED**.
+- **No test suite was executed** in producing this revision (still 0 of 169). No production behaviour
+  was verified. Probe observations are **not** presented as deployment claims (§21.2, §21.4).
+- **No line number, SHA, test result, or historical evidence was fabricated.** The one previously
+  fabricated element — the non-existent sixth `LLMRequest` field — is **withdrawn** under D-4.
+
+### 24.3 Correction diff scope
+
+**Exactly one tracked file changed** by this revision:
+`docs/verification/P3_B_PRE_IMPLEMENTATION_SECURITY_ASSESSMENT.md`. Verified before commit by
+`git status --short` and post-commit by `git show --name-only`; zero changes under `packages/`,
+`.github/`, `scripts/`, or to any lockfile, config, or schema. The correction commit is a **normal
+non-force commit appended to the existing PR #39 branch** — history was **not** rewritten and the PR
+was **not** merged. Exact SHAs are recorded in the commit message and in the PR update comment.
+
+### 24.4 Independence status of this revision — UNCHANGED
+
+**This correction does NOT satisfy the independent-verification gate.** It was produced by the
+**same agent** that authored the original assessment and that performed the verification identifying
+D-1…D-6. That prior verification established **methodological** independence (it falsified three of
+the artifact's own assertions and surfaced two omissions) but **not separate-party independence**.
+A documentation correction by the same author cannot convert same-agent evidence into independent
+evidence. **P2-E4 remains NOT ACHIEVED**, and `PM-04` remains **OPEN**.
+
+**The next gate is a genuinely separate independent verification of the corrected PR.**
 
 ---
 
@@ -1478,12 +1732,13 @@ unblocks P3-B without weakening any tested control. **It is not authorized by th
 | ID | Finding | Class | Severity | Primary evidence | Remediated? |
 |---|---|---|---|---|---|
 | **B-1** | Monotonic-narrowing invariant forbids adding destinations and raising impact ceilings | VERIFIED DEFECT-BLOCKER | **BLOCKER** | `capability-manifests.ts:130,:140,:162,:164-165,:213` | **NO** |
-| **B-2** | No identity at the egress seam; no ambient-context mechanism anywhere | VERIFIED DEFECT-BLOCKER | **BLOCKER** | `llm.ts` `LLMRequest` 6 fields, 0 identity; `AsyncLocalStorage`/`async_hooks` 0 hits in all of `packages/` | **NO** |
-| **B-3** | `targetMatches` uses unbounded `.*`; contradicts its "segment-delimited" docs; 3 bypass classes proven | VERIFIED DEFECT | **HIGH** (for P3-B) | `capability-manifests.ts:262-265,:267-284`; `types.ts:404`; `policy-engine.ts:304`; probe §20.1 | **NO** |
+| **B-2** | No identity at the egress seam; no ambient-context mechanism anywhere. **Seam/propagation gap** — identity exists upstream at `agent.ts:132-140` | VERIFIED DEFECT-BLOCKER | **BLOCKER** | `llm.ts:18-24` `LLMRequest` **5 fields**, 0 identity (**[D-4 corrected]**, previously misstated as 6); `AsyncLocalStorage`/`async_hooks` 0 hits in all of `packages/` | **NO** |
+| **B-3** | **TWO** byte-identical matchers use unbounded `.*`; both contradict their "segment-delimited"/"simple segment glob" docs; 3 bypass classes proven | VERIFIED DEFECT (**[D-1] scope corrected from one site to two**) | **HIGH** (for P3-B) | Site 1: `capability-manifests.ts:262-265,:267-284` (`.join('.*')` `:281`), `types.ts:404`, consumed `policy-engine.ts:304`. Site 2: `delegation-types.ts:380-402` (`.join('.*')` `:399`), consumed `:439`→`:442-445`, exported `index.ts:253`. `diff` of the two regex bodies ⇒ **identical**. Probe §20.1 | **NO** |
+| **T-16** | Delegation target-scope confusion via the duplicated matcher (**[D-1]** newly added). Consumer is **live today**, unlike the latent egress cases | VERIFIED DEFECT in matcher; **exploitability UNKNOWN** (no grant corpus inspected) | **MEDIUM-HIGH** | `delegation-types.ts:439`, `:442-445`, `:364-367` (*"authoritative per-decision resource check"*) | **NO** |
 | **B-4** | `SecretPurpose` closed 3-value set has no egress purpose; provider key is bare `process.env` | VERIFIED DEFECT-BLOCKER | **HIGH** | `secret-material.ts:64-70,:298-300`; `config.ts:99`; `bootstrap.ts:574-575,:591-592`; `openai.ts:41,:76`; `embeddings.ts:91,:113` | **NO** |
 | **B-5** | Closed audit field set holds no destination/scheme/port/IP/hop/byte/deadline/status field | VERIFIED DEFECT-BLOCKER | **HIGH** | `audit.ts:29,:87`; `types.ts:543` (`targetResource?` only); 0 occurrences of all 10 egress fields | **NO** |
-| **F-3** | `vector.search` authorized `READ`/`INTERNAL`/`tenant-knowledge` yet causes credentialed external transmission; `READ` unboundedly repeatable | VERIFIED DEFECT | **HIGH** | `builtins.ts:63-68,:210-229,:227`; `vector-module.ts:111-118,:114`; `embeddings.ts:109,:113`; `gate.ts:12,:407-408,:453` | **NO** |
-| **F-4** | No redirect policy on N-1/N-2; all 5 statuses followed; **body forwarded on 307/308**; `Authorization` **not** forwarded | VERIFIED DEFECT (refined) | **HIGH** | 0 `redirect` occurrences on N-1/N-2 (all 5 in `jwt.ts`); probe §20.2 | **NO** |
+| **F-3** | `vector.search` authorized `READ`/`INTERNAL`/`tenant-knowledge` yet causes credentialed external transmission; `READ` unboundedly repeatable at **three** sites | VERIFIED DEFECT (**[D-2]** third site added) | **HIGH** | `builtins.ts:63-68,:210-229,:227`; `vector-module.ts:111-118,:114`; `embeddings.ts:109,:113`; `gate.ts:12,:407-408,:453`; **`consumption-stores.ts:60-61,:75`** | **NO** |
+| **F-4** | No redirect policy on N-1/N-2; all 5 statuses followed **regardless of origin relationship**; **body forwarded on 307/308** (both origin relationships); `Authorization` **STRIPPED cross-origin** but **FORWARDED same-origin** | VERIFIED DEFECT (refined; **[D-6 corrected]** — earlier text said unqualifiedly "`Authorization` not forwarded") | **HIGH** | 0 `redirect` occurrences on N-1/N-2 (all 5 in `jwt.ts`); probes §20.2 (`P3B-PROBE-02` + `P3B-PROBE-02b` control) | **NO** |
 | **F-8** | "PR #38 — 8/8 PASS" **unsupported**; 0 references to PR #38; nearest record is PR #37/`08adbd9` with **3 PASS + 5 gaps** | **UNVERIFIED** | **GOVERNANCE** | `grep` 0 files; `P2_S8_POSTMERGE_VERIFICATION.md` header + PM-01…PM-08; `gh pr view 38`; `gh run list` | n/a — **claim withdrawn** |
 | **F-9** | Depth-1 clone; `08adbd9` remote-only; **all 4 egress blobs byte-identical** ⇒ prior findings still live | VERIFIED | informational | `is-shallow=true`; `.git/shallow`; `rev-list --count`=1; `cat-file -t` fatal; remote blob comparison | n/a |
 | **F-11** | `.env.example` omits `oidc` from the mode table and calls it future "P2 scope" though implemented and wired | DOCUMENTATION DEFECT | **MEDIUM** | `.env.example:54,:57,:60,:63,:105` vs `auth-config.ts:50`, `bootstrap.ts:336,:352` | **NO** |
@@ -1494,14 +1749,33 @@ unblocks P3-B without weakening any tested control. **It is not authorized by th
 | **F-16** | Tool output re-enters model context verbatim (no sanitization/truncation) | VERIFIED DEFECT | **MEDIUM** | `agent.ts:261-265` | **NO** |
 | **F-17** | CI runs `npm ci --no-audit` ⇒ no advisory scanning across 50 workspaces | VERIFIED DEFECT | **MEDIUM** | `ci.yml:44` | **NO** |
 | **F-18** | Actions tag-pinned (`@v4`), not SHA-pinned | PARTIAL | **LOW-MEDIUM** | `ci.yml:35,:38` | **NO** |
-| **T-03** | Credential theft via redirect | **REFUTED** | — | probe §20.2: `auth=(ABSENT)` on all 5 | n/a |
+| **T-03** | **Cross-origin** credential theft via redirect | **REFUTED** | — | probe §20.2: `Authorization=STRIPPED` on all 5 **cross-origin** | n/a |
+| **T-15** | **Same-origin** credential forwarding via redirect | **VERIFIED residual** (**[D-6]** newly added) | **MEDIUM** | probe §20.2 `P3B-PROBE-02b`: `Authorization=FORWARDED` on all 5 **same-origin**; precondition = open redirect on a permitted origin | **NO** |
 | **T-08** | Multi-protocol SSRF (`file://`/`gopher://`/`ftp://`) | **REFUTED** | — | probe §20.3: all `TypeError: fetch failed` | n/a |
 | **T-07** | Cloud-metadata credential theft | **PARTIAL** — reachability only | **MEDIUM** | probe §20.3: `169.254.169.254` ⇒ HTTP 501 from the **sandbox egress path**, **not** a real metadata service | n/a |
 | **TA-4** | Network-layer egress filtering present in deployment | **VERIFIED ABSENT (this environment)** | **HIGH** (raises design bar) | probe §20.3 + 0 private-range terms in source (§5.4) | n/a |
 | **INV-13** | Presence/definition of invariant 13 | **UNKNOWN** | — | absent from `security-posture.ts`; not established elsewhere | n/a |
 
-**Register totals:** **5 blockers** (B-1…B-5) · **13 open defects** · **2 refuted threats** ·
-**1 partial** · **1 unknown** · **0 remediated by this audit.**
+**Register totals (reconciled at revision R2):**
+
+| Category | Count | Members |
+|---|---|---|
+| **Blockers** | **5** | B-1, B-2, B-3, B-4, B-5 |
+| **Other open defects** | **10** | F-3, F-4, F-11, F-12, F-13, F-14, F-15, F-16, F-17, F-18 |
+| **Open items added by this correction** | **2** | **T-15** (same-origin credential forwarding, D-6), **T-16** (delegation matcher confusion, D-1) |
+| **Total OPEN** | **17** | 5 blockers + 10 defects + 2 new |
+| **Refuted threats** | **2** | T-03 (cross-origin credential theft), T-08 (multi-protocol SSRF) |
+| **Partial** | **2** | T-07 (metadata reachability only), F-18 (tag-pinned actions) |
+| **Unverified claim** | **1** | F-8 (PR #38 "8/8 PASS" — **remains UNVERIFIED**) |
+| **Verified-absent (environment)** | **1** | TA-4 (network-layer egress filtering) |
+| **Unknown** | **2** | INV-13; **T-16 exploitability** (matcher defect verified; no grant corpus inspected) |
+| **Informational** | **1** | F-9 (baseline continuity) |
+| **Remediated by this audit or by this correction** | **0** | — |
+
+**Direction of change at R2:** two items **added** (T-15, T-16), one blocker's **scope broadened**
+(B-3: one site → two), one finding's **evidence strengthened** (F-3: two sites → three). **Nothing was
+removed, downgraded, or closed.** Three precision errors were corrected (D-3, D-4, D-5) and one
+over-generalization qualified (D-6). **The register is strictly more adverse than at R1.**
 
 ---
 
@@ -1512,7 +1786,7 @@ unblocks P3-B without weakening any tested control. **It is not authorized by th
 | **A** | Boundary and trust | §6, §8.3 | 9 boundaries mapped; **TB-5/TB-6 ungoverned**; P3-B must *create* a boundary, not harden one |
 | **B** | Authentication and identity propagation | §9 | OIDC **implemented and wired**; `none` fails closed; **identity does not reach the seam (B-2)**; SAML/ABAC/ReBAC/PAM **absent, correctly declared out of scope** |
 | **C** | Authorization (RBAC/ABAC/ReBAC/capability/PAM/revocation/policy integrity) | §10.1, §10.4 | **Capability-based**; 80 closed denial codes, **0 egress**; manifests immutable + narrowing-only; **no egress-credential revocation (F-13)** |
-| **D** | Egress controls (deny-by-default/destinations/redirects/DNS/private IPs/metadata/SSRF/rebinding) | §10.2, §10.6, §20 | **16 requirements derived; 0 currently satisfied for N-1/N-2**; N-3 is the only precedent; **no DNS/IP control exists** |
+| **D** | Egress controls (deny-by-default/destinations/redirects/DNS/private IPs/metadata/SSRF/rebinding) | §10.2, §10.6, §20 | **17 requirements derived (R-01…R-17); 0 currently satisfied for N-1/N-2**; N-3 is the only precedent; **no DNS/IP control exists** |
 | **E** | Agent and tool security | §11 | Loop bounded (`?? 8`); envelope unforgeable by model output; **`validateInput` presence-only (F-14)**; **N-1 is not a tool and runs every turn** |
 | **F** | Tenant isolation | §12 | RLS + **FORCE** RLS + module-level scoping **implemented**; **runtime proof unavailable**; **no outbound tenant attribution (F-15)**; **no compute isolation** |
 | **G** | Prompt-injection resistance | §13 | Model output **cannot** author authority (**strong**); **can** influence payload; **cannot** influence destination today — **DC-1 forbids regressing this** |
@@ -1529,7 +1803,7 @@ unblocks P3-B without weakening any tested control. **It is not authorized by th
 ## APPENDIX C — STATEMENT OF WHAT THIS DOCUMENT IS AND IS NOT
 
 **This document IS:**
-- A fresh, read-only security audit of `POWERBot-1/JATA-Qi` at `6b61256c6115a02da2d3ad6ba42771831b550f81`, performed 2026-09-18T06:30:28Z.
+- A fresh, read-only security audit of `POWERBot-1/JATA-Qi` at `6b61256c6115a02da2d3ad6ba42771831b550f81`, performed 2026-09-18T06:30:28Z, **as corrected at revision R2** (2026-09-18) for defects **D-1…D-6** per **§24**. The correction was **documentation-only** and remediated **no** security condition.
 - Decision support for an owner deciding whether to authorize P3-B.
 - The canonical, committed record of the P3-B pre-implementation security position.
 - An independent re-measurement of B-1, B-2, B-3, F-3, F-4, F-8, F-9 — all substantiated; F-8 reclassified to UNVERIFIED; F-4 refined.
@@ -1540,6 +1814,8 @@ unblocks P3-B without weakening any tested control. **It is not authorized by th
 - Evidence of production readiness. **PRODUCTION NOT READY** stands.
 - A score change. **9.484375% is frozen and was not recalculated.**
 - Authorization for P3-B, P3-B₀, or any merge.
+- **Discharged by revision R2.** The D-1…D-6 correction was made by the **same agent** that authored the assessment and performed the verification that found those defects. **A same-author correction cannot convert same-agent evidence into independent evidence.** Independent verification of the corrected document is still required (§24.4).
+- **Remediation of B-1, B-2, B-3, F-3, F-4, F-9, T-15, or T-16.** Describing a condition more accurately does not fix it.
 
 **Merge of the accompanying pull request requires separate, explicit owner authorization, and
 independent verification of this document's blockers is required before any P3-B authorization is
