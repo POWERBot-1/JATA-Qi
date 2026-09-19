@@ -335,6 +335,22 @@ export type {
 export type { AuthenticationCredentialMaterialConfig } from './authentication-module.js';
 
 // ---------------------------------------------------------------------------
+// P3-B0 S0b (OD-7) — governed egress-provider credential handle on the S7 seam.
+// ---------------------------------------------------------------------------
+export {
+  EgressCredentialBroker,
+  EGRESS_PROVIDER_PURPOSE,
+  isEgressCredentialHandle,
+} from './egress-credential.js';
+export type {
+  EgressCredentialHandle,
+  EgressCredentialContext,
+  EgressCredentialStatus,
+  IssueEgressCredentialInput,
+  RotateEgressCredentialInput,
+} from './egress-credential.js';
+
+// ---------------------------------------------------------------------------
 // P2-S6 — Break-Glass + Administrative Controls.
 // ---------------------------------------------------------------------------
 export {
