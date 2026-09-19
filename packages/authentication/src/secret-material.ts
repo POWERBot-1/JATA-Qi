@@ -1,5 +1,7 @@
 // P2-S7 — Secret-material seam (spec §12 consumers: TOTP secrets (S5),
-// break-glass sealed credential (S6), future session-assertion signing).
+// break-glass sealed credential (S6), future session-assertion signing, and —
+// P3-B0 S0b (OD-7) — the egress-provider credential: the broker-held,
+// governed handle for a provider credential, see `egress-credential.ts`).
 //
 // This is the boundary S5 and S6 consume so that neither needs a second
 // secret-storage architecture. It is built ON the key-management seam
@@ -61,12 +63,13 @@ import { KeyManagementError, type KeyManagementSeam, type SealedBlob } from './k
  * purpose is refused, so a new consumer must be added deliberately rather than
  * reusing an existing binding.
  */
-export type SecretPurpose = 'totp' | 'break-glass-seal' | 'session-assertion';
+export type SecretPurpose = 'totp' | 'break-glass-seal' | 'session-assertion' | 'egress-provider';
 
 export const RECOGNIZED_SECRET_PURPOSES: readonly SecretPurpose[] = Object.freeze([
   'totp',
   'break-glass-seal',
   'session-assertion',
+  'egress-provider',
 ]);
 
 export type SecretStatus = 'ACTIVE' | 'RETIRED' | 'REVOKED';
