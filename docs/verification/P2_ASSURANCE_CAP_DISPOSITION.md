@@ -9,6 +9,7 @@
 | Authorization text | *"P2 SHALL BE PERMANENTLY CAPPED WITHOUT E4 … The absence of genuine separate-party verification is now an accepted assurance limitation … Do not attempt to obtain, simulate, relabel, or manufacture separate-party E4 verification."* |
 | Implementer of this record | Arena agent session `arena/01a0b08f-jata-qi` (documentation only) |
 | Scope | Governance record. Implements no capability, remediates no defect, changes no score. |
+| **Amendment (2026-09-20)** | **Partially rescinded by the owner — see §7.** One clause only ("do not **attempt to obtain**" separate-party E4). **`P2 E4: NOT ACHIEVED` is unchanged.** §§1–6 below are preserved verbatim and unaltered. |
 
 ---
 
@@ -27,6 +28,12 @@ milestone closed; the E4 class was never obtained.
 
 **`P2-E4: NOT ACHIEVED` must be read as the standing status in every future
 record. The repository must never state that P2 achieved E4.**
+
+> **Amendment note (2026-09-20, added after the fact; §1 text above unaltered).**
+> The owner has since authorized the project to *pursue* genuine separate-party
+> E4 verification, rescinding only the "do not **attempt to obtain**" clause
+> (§7). **The status above is unchanged: `P2-E4: NOT ACHIEVED`.** Nothing above
+> is weakened, and no existing evidence is promoted by that authorization.
 
 ## 2. Why the E4 gate was not established (recorded, not repaired)
 
@@ -129,5 +136,45 @@ dormant-stream integration; no deployment.
 **Authorization boundary:** this disposition records an owner decision. It does
 not modify any historical verification report, and it grants no implementation
 authority of any kind.
+
+## 7. Amendment (2026-09-20) — owner reconsideration authorization
+
+On **2026-09-20**, **Gitanya Kariuki (repository owner)** issued an explicit
+governance authorization to reconsider this cap, recorded verbatim and in full
+at **`docs/verification/P2_E4_RECONSIDERATION_OWNER_AUTHORIZATION.md`** (the
+canonical instrument; this section is a pointer, not a restatement).
+
+### 7.1 What changed
+
+| Clause of this disposition | Status |
+|---|---|
+| "Do not **attempt to obtain** … separate-party E4 verification" | **RESCINDED** by the owner, for the specific purpose of pursuing genuine E4 verification |
+| "…**simulate**, **relabel**, or **manufacture** separate-party E4 verification" | **STILL PROHIBITED** |
+| §1 disposition: **`P2 E4: NOT ACHIEVED`**, permanent until owner-authorized change | **UNCHANGED as a status.** The owner changed the *permission to seek* E4, not the *status*. Per the owner's own final clause: *"This authorization changes the governance permission to seek genuine E4 verification; it does not itself constitute E4 achievement. P2-E4 remains NOT ACHIEVED until the required separate-party verification is actually completed and canonically evidenced."* |
+| §3 evidence classifications (no promotion of PRIMARY / CI-class / PR-ATTESTATION) | **UNCHANGED** |
+| §4.1 scoring (no E4 uplift; 9.484375% frozen; no recalculation without separate authorization and a rubric-legal basis) | **UNCHANGED** |
+| §4.2 P3 entry basis (P2 is PRIMARY-verified, not E4-verified) | **UNCHANGED** |
+| §5 limitations carried forward | **UNCHANGED** |
+
+### 7.2 What the authorization does not do
+
+It does **not** authorize: implementation changes; modification of P2
+production code; score recalculation or publication of a new score;
+reconstruction or inference of the missing **JATA-P0-95-v1.0** numerical
+schedule; production qualification or deployment; weakening, bypassing, or
+disabling repository governance or required checks; relabeling historical
+PRIMARY evidence as E4; manufacturing, simulating, or falsely representing
+independence; or merge of any resulting changes.
+
+### 7.3 State after the amendment (2026-09-20)
+
+| Item | State |
+|---|---|
+| `P2 E4` | **NOT ACHIEVED** |
+| Separate party engaged | **NONE** — the 2026-09-17 finding that no distinct verifier identity exists in the agent environment was **re-probed on 2026-09-20 and stands** (authorization record §4) |
+| Canonical E4 report (`P2_S8_INDEPENDENT_VERIFICATION.md`) | **still ABSENT** |
+| Sequence position | Step 3 of 7 — verification preparation recorded at `docs/verification/P2_E4_VERIFICATION_PREPARATION.md`; steps 4–7 not performed |
+| Score / rubric | **untouched**; 9.484375% FROZEN; production NOT READY |
+| Amendment class | **Documentation only.** The amendment adds no capability, credits no evidence, and closes no finding. It is itself revocable by the owner. |
 
 **STOP.**
