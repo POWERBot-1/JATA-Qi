@@ -1,0 +1,5087 @@
+{
+  "schema": "jataqi.p2-e4.artifact-tree-manifest.v1",
+  "status": "TARGET_METADATA_ONLY",
+  "evidenceClass": "OWNER_BUILDER_PREPARATION",
+  "commitSha": "08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe",
+  "treeSha": "5f2152ce0cd702b649b93bc23c165d36cb9b9dba",
+  "trackedPathCount": 725,
+  "canonicalLsTreeSha256": "4da512f6d9c936445f4f9014a0d25ffc5abbd3c53cc54696058db041aaed6637",
+  "entries": [
+    {
+      "path": ".env.example",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fbeef2da429e1ac7cf4f096b32916966120c7847",
+      "size": 6427
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cf8a5d00443b4cccbb5b2bd9dbe2e332edab078f",
+      "size": 4030
+    },
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6087b0e0fac54b25644b15fe77cbb0966682293a",
+      "size": 215
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4190cd90323dc14f81928f9fef6f7e84628ee975",
+      "size": 25011
+    },
+    {
+      "path": "docs/A01_AUTHORIZATION_BOUNDARY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "13d3a1efad6afc555d2d2900a7eec558ed82ab59",
+      "size": 20943
+    },
+    {
+      "path": "docs/CAPABILITY_FABRIC.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "14cfbd58da9877cd7d5a961b9214d66b0fe7fe0a",
+      "size": 4242
+    },
+    {
+      "path": "docs/COMMERCIAL_CONTROL_PLANE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "062f63cf47acf61a53c49881f5bd9686cbaa3d46",
+      "size": 10844
+    },
+    {
+      "path": "docs/EVENT_SURFACE_CONTRACT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e279692e51343798645be4accf6db963b6b51e2b",
+      "size": 10801
+    },
+    {
+      "path": "docs/FRONTIER_RESEARCH_SAFETY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0f8e13f762f35579363fb08e16441c8c57c335fe",
+      "size": 5888
+    },
+    {
+      "path": "docs/JATA_QI_RECOVERY_MANIFEST.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c57a451439de74ce5856c7d60726e4b68e29a54b",
+      "size": 8100
+    },
+    {
+      "path": "docs/JATA_QI_UNIFICATION_AUDIT_SUMMARY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cc32e9a4df1696db00e2eea1319bf58c76f14a0c",
+      "size": 5370
+    },
+    {
+      "path": "docs/JQB_V0_1.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5e57f01c352fa03c8e3d5c4b782ac0075fce9901",
+      "size": 8905
+    },
+    {
+      "path": "docs/O01_OPERATION_HOST.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8a5dbf4a1d0b0cbebd15e99d0889fd9d36b4d362",
+      "size": 8372
+    },
+    {
+      "path": "docs/ORBITAL_INTELLIGENCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b4f3d9dd87fcf4fe1780d344d463170eb1f6943e",
+      "size": 9520
+    },
+    {
+      "path": "docs/P01_PERSISTENCE_SUBSTRATE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e1f27a05322f0d6716f1896a35bf476552594538",
+      "size": 8578
+    },
+    {
+      "path": "docs/P0_ASSURANCE_CLOSURE_HANDOFF.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a16284d020e13de51cf791d2298b1d58aa2164d9",
+      "size": 11317
+    },
+    {
+      "path": "docs/P1_READINESS_AUDIT_AND_SPECIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3ba2ab39a2e0caee954d7bc284ae30826adb8f10",
+      "size": 91215
+    },
+    {
+      "path": "docs/P2_PRODUCTION_IDENTITY_PRIVILEGED_PLANE_SPECIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "56152f80c7d7bb222407a81c2c9d93ce9f7f78bf",
+      "size": 103982
+    },
+    {
+      "path": "docs/PERMANENCE_FABRIC.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "829a981dc42ef78f3cc6d14aceaad27126088e57",
+      "size": 4284
+    },
+    {
+      "path": "docs/PERSISTENCE_ARCHITECTURE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "05cc517b11c54a6509ecab2d51797ed6e220c3a8",
+      "size": 12073
+    },
+    {
+      "path": "docs/R01_RUNTIME_ACTIVATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8177165c4f0d817bb9a81395f089d31d4b8eaaaf",
+      "size": 9663
+    },
+    {
+      "path": "docs/R2_DESIGN_FREEZE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "04a09815f29885212f1ec9d5bb0f3c344cb955ea",
+      "size": 26473
+    },
+    {
+      "path": "docs/S01_TENANT_BOUNDARY_HARDENING.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a83a6466303bced7940f91c17914012e709a4b6f",
+      "size": 45588
+    },
+    {
+      "path": "docs/T03_AUTHENTICATED_WORK_INGRESS.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7c2d64d0db49964018906309599cc425ebe66346",
+      "size": 12501
+    },
+    {
+      "path": "docs/T05_DURABLE_EVENT_DELIVERY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "912d48b1f9c5361cf1c2f930893e34b87a3a3c3d",
+      "size": 21622
+    },
+    {
+      "path": "docs/T06_CHANGED_FILE_INVENTORY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "70b0d6e099fd88809e0d03e5a5cab2586fbce511",
+      "size": 7630
+    },
+    {
+      "path": "docs/T06_TENANT_ISOLATION_AND_SEQUENCE_INTEGRITY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "98c27e3082fa8f0885ecddbd4023969b83dae824",
+      "size": 14451
+    },
+    {
+      "path": "docs/T07_COMMERCIAL_STATE_AND_MONEY_INTEGRITY.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "305037cf40acccdf1a29c92e73c1ea50ed5e8a7d",
+      "size": 10869
+    },
+    {
+      "path": "docs/T09_F_REGISTER_RECONSTRUCTION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e4eaca14d7864ba3f6d9d4365c650da76c6f4b9b",
+      "size": 37449
+    },
+    {
+      "path": "docs/T09_PER_CURRENCY_MONEY_AND_WALLET_FX.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "10c7ace0f3df91e7d6797a3386636d940c4f2f19",
+      "size": 28748
+    },
+    {
+      "path": "docs/THREE_PRODUCT_SANDBOX_ACCEPTANCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "07bf96dcf4d64ba511ad75799b1deaabf9891929",
+      "size": 1835
+    },
+    {
+      "path": "docs/W22_NATIVE_ORCHESTRATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b84e5437a7a92377350065e5d7df9a8cf3834545",
+      "size": 8712
+    },
+    {
+      "path": "docs/rubric/JATA-P0-95-v1.1.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fc9ce9c87f827a6324df4f9560a2cd6b1827423c",
+      "size": 15483
+    },
+    {
+      "path": "docs/rubric/P0R-95_SCORECARD.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1fa82f0716ed97a99c8943b40016ee31428e7afd",
+      "size": 19842
+    },
+    {
+      "path": "docs/verification/A01_RECOVERY_2026-09-07.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "abacca7606f3498c240a4bb960b467e182a402a7",
+      "size": 9057
+    },
+    {
+      "path": "docs/verification/CROSS_MILESTONE_EVIDENCE_CLAIM_AUDIT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5f0611e3fe7e074ea76e93e7d015fc13eb417c36",
+      "size": 16383
+    },
+    {
+      "path": "docs/verification/INV-15_GAP-07_FINDINGS_REMEDIATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a965fcad30628421b95491b811612f0c7841aac6",
+      "size": 8945
+    },
+    {
+      "path": "docs/verification/INV-15_GAP-07_IMPLEMENTATION_EVIDENCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ecb2f6caf8fa5b1ec01fd1ab5545d984f36376d9",
+      "size": 28415
+    },
+    {
+      "path": "docs/verification/M1_CLOSURE_RECORD.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "88569c61959e8a0fe5bf43300299bd7b519ae56f",
+      "size": 26655
+    },
+    {
+      "path": "docs/verification/P0R_RUB_03_PROVENANCE_RECONSTRUCTION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "33e53bc137f0f20dbdfea1e4d2c79a764f91e068",
+      "size": 11251
+    },
+    {
+      "path": "docs/verification/P0_G10_G19_GAP_RECONNAISSANCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6cc1ba088dbda77b3db40f74eb9b4a4b30f31fff",
+      "size": 29483
+    },
+    {
+      "path": "docs/verification/P1_CLOSURE_VERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f6a1b6037a4f2c04d5991f3f4b6a0bbebbb40aa3",
+      "size": 29656
+    },
+    {
+      "path": "docs/verification/P1_IMPLEMENTATION_EVIDENCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ea417fc8585da5cfada056c63307b2edc3c5fdb5",
+      "size": 13171
+    },
+    {
+      "path": "docs/verification/P1_O1_O2_O3_REMEDIATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fb79d6c3538b593b2c1d7ed76f91be41ca988312",
+      "size": 14226
+    },
+    {
+      "path": "docs/verification/P1_O3_SCRIPT_CLEANUP_REMEDIATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cb62540be93c7125a634e3ddada121f41f3230d7",
+      "size": 6983
+    },
+    {
+      "path": "docs/verification/P1_REMEDIATION_V1_V2.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "946b0c03919c3fd4481c5e33e062af1d1c370460",
+      "size": 17632
+    },
+    {
+      "path": "docs/verification/P2_POST_MILESTONE_V11_REASSESSMENT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "837983cdc27377d311eaea104a9afe271f83e036",
+      "size": 6714
+    },
+    {
+      "path": "docs/verification/P2_READINESS_AUDIT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "db879fc7abfc7fee5a6dcc4f2089b903b7435650",
+      "size": 23701
+    },
+    {
+      "path": "docs/verification/P2_S1_VERIFICATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e4554e9f36c83417ebad027e5753dc4d62fb107d",
+      "size": 31138
+    },
+    {
+      "path": "docs/verification/P2_S2_VERIFICATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3d576b1225ad78e3566f07bc13c9964147a24e72",
+      "size": 9310
+    },
+    {
+      "path": "docs/verification/P2_S3_STEPUP_INTEGRATION_READINESS_AUDIT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "35bf12572a5f740c8177422677d92efd58e1e2b7",
+      "size": 16391
+    },
+    {
+      "path": "docs/verification/P2_S3_VERIFICATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "804a29d2c08362bd3b6c519d92e2a4236d1b89fb",
+      "size": 8076
+    },
+    {
+      "path": "docs/verification/P2_S4_F6_REVERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8b6e770a092064e2fe43996c07216bb7d4e0d780",
+      "size": 13259
+    },
+    {
+      "path": "docs/verification/P2_S4_VERIFICATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "eec3ea5e54ff0e7476811826653d808e2d24c993",
+      "size": 23763
+    },
+    {
+      "path": "docs/verification/P2_S5_IMPLEMENTATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9e3cb1fe99ef417b309097733c68695cd8171e6c",
+      "size": 19888
+    },
+    {
+      "path": "docs/verification/P2_S5_S8_S53_CLOSURE_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "bdf51db7e0b6cc630175184da22b142acbc4b740",
+      "size": 12659
+    },
+    {
+      "path": "docs/verification/P2_S6_IMPLEMENTATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "423e3b0e388eb462039f70d304ef99a501eedefa",
+      "size": 2694
+    },
+    {
+      "path": "docs/verification/P2_S6_INDEPENDENT_VERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3abd8f88e841ed36ae0589ed4b77b84756b29cc3",
+      "size": 6569
+    },
+    {
+      "path": "docs/verification/P2_S7_IMPLEMENTATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b21e7764714ccfafb7f83d57fecacc19c242c1ab",
+      "size": 34431
+    },
+    {
+      "path": "docs/verification/P2_S8_COMPLETION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d0f3fc4e7f3e9e05f503a16bdb7274c72bbfe711",
+      "size": 4337
+    },
+    {
+      "path": "docs/verification/P2_S8_IMPLEMENTATION_REPORT.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1fdea8571ccce400aedb0bbe849cdb4b55929cd4",
+      "size": 18006
+    },
+    {
+      "path": "docs/verification/P2_S8_OPERATOR_RUNBOOK.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "87052707f263224b213f6f925e7c4f40e9fb5705",
+      "size": 9803
+    },
+    {
+      "path": "docs/verification/P2_S8_WHOLE_TREE_VERIFICATION_PASS.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0e4689e0e5cbf1b8e6da51ddc61ff3d50087451a",
+      "size": 3734
+    },
+    {
+      "path": "docs/verification/PHASE_A_GOVERNANCE_AND_CRITICAL_PATH.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e98b5b085667f31e90d633f278388247105babbc",
+      "size": 26970
+    },
+    {
+      "path": "docs/verification/POST_INV15_NEXT_MILESTONE_RECONNAISSANCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cd2ed82831921e138f0ac78e8743756fde541935",
+      "size": 67054
+    },
+    {
+      "path": "docs/verification/PR20_FINAL_PREMERGE_REVIEW.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "29f7e4ad73f52807f0949f56f4c6d4001d32be9d",
+      "size": 6537
+    },
+    {
+      "path": "docs/verification/PR20_MERGE_POSTMERGE_VERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "18d2bc9dab200b546f081fedc3c914d59c067b83",
+      "size": 6220
+    },
+    {
+      "path": "docs/verification/R0_BASELINE_EVIDENCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1bccf411ab8fc2f136e288c5de3919476ef75811",
+      "size": 6625
+    },
+    {
+      "path": "docs/verification/R1_R4_REMEDIATION_VERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5c5bdd014215474ff3b1cb8a90ea3d76bcc5ace9",
+      "size": 9507
+    },
+    {
+      "path": "docs/verification/R2_IMPLEMENTATION_EVIDENCE.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "46fc67eaa7b4458b0d753e2c0c4ae6c0eda4c3c6",
+      "size": 9464
+    },
+    {
+      "path": "docs/verification/S1_INDEPENDENT_VERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "673377bbfb256ba87d11bcd471ffd10a112bcf12",
+      "size": 10325
+    },
+    {
+      "path": "docs/verification/T09_INDEPENDENT_VERIFICATION.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7fd64d53f4c626f81681c20a8cfcbccbcf67e175",
+      "size": 11918
+    },
+    {
+      "path": "docs/verification/p1-adversarial-matrix.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "df80ea835a4fa85d427ba4c05a87f7461a22ef53",
+      "size": 7135
+    },
+    {
+      "path": "docs/verification/r2-adversarial-matrix.md",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "76ea739f5e89023f316f6e44a59229a75ca0aca2",
+      "size": 3736
+    },
+    {
+      "path": "docs/verification/r2-perf.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a87811e7c558eec211388de21d3b330e4acb1ea4",
+      "size": 778
+    },
+    {
+      "path": "docs/verification/r2-secret-scan.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b3b4957b2a7dd75360b8ebe24f69751a5977f1b1",
+      "size": 152
+    },
+    {
+      "path": "eslint.config.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "949fae4ad7bd676a4e9dbeef83574156d85836ef",
+      "size": 6520
+    },
+    {
+      "path": "examples/demo.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "bdb95e359e697d9d7b4f903a39e3931618244dd2",
+      "size": 2000
+    },
+    {
+      "path": "package-lock.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cca8dd872820bf6a0138129d562cd3e5eaf0d18b",
+      "size": 99827
+    },
+    {
+      "path": "package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3a916d03a5fd5b5ee4ae89c5ef08b5482239e851",
+      "size": 906
+    },
+    {
+      "path": "packages/agent-runtime/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "07fe47d1c1d0841833bffa8f89cb5d45df508b49",
+      "size": 946
+    },
+    {
+      "path": "packages/agent-runtime/src/agent-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e99a03cf4c16abf2cd1c0991e81b14d81c3df0b0",
+      "size": 4708
+    },
+    {
+      "path": "packages/agent-runtime/src/agent.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1dd8488d57ec185cd61070dec7d555c60d1e4b70",
+      "size": 11874
+    },
+    {
+      "path": "packages/agent-runtime/src/builtins.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "951a782e9bad954d99bbaf95730df5dd87ab9bf2",
+      "size": 9647
+    },
+    {
+      "path": "packages/agent-runtime/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "253708f2489f86523057dda61e259bbeac19d6e7",
+      "size": 969
+    },
+    {
+      "path": "packages/agent-runtime/src/llm.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "af5cd2a0accf2b2b418e0dfa59ae20bcac86a570",
+      "size": 2090
+    },
+    {
+      "path": "packages/agent-runtime/src/llms/openai.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "049c080123f853a9a473209d67e91731f53b55dc",
+      "size": 4004
+    },
+    {
+      "path": "packages/agent-runtime/src/memory.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2ea00b69d9a9551986946b6c9e4c4b31d8e8f052",
+      "size": 1505
+    },
+    {
+      "path": "packages/agent-runtime/src/tools.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1af37628e613d22765a163731888403a3bbafa33",
+      "size": 9983
+    },
+    {
+      "path": "packages/agent-runtime/test/a01-tool-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "59f48933c8da2ae2a0106f4c119c7b9f765262e8",
+      "size": 25354
+    },
+    {
+      "path": "packages/agent-runtime/test/agent.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4afe8462183217d620b85f822d22e4cc57e9c448",
+      "size": 8524
+    },
+    {
+      "path": "packages/agent-runtime/test/r1-authorized-fixture.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3bae23e6dd496c36be7751d079775a5120e4fc7c",
+      "size": 4275
+    },
+    {
+      "path": "packages/agent-runtime/test/r1-tool-fail-closed.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e9845508a4ed5481dfc32fafce11db5db39a7487",
+      "size": 14902
+    },
+    {
+      "path": "packages/agent-runtime/test/s1-tool-tenant.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "88204d3df1f903a2e439c4568516357318b850ff",
+      "size": 17602
+    },
+    {
+      "path": "packages/agent-runtime/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/agent-runtime/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/authentication/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "bbc8dde666d87928cb02feffaee158e11c754bc2",
+      "size": 1221
+    },
+    {
+      "path": "packages/authentication/src/authentication-event-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4c677600a11a860b919993a745889554fcd53b79",
+      "size": 37503
+    },
+    {
+      "path": "packages/authentication/src/authentication-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "da4f1d9130ff5c777da2cc5956294d9ddb960215",
+      "size": 18229
+    },
+    {
+      "path": "packages/authentication/src/authentication-policy.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "da120d1551238f459078d0dc23e1c64e4f9fb5fc",
+      "size": 9120
+    },
+    {
+      "path": "packages/authentication/src/authenticator-registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2472dbd8165c7bbd42954b03a62dd2e6a7168056",
+      "size": 2995
+    },
+    {
+      "path": "packages/authentication/src/break-glass.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9e150462183341a32b17bd1ef5c5150ba23ceb09",
+      "size": 25977
+    },
+    {
+      "path": "packages/authentication/src/contracts.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c0aa87d2dc73d14ca252100f86075b91501d37ce",
+      "size": 8327
+    },
+    {
+      "path": "packages/authentication/src/delegation-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0513243a65430936273507ab6833fd12d20d9bb2",
+      "size": 31225
+    },
+    {
+      "path": "packages/authentication/src/delegation-types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fcb96073584da8cef820632c29638095c333e973",
+      "size": 25348
+    },
+    {
+      "path": "packages/authentication/src/deterministic-test-authenticator.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a8e69155a48d36b02fca404a471ca2b426daaae1",
+      "size": 3667
+    },
+    {
+      "path": "packages/authentication/src/identity-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cf286bebdfa0e938cc61c85928cb3122c21f9038",
+      "size": 59363
+    },
+    {
+      "path": "packages/authentication/src/identity-types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7592a6e6cc215f740622929c10dbb08736ee5a46",
+      "size": 16483
+    },
+    {
+      "path": "packages/authentication/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6867dc00d61919617603c384bef4528186ac83a4",
+      "size": 11872
+    },
+    {
+      "path": "packages/authentication/src/jti-replay.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "327044a7b4d8d77701ede8423470df752589175f",
+      "size": 5038
+    },
+    {
+      "path": "packages/authentication/src/jwt.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0a72c138905294a4e811db02efde0d09da4c3c4e",
+      "size": 22715
+    },
+    {
+      "path": "packages/authentication/src/key-management.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a705d243e749e784f1130ca34e11efad9565e866",
+      "size": 33984
+    },
+    {
+      "path": "packages/authentication/src/mfa.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2bb7ec0d912ec42f1aad2ed3610a20763fcd63ef",
+      "size": 50002
+    },
+    {
+      "path": "packages/authentication/src/oidc-authenticator.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "79cb7cfdb40254bbc414244af8e6009bdbb280ec",
+      "size": 15943
+    },
+    {
+      "path": "packages/authentication/src/principal-boundary.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "89ad5ec2e12f51339cbd6458cf5a91a6cb84d7f4",
+      "size": 17193
+    },
+    {
+      "path": "packages/authentication/src/privilege-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3df5f73ec34d752639a016246f7ca3221edfd909",
+      "size": 42957
+    },
+    {
+      "path": "packages/authentication/src/privilege-types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "503b32042d56af39d7f888628239b8b0aebc7fc9",
+      "size": 16881
+    },
+    {
+      "path": "packages/authentication/src/privileged-operations.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4d108fd80f995931a105b999f38e7dc5f1a6712e",
+      "size": 14643
+    },
+    {
+      "path": "packages/authentication/src/secret-material.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0cbcc28df4b733f8561b84307c4ca6f41bd15860",
+      "size": 32517
+    },
+    {
+      "path": "packages/authentication/src/session-tokens.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c3fa809e4f4d1eee163afbec88ca4f4afb37eca6",
+      "size": 19028
+    },
+    {
+      "path": "packages/authentication/src/static-token-authenticator.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ba14c5d8570947dffbc495eb310912166831b1ab",
+      "size": 6089
+    },
+    {
+      "path": "packages/authentication/src/token-registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f66837c1325a3a034c097a85002342f03c0d182d",
+      "size": 14711
+    },
+    {
+      "path": "packages/authentication/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "86ed0e8c146add4729cd1b5ca136387e2d042f5c",
+      "size": 9680
+    },
+    {
+      "path": "packages/authentication/test/authentication.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f4df4fb3894298e14ade84b6b309a7ce9de6cf2c",
+      "size": 8616
+    },
+    {
+      "path": "packages/authentication/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8314a3cd9e15bed07c307088d3969c616778a077",
+      "size": 808
+    },
+    {
+      "path": "packages/authentication/test/p1-auth-factory.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2e825b0d7a099d25aa8f7289500ea53e79c8b0bb",
+      "size": 6407
+    },
+    {
+      "path": "packages/authentication/test/p2-s1-identity-core.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "07ccdab447dad6d1e164c59f78cf8f9a40b6b923",
+      "size": 26153
+    },
+    {
+      "path": "packages/authentication/test/p2-s1-oidc.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ec56fcbad94d57dd65ebbc75530c2a592d495bbb",
+      "size": 32472
+    },
+    {
+      "path": "packages/authentication/test/p2-s2-fanout-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "262ddaaf30761de9b128cabc0fd15ea8be2bb963",
+      "size": 4751
+    },
+    {
+      "path": "packages/authentication/test/p2-s2-session-fanout.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "45a5a8928bc2f293d75ef324d374891dac17a32d",
+      "size": 9986
+    },
+    {
+      "path": "packages/authentication/test/p2-s2-session-outage.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1cafe7528b9b9283e65f168fe7d48463ed0f7384",
+      "size": 5211
+    },
+    {
+      "path": "packages/authentication/test/p2-s2-session-tokens.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e927ce973abb041c55fbdee017cd17f95aeafaf3",
+      "size": 52721
+    },
+    {
+      "path": "packages/authentication/test/p2-s3-privilege-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "015201f28e6152ab052309d1be3eb826e9f74e87",
+      "size": 11807
+    },
+    {
+      "path": "packages/authentication/test/p2-s4-delegation-store.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9f94d8109c39987592a4a64d147d60abd19e2886",
+      "size": 22079
+    },
+    {
+      "path": "packages/authentication/test/p2-s5-mfa.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b9fadd1c64e5bb1e2cf96cff1aa35e7a06b08298",
+      "size": 32491
+    },
+    {
+      "path": "packages/authentication/test/p2-s5-stepup-integration.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "da1f6f2dcbfc16c06b1aa7da2e10f5e6edf252e0",
+      "size": 21564
+    },
+    {
+      "path": "packages/authentication/test/p2-s6-break-glass.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "49551aaced084935e423d3f7d6538074f880392e",
+      "size": 14847
+    },
+    {
+      "path": "packages/authentication/test/p2-s7-key-seam.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "54816242ad410dc69439fb2a459a9dde2e06cda9",
+      "size": 26334
+    },
+    {
+      "path": "packages/authentication/test/p2-s7-mutation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d9820178e3f188c7c2a279b3efa52c9b6d98f763",
+      "size": 19432
+    },
+    {
+      "path": "packages/authentication/test/p2-s7-secret-material.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "87be2cf1b3481f6cc157a1cccebf0b0c3ef861a7",
+      "size": 31056
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-failover.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "639b12c94c2d144aa1c8a61aa65829f7edbb7790",
+      "size": 16168
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-fanout-contention.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d1058558420852ae8867358e83d0eebd417435d2",
+      "size": 12028
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-mutation-hygiene.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "57c4a1897d2bf8a846b95b98b34c4e471115282e",
+      "size": 2979
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-outage-matrix.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7b550d03a016fd5cfe2be7ef8492c0cbcc4a9f54",
+      "size": 12248
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-restart-recovery.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "010ee76dd2a17880d489bd5ec76e32f8d93f4ff8",
+      "size": 14203
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-skew-matrix.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3bc5c129e06ea333fdcb17acce387711bcd74e4f",
+      "size": 13879
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-tamper-duplicates.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ff75bf0f523dfa401a4bf98eb2a72cb04ea15b5e",
+      "size": 21299
+    },
+    {
+      "path": "packages/authentication/test/p2-s8-worker.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "36e9da5bc02b2e9e54f80b61a352dfbce23d1ff2",
+      "size": 12751
+    },
+    {
+      "path": "packages/authentication/test/r2-durable-sessions.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c8c7fc3064cd93adcf12a199adb8cd138395bded",
+      "size": 7377
+    },
+    {
+      "path": "packages/authentication/test/r2-pg.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "49bbd73e796bdf45a40531a5ae67491a0a984f9b",
+      "size": 11126
+    },
+    {
+      "path": "packages/authentication/test/t03-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "75027e496cdc0dc9f3075302c835cdc6a8e1e3a0",
+      "size": 12522
+    },
+    {
+      "path": "packages/authentication/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7ac0fe2b41966f0cd8f700482cc15adf574a56f1",
+      "size": 535
+    },
+    {
+      "path": "packages/authentication/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ab068966985ac51188f8c2b7a080f612dfb2f735",
+      "size": 519
+    },
+    {
+      "path": "packages/authorization-boundary/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cf8adb0e932637b500ccb50993133e91324c8cc7",
+      "size": 1532
+    },
+    {
+      "path": "packages/authorization-boundary/src/audit.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "17a33be989e03f51ac6ad013fcdcbefbc6cf5fb9",
+      "size": 8734
+    },
+    {
+      "path": "packages/authorization-boundary/src/canonical.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7e0c88510b5c16d83988f2f163a10b907170e084",
+      "size": 3391
+    },
+    {
+      "path": "packages/authorization-boundary/src/capability-manifests.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7bcdfd741afba231d8a218378102111843c452d4",
+      "size": 12915
+    },
+    {
+      "path": "packages/authorization-boundary/src/consumption-stores.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7c6223a25973955ef4efa075c6e98d797e9fed31",
+      "size": 20006
+    },
+    {
+      "path": "packages/authorization-boundary/src/credential-broker.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "63f12e18d76343a1126ecf8fededf92936d15eca",
+      "size": 8545
+    },
+    {
+      "path": "packages/authorization-boundary/src/credential-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "69f31b320bc1ec627c385055cf4cd72061c84ff3",
+      "size": 23516
+    },
+    {
+      "path": "packages/authorization-boundary/src/durable-decider.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6fbbbb8483d0b57447139c3677c8f95dfbf2907d",
+      "size": 79315
+    },
+    {
+      "path": "packages/authorization-boundary/src/envelope.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d4fa656231be6edf58478d972d6353a399145f30",
+      "size": 14044
+    },
+    {
+      "path": "packages/authorization-boundary/src/gate.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cc65d01bd08ab94f08dc580dc3add203bdd2c873",
+      "size": 22636
+    },
+    {
+      "path": "packages/authorization-boundary/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6db609f0971e10c6a35d18c93187e9e2a8e6d1fd",
+      "size": 6220
+    },
+    {
+      "path": "packages/authorization-boundary/src/kernel-principal.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ced8e7247ce2dcbd381a925d7c6e632d80da45a6",
+      "size": 7112
+    },
+    {
+      "path": "packages/authorization-boundary/src/kernel-worker-authority.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b8997cfe20191d22cdbd2b1c92e31563bd55c005",
+      "size": 7115
+    },
+    {
+      "path": "packages/authorization-boundary/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "67f94fd16755510db4ad2ef4685ce1ba80c5c3b9",
+      "size": 17182
+    },
+    {
+      "path": "packages/authorization-boundary/src/policy-engine.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5d78bf8e93f600cf4394d1d2d91072665d3717b9",
+      "size": 24785
+    },
+    {
+      "path": "packages/authorization-boundary/src/security-state-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d72ea0f06ee57ea5a90241013648cd6ee8790d13",
+      "size": 49459
+    },
+    {
+      "path": "packages/authorization-boundary/src/test-kernel.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "677d99e293bd2468908a3cb93b3680f0ad5f1587",
+      "size": 4677
+    },
+    {
+      "path": "packages/authorization-boundary/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c441510367377cca59b173e2ba1bf49200808d80",
+      "size": 31892
+    },
+    {
+      "path": "packages/authorization-boundary/src/worker-boundary.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "059b6bb7067ea31eabf82f5f4b0f0ffc74c963b1",
+      "size": 2499
+    },
+    {
+      "path": "packages/authorization-boundary/test/a01-adversarial.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "43323b86a65d919d5c0541f66ff7da59bfb790fa",
+      "size": 30134
+    },
+    {
+      "path": "packages/authorization-boundary/test/a01-core.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e07fb5cec1803a9210c51e2f6e14ff2c1bd60a32",
+      "size": 21869
+    },
+    {
+      "path": "packages/authorization-boundary/test/a01-module.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "feda101cd6cc470e782fe8d57b48ab2cc540c53c",
+      "size": 8285
+    },
+    {
+      "path": "packages/authorization-boundary/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8314a3cd9e15bed07c307088d3969c616778a077",
+      "size": 808
+    },
+    {
+      "path": "packages/authorization-boundary/test/helpers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4a735f2b2d98193e4e66fc54c0d03db9d0cbeff6",
+      "size": 5769
+    },
+    {
+      "path": "packages/authorization-boundary/test/p1-manifest-lifetime.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4bc87ea88c8b1f385ad6f954a448c84d5275f54c",
+      "size": 7096
+    },
+    {
+      "path": "packages/authorization-boundary/test/p2-s1-identity-decision.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f1749bf403c08e2f231ff444b438b8b3fb0669fb",
+      "size": 16125
+    },
+    {
+      "path": "packages/authorization-boundary/test/p2-s2-session-decision.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2811a5522f24fa29f7362177c3006822d8416a61",
+      "size": 12863
+    },
+    {
+      "path": "packages/authorization-boundary/test/p2-s3-bootstrap-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b77d124a8d13be7f4d5fdee62f8b08aba94e3b39",
+      "size": 1959
+    },
+    {
+      "path": "packages/authorization-boundary/test/p2-s3-privilege-decision.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "98d43780678ce5901f0f71438c2a1e0baef13fd5",
+      "size": 23561
+    },
+    {
+      "path": "packages/authorization-boundary/test/p2-s4-delegation-decision.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e8ef292f7b6400e5977eff817299362e5b823e14",
+      "size": 31047
+    },
+    {
+      "path": "packages/authorization-boundary/test/p2-s8-decision-outage.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "818307d7cbdd1334c0a1370c2483ebc7de397802",
+      "size": 12415
+    },
+    {
+      "path": "packages/authorization-boundary/test/r1-kernel-worker-tenancy.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "552f9e4a9d52bb00b0f796a5283b033cc160c23c",
+      "size": 8519
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-credentials.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "44ebf1f49c886a7083fb3730d10c381d11a8c8b4",
+      "size": 6439
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-durable-decisions.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "692c3d06d440da49c72ad28c9534c1399dff04d0",
+      "size": 6035
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-enforcement.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8fbb8f578010ba710a7669f1d70dd74d0795a094",
+      "size": 10657
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-fixtures.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e63eca843b0a191cfcb7968586b3197c7ed8d2d6",
+      "size": 4011
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-manifest-authority.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1128efc72a2c439f468e98fca1a98774e5b8b59c",
+      "size": 8422
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-multiprocess-restart.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "66e2c33e84fb4e44f4358cfe694a9f2e648c7c87",
+      "size": 8194
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-no-secrets.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4889f53143957af6c06c87cf168f60ea0b6d10c2",
+      "size": 5967
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-pg.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4f4a37e5b87806ec4ce7de841732cbc9dc4a9b19",
+      "size": 6993
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-pool-outage.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8b196aa29220aec5b664b996c9d794aba92866c8",
+      "size": 9027
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-retention-gc.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f0620d2f70b0aeb9b8bff4a0e666caad66cd48c1",
+      "size": 6000
+    },
+    {
+      "path": "packages/authorization-boundary/test/r2-two-process-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fe50fc08fe83e38b75c661ad2cb092f1fa7a3f2c",
+      "size": 2817
+    },
+    {
+      "path": "packages/authorization-boundary/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/authorization-boundary/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/autonomous-action-runtime/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "821819af2880e5889e2a68020d2434c9ea070f5b",
+      "size": 909
+    },
+    {
+      "path": "packages/autonomous-action-runtime/src/action-runtime-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "27067fb946749a8cb4041e6a464e7b9a258c6f2f",
+      "size": 18759
+    },
+    {
+      "path": "packages/autonomous-action-runtime/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0c09374b71c4703d20087e50a88c0d4b437d8087",
+      "size": 593
+    },
+    {
+      "path": "packages/autonomous-action-runtime/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "12711597e6e61537b82deae8140ae83415b1398f",
+      "size": 2734
+    },
+    {
+      "path": "packages/autonomous-action-runtime/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a58357c85e4172c2fe04a20e7d7ba6c97461cc1d",
+      "size": 3716
+    },
+    {
+      "path": "packages/autonomous-action-runtime/test/a01-action-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c807482c1afba738e0af0c651fb1edd1dd121f28",
+      "size": 19399
+    },
+    {
+      "path": "packages/autonomous-action-runtime/test/action-runtime.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "350c03214aeab27405e586d1ce1a276d0bbd7743",
+      "size": 9010
+    },
+    {
+      "path": "packages/autonomous-action-runtime/test/r1-action-fail-closed.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "711683422b2b4009d8a89c5f3ef75df015dea7c2",
+      "size": 12900
+    },
+    {
+      "path": "packages/autonomous-action-runtime/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/autonomous-action-runtime/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/autonomous-deployment/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7c368fff5599983a943854f9e34a03f9d72efd5c",
+      "size": 1015
+    },
+    {
+      "path": "packages/autonomous-deployment/src/deployment-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cea0e6734a88df1ff2d02f1ce52c4fed9c2adb51",
+      "size": 17328
+    },
+    {
+      "path": "packages/autonomous-deployment/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2b862e7c5039ed6b3d4447f43adeabedb8ade397",
+      "size": 474
+    },
+    {
+      "path": "packages/autonomous-deployment/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "acb1b36c1693852acf57f7dd0a50aa8f8eea4d55",
+      "size": 1417
+    },
+    {
+      "path": "packages/autonomous-deployment/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dd5e010f5faa05d42fc35fddac6354bf31197d42",
+      "size": 3011
+    },
+    {
+      "path": "packages/autonomous-deployment/test/deployment.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b5c03a17b57602ee719f339e2484297d70aede5b",
+      "size": 8046
+    },
+    {
+      "path": "packages/autonomous-deployment/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/autonomous-deployment/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/autonomous-test-repair/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f6f5cc80e794793658263fa34d591fac7e87d7d2",
+      "size": 981
+    },
+    {
+      "path": "packages/autonomous-test-repair/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "105fceef7c7ab66bfb7798629bc17a102933e480",
+      "size": 515
+    },
+    {
+      "path": "packages/autonomous-test-repair/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "47172a2c54be77ed7c1d7fc3669fd820b6cd997e",
+      "size": 1391
+    },
+    {
+      "path": "packages/autonomous-test-repair/src/test-repair-loop.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a9ae727b7ae3045d2d7fcb551892d0e838b714b3",
+      "size": 18004
+    },
+    {
+      "path": "packages/autonomous-test-repair/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fe725a9f38c94e0b57528e8c0d5970da6a3729c5",
+      "size": 3607
+    },
+    {
+      "path": "packages/autonomous-test-repair/test/test-repair.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "07236de06a4df5179b58afea80abac53d7c3a4e8",
+      "size": 7724
+    },
+    {
+      "path": "packages/autonomous-test-repair/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/autonomous-test-repair/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/autonomous-venture-factory/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "bf1b2477c5d9596b65b6603ad30622107e9bdd64",
+      "size": 1067
+    },
+    {
+      "path": "packages/autonomous-venture-factory/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "64d10642c467846ba05610179484efee4db02bd0",
+      "size": 370
+    },
+    {
+      "path": "packages/autonomous-venture-factory/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0f9d578a2687e33444b14b66c4873b066e7e25cc",
+      "size": 1035
+    },
+    {
+      "path": "packages/autonomous-venture-factory/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "22ab095696c46915fedf63d56c4ab46b689f6f0d",
+      "size": 1756
+    },
+    {
+      "path": "packages/autonomous-venture-factory/src/venture-factory-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "35694f86d5b84ea12e2cd0e240d669c8532aa433",
+      "size": 10813
+    },
+    {
+      "path": "packages/autonomous-venture-factory/test/three-product-sandbox.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f7b836ea9ab6e4983dbb5ce1792e67bf9b9ed4dc",
+      "size": 6834
+    },
+    {
+      "path": "packages/autonomous-venture-factory/test/venture-factory.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "52ab913ec2b51cd6b057e60667d601c00457e922",
+      "size": 9947
+    },
+    {
+      "path": "packages/autonomous-venture-factory/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/autonomous-venture-factory/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/billing/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f5a52c85bcd79c7ff4a7f93c7d68e703dbf2f943",
+      "size": 1011
+    },
+    {
+      "path": "packages/billing/src/billing-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "91fc7d3fc3e662ef32db3a364fe33bd810f64c38",
+      "size": 22343
+    },
+    {
+      "path": "packages/billing/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ce77ad1eea4f9b3b8c61892bf154dc562ce9bfcb",
+      "size": 437
+    },
+    {
+      "path": "packages/billing/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "71c8cfccdb2c3651bec756338580b6fec871a135",
+      "size": 1089
+    },
+    {
+      "path": "packages/billing/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "df375aa129e0df98a10570728334204846eefe1e",
+      "size": 2353
+    },
+    {
+      "path": "packages/billing/test/billing.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ec9fa83fc530bbf9c78cf5524a619847ba2cf242",
+      "size": 11514
+    },
+    {
+      "path": "packages/billing/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/billing/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/capability-fabric/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2eae5cf1a3602cc1a6e85d6764f8acf402056664",
+      "size": 1021
+    },
+    {
+      "path": "packages/capability-fabric/src/capability-fabric-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6a1259a7504c8b8f71808bd6a1821bd135fd0448",
+      "size": 52047
+    },
+    {
+      "path": "packages/capability-fabric/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3cce357e600d0d5e150b1d998a13dd4c915bdf00",
+      "size": 835
+    },
+    {
+      "path": "packages/capability-fabric/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ad5bf5518db80ab8db270ddc942381b3ba566213",
+      "size": 1134
+    },
+    {
+      "path": "packages/capability-fabric/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0b5f55b09a7c6171263d7bd4629bc20fb81c065a",
+      "size": 8333
+    },
+    {
+      "path": "packages/capability-fabric/test/capability-fabric.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e3d0d5ffae1f3aa52f5345d965c913e385ca3fe2",
+      "size": 15212
+    },
+    {
+      "path": "packages/capability-fabric/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/capability-fabric/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/causal-engine/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "627bf8399f03bf7c2de436d4d811789ea3aa5f01",
+      "size": 970
+    },
+    {
+      "path": "packages/causal-engine/src/causal-engine-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0246afaaf097fd32a341d1d4fa25f992a652c8bf",
+      "size": 11782
+    },
+    {
+      "path": "packages/causal-engine/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d9519b6bc6d37e4d0d80b1d5cab896f8f0f3ddab",
+      "size": 389
+    },
+    {
+      "path": "packages/causal-engine/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e42bb8841a7c04810470b5878ffda6fd7de97cd9",
+      "size": 920
+    },
+    {
+      "path": "packages/causal-engine/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "505b0f8259e9281333a54db1317f6d49ee97a557",
+      "size": 2114
+    },
+    {
+      "path": "packages/causal-engine/test/causal-engine.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b28b614cab7843c8d6818af70e5f26899d117d59",
+      "size": 4719
+    },
+    {
+      "path": "packages/causal-engine/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/causal-engine/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/cli/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "995f4a84d18912626d518fa87f32437c541972dc",
+      "size": 2872
+    },
+    {
+      "path": "packages/cli/src/auth-config.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d3aeb3e0564889b4400406db27c3e6151a23ebf0",
+      "size": 17501
+    },
+    {
+      "path": "packages/cli/src/bootstrap.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "62190f1f56ac30b42dffc446c7202cc1d261eaf6",
+      "size": 30282
+    },
+    {
+      "path": "packages/cli/src/config.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5742ae0fb6bc1e1ceb6b1d3b8179a0cb4fcd58d1",
+      "size": 4798
+    },
+    {
+      "path": "packages/cli/src/host-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d2e2d2974209972a07d68150c8ec3ea4e54352f0",
+      "size": 8170
+    },
+    {
+      "path": "packages/cli/src/host-ingress-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "221f18b1a0fc82cf4c825b0d8648e9cf332f3bc1",
+      "size": 7451
+    },
+    {
+      "path": "packages/cli/src/host-inspect.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0d11a3a028137b1ad6559571a1eb1b2d87decf9f",
+      "size": 8030
+    },
+    {
+      "path": "packages/cli/src/index.ts",
+      "mode": "100755",
+      "type": "blob",
+      "gitObjectSha": "a61a8c459ab2c1f490c5aa0e0697cf6d974988e0",
+      "size": 9169
+    },
+    {
+      "path": "packages/cli/src/knowledge-command.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "89a98a29abbaaccef04c2ceee357415c9badbb59",
+      "size": 14626
+    },
+    {
+      "path": "packages/cli/src/security-posture.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ce47fb7f874bc17553e334b64d2928492a8311cf",
+      "size": 34845
+    },
+    {
+      "path": "packages/cli/src/storage-driver.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "893ba20381ca489e0e7617c4fce09da35a624755",
+      "size": 3644
+    },
+    {
+      "path": "packages/cli/test/cli-tenant-isolation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "936add90be57cd1b8deb2bc6445b0ac3e8e0de0d",
+      "size": 20631
+    },
+    {
+      "path": "packages/cli/test/cli.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1b1e3a76b361853e6ad0c809afa0a59f9f86cf73",
+      "size": 9919
+    },
+    {
+      "path": "packages/cli/test/config.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "aab9d547ea3193593b1ebdbff26d8185e9e10d26",
+      "size": 1530
+    },
+    {
+      "path": "packages/cli/test/host-command.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "889521650d4e1759490317bc65adff9aff7d3408",
+      "size": 7193
+    },
+    {
+      "path": "packages/cli/test/p1-pg.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5538bdcab60f94cc57530a3568aee96d9988ed0c",
+      "size": 7129
+    },
+    {
+      "path": "packages/cli/test/p1-posture-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9ebf7f62aa30616a23b6cd3ed83fa4868a68e80c",
+      "size": 16752
+    },
+    {
+      "path": "packages/cli/test/p1-posture.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b712490d90c2563e18cb7f1441464189ed431f6a",
+      "size": 13223
+    },
+    {
+      "path": "packages/cli/test/p1-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "eba1072becc5a58a351e5e71912f4026cc4858f5",
+      "size": 2492
+    },
+    {
+      "path": "packages/cli/test/p2-posture-invariants.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ae88d75e2d51b0f123fa3837e4a757f42d35bc08",
+      "size": 25574
+    },
+    {
+      "path": "packages/cli/test/p2-s3-posture-invariants.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e9e3adbaeea41fcba0c3976fd4477787c7444e19",
+      "size": 10001
+    },
+    {
+      "path": "packages/cli/test/p2-s6-posture-invariants.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "79d1a9d0627f55600701179dfbdc8d23339f28bb",
+      "size": 5079
+    },
+    {
+      "path": "packages/cli/test/p2-s7-posture-invariants.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "72e14af5ab9c761f0d843e1ec198d3b1f1265b36",
+      "size": 8493
+    },
+    {
+      "path": "packages/cli/test/r1-composition-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ce8dc3fa2626df93f060b4d9e8cad644322de307",
+      "size": 15793
+    },
+    {
+      "path": "packages/cli/test/s1-cli-tenant-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "09307326fcc528edb954fa1c723dcea02d573883",
+      "size": 16247
+    },
+    {
+      "path": "packages/cli/test/t03-composition.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2fd2b67c0810a4afa8093a3a5309f7b974824e93",
+      "size": 18263
+    },
+    {
+      "path": "packages/cli/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/cli/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/cognitive-kernel/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "23f6311a258c76378e55d8c1c80a70ee4bd263d7",
+      "size": 883
+    },
+    {
+      "path": "packages/cognitive-kernel/src/cognitive-kernel-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9cca25d07cba87d082d6829d36803e5873e0eb19",
+      "size": 20369
+    },
+    {
+      "path": "packages/cognitive-kernel/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "572728b9100693e2e93d57ced9e8831d9fb406fd",
+      "size": 590
+    },
+    {
+      "path": "packages/cognitive-kernel/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d02e9b3a95afc084fdcef29335bb39075f1546a9",
+      "size": 968
+    },
+    {
+      "path": "packages/cognitive-kernel/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d4404c7c9a9268cf1b654e913508db8f5282ea2b",
+      "size": 4229
+    },
+    {
+      "path": "packages/cognitive-kernel/test/cognitive-kernel.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "add2a7e251f3b23f117143c8a26db5e5c0bb0339",
+      "size": 6418
+    },
+    {
+      "path": "packages/cognitive-kernel/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/cognitive-kernel/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-analytics/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "803d173336615567cbfa7b19f73ea54c28192188",
+      "size": 1087
+    },
+    {
+      "path": "packages/commercial-analytics/src/commercial-analytics-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "da1cd4982f005cc59c3b705b3030f1686a92b6ac",
+      "size": 18425
+    },
+    {
+      "path": "packages/commercial-analytics/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "06b05388bdb5a014ec569aa2548c7003611ae58f",
+      "size": 460
+    },
+    {
+      "path": "packages/commercial-analytics/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c32ecfd79c96668d52c85972ae2986aa98843042",
+      "size": 1025
+    },
+    {
+      "path": "packages/commercial-analytics/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ec27b60be64d564413f64016cf7721eadd7aa6db",
+      "size": 3172
+    },
+    {
+      "path": "packages/commercial-analytics/test/commercial-analytics.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a2e6b5b2fc2336823cfa4f5d28f20aea2b6c0176",
+      "size": 11092
+    },
+    {
+      "path": "packages/commercial-analytics/test/t08-1-mrr.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4a17efe732877e8381e4b01d7a81f9565312ed0b",
+      "size": 4867
+    },
+    {
+      "path": "packages/commercial-analytics/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-analytics/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-command-center/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d2625db203eee8b227950b0526a743cea1202010",
+      "size": 1765
+    },
+    {
+      "path": "packages/commercial-command-center/src/command-center-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cd092020546d35ea72c74cc8974ef155b91b8d0e",
+      "size": 9143
+    },
+    {
+      "path": "packages/commercial-command-center/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7bbef470a98f0b0a00cd035313c10fd0ebed9e00",
+      "size": 275
+    },
+    {
+      "path": "packages/commercial-command-center/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "430de47a60e9d28ffde0345b6d3e9db6bef3f4f2",
+      "size": 1008
+    },
+    {
+      "path": "packages/commercial-command-center/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a5284c4a3214ea226174029ea6cec0232e99266b",
+      "size": 2299
+    },
+    {
+      "path": "packages/commercial-command-center/test/command-center.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f93e3f3211f63bced85e58a4c73674da632ed64b",
+      "size": 6509
+    },
+    {
+      "path": "packages/commercial-command-center/test/t09-per-currency.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c67fca885cd2c3b4ad20c566fe1cb9d2ae55780a",
+      "size": 25767
+    },
+    {
+      "path": "packages/commercial-command-center/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-command-center/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-control-plane/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4408a4552058c9cbfc9df66549a14058d20da2c8",
+      "size": 893
+    },
+    {
+      "path": "packages/commercial-control-plane/src/commercial-control-plane-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "529eb93fd81a6efccec01ec8aa020c444f54cda6",
+      "size": 1541
+    },
+    {
+      "path": "packages/commercial-control-plane/src/commercial-control-plane-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fa1fd530df63c8eb2cc3ced79ef979deddc4c00a",
+      "size": 124728
+    },
+    {
+      "path": "packages/commercial-control-plane/src/fx.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "09b4208bbf2d34e47aec10124eabd0db6df7903f",
+      "size": 8566
+    },
+    {
+      "path": "packages/commercial-control-plane/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "bea71983dac15c4dadf7d1473b8f0ab2882438e8",
+      "size": 4267
+    },
+    {
+      "path": "packages/commercial-control-plane/src/money-migration.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c1754b586999000f4fb2d3dbb737e704c26c32e5",
+      "size": 8508
+    },
+    {
+      "path": "packages/commercial-control-plane/src/money.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6cd97481342991dd5bc966a644fada0d9ae98c07",
+      "size": 16510
+    },
+    {
+      "path": "packages/commercial-control-plane/src/policy-engine.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c5c0a73005ee44cbb3a03c06e2017ad5bb3f9e45",
+      "size": 5223
+    },
+    {
+      "path": "packages/commercial-control-plane/src/state-machine.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c4e1bd196841071b8a18f0899d2d42dc3f1af750",
+      "size": 3471
+    },
+    {
+      "path": "packages/commercial-control-plane/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "169184563fb29c1b2c07abd802942ee30944598a",
+      "size": 24215
+    },
+    {
+      "path": "packages/commercial-control-plane/src/unified-outbox.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "171178511d36b4e2ed6d2d1c9900d2408683a9d5",
+      "size": 27737
+    },
+    {
+      "path": "packages/commercial-control-plane/test/control-plane.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "333714e41911bd0cefa1e686451ee3c2549bb0ad",
+      "size": 18317
+    },
+    {
+      "path": "packages/commercial-control-plane/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "732bf2c11d43c3df1420f0094d42a187284310df",
+      "size": 868
+    },
+    {
+      "path": "packages/commercial-control-plane/test/f01-event-fabric-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6c1b63690b491f5ce10e5fd80abde6bf8e1cab2b",
+      "size": 7371
+    },
+    {
+      "path": "packages/commercial-control-plane/test/f01-event-fabric.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "779284f233d5b826113dbcbb6de6f53eca624d6b",
+      "size": 14175
+    },
+    {
+      "path": "packages/commercial-control-plane/test/money.per-currency.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "510b088652a320b977c5ad9539bdae5b711d3b9a",
+      "size": 20413
+    },
+    {
+      "path": "packages/commercial-control-plane/test/money.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "449539fcb50656923c126e5943a93202f4f05247",
+      "size": 5920
+    },
+    {
+      "path": "packages/commercial-control-plane/test/r2-pg.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3fec18479741e246a5c824d94d3da1c63d088c36",
+      "size": 5483
+    },
+    {
+      "path": "packages/commercial-control-plane/test/t09-money-migration.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "28c34bfe8590c95b1454137f08f0582b0ce30c9b",
+      "size": 10247
+    },
+    {
+      "path": "packages/commercial-control-plane/test/t15-planaction-dedup.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "361419b8332458f66ccf4a2addd06043edb64934",
+      "size": 6335
+    },
+    {
+      "path": "packages/commercial-control-plane/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-control-plane/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-event-stream/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d01b9550c5e52b198399c2e8ef7c6d93e4e27cde",
+      "size": 1085
+    },
+    {
+      "path": "packages/commercial-event-stream/src/commercial-event-stream-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6122ef37f0441b8a2f796f68ce3e9a1ee5872220",
+      "size": 30198
+    },
+    {
+      "path": "packages/commercial-event-stream/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b523e975869356a958ec8aeb36f509adf23a80b2",
+      "size": 707
+    },
+    {
+      "path": "packages/commercial-event-stream/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e50d8f49f2e66ff9c774649f8dc3fb77014849dd",
+      "size": 1621
+    },
+    {
+      "path": "packages/commercial-event-stream/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a28bf02dcad5d4a59dbc9437e9b970802f01669b",
+      "size": 4776
+    },
+    {
+      "path": "packages/commercial-event-stream/test/commercial-event-stream.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7eb31105c39c15a29a26241636205573dcb2df6c",
+      "size": 5067
+    },
+    {
+      "path": "packages/commercial-event-stream/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "732bf2c11d43c3df1420f0094d42a187284310df",
+      "size": 868
+    },
+    {
+      "path": "packages/commercial-event-stream/test/f01-schema-registry.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d580fca175cc5ee031a026b961cdf14f4ae62b01",
+      "size": 5078
+    },
+    {
+      "path": "packages/commercial-event-stream/test/pg-harness.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "478273ec0a1725a834e9df3e45170588303df43c",
+      "size": 7279
+    },
+    {
+      "path": "packages/commercial-event-stream/test/t05-delivery-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a569e9743a245834fa674949b16bd1084dccc555",
+      "size": 5424
+    },
+    {
+      "path": "packages/commercial-event-stream/test/t05-durable-delivery-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0be8d761f7d9a71c1204023150874f21f3e9cd73",
+      "size": 32443
+    },
+    {
+      "path": "packages/commercial-event-stream/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-event-stream/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-health/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "da8f914c4611a2296a74fd7f88530d27ddd0ba38",
+      "size": 850
+    },
+    {
+      "path": "packages/commercial-health/src/commercial-health-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ca836c886112ac72f054517038a2d74242f75451",
+      "size": 13192
+    },
+    {
+      "path": "packages/commercial-health/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "06552e1aa9d2afd8384cafec0409ac27ce12039c",
+      "size": 534
+    },
+    {
+      "path": "packages/commercial-health/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6f56afef869fb6426146879a415a14b4b718ceef",
+      "size": 976
+    },
+    {
+      "path": "packages/commercial-health/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "36106c62fbd2e972dd0313452facdec58429814d",
+      "size": 3357
+    },
+    {
+      "path": "packages/commercial-health/test/commercial-health.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f01ab375bc0d6b100c5291a9f46e64bb5c035eef",
+      "size": 4693
+    },
+    {
+      "path": "packages/commercial-health/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-health/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-intelligence/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "65e1887bac3901fae9d27525132b3302fb3c210f",
+      "size": 1045
+    },
+    {
+      "path": "packages/commercial-intelligence/src/commercial-intelligence-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1fbb250d0ab12bc095b08c68aaec201196a5af83",
+      "size": 12382
+    },
+    {
+      "path": "packages/commercial-intelligence/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6246b49251063d48762f59db6ccde05b2cee9f1c",
+      "size": 536
+    },
+    {
+      "path": "packages/commercial-intelligence/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2e723ce1b9902057586a1520b390d35a381f3479",
+      "size": 1029
+    },
+    {
+      "path": "packages/commercial-intelligence/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a3478a4b2ebbf358eb7a7bf11fe328cf8ab2b83b",
+      "size": 3265
+    },
+    {
+      "path": "packages/commercial-intelligence/test/commercial-intelligence.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "54f816cc9753f251b11787185c911a4819a1f5fe",
+      "size": 6988
+    },
+    {
+      "path": "packages/commercial-intelligence/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-intelligence/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-memory/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a65909200d88db10ef9d19744fdad01a1d18ed0d",
+      "size": 1137
+    },
+    {
+      "path": "packages/commercial-memory/src/commercial-memory-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c50fb6872f522c3055ec9ada82a281de437d29f3",
+      "size": 21138
+    },
+    {
+      "path": "packages/commercial-memory/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ce10707fd13c52f94eab01a8acd69508ab054e94",
+      "size": 569
+    },
+    {
+      "path": "packages/commercial-memory/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1ad63a51d23622c13270b1d4c832d7565aa8f306",
+      "size": 1200
+    },
+    {
+      "path": "packages/commercial-memory/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "73fd36470f5dd23df538896e4d1e636a39d6fe95",
+      "size": 3656
+    },
+    {
+      "path": "packages/commercial-memory/test/commercial-memory.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "28aaf949594d23cdde389b5c9761aa7541a655ed",
+      "size": 7144
+    },
+    {
+      "path": "packages/commercial-memory/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "732bf2c11d43c3df1420f0094d42a187284310df",
+      "size": 868
+    },
+    {
+      "path": "packages/commercial-memory/test/t06-memory-concurrency-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f6e99fd0addd656eab7f9d874bb6e1a5f65aeca6",
+      "size": 17891
+    },
+    {
+      "path": "packages/commercial-memory/test/t06-memory-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e0d9d5476f318d6f232cf4675327a64f199410db",
+      "size": 5908
+    },
+    {
+      "path": "packages/commercial-memory/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-memory/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/commercial-observability/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ef6531a606422bdb51aa125db2cca6d94649ad7b",
+      "size": 934
+    },
+    {
+      "path": "packages/commercial-observability/src/commercial-observability-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "044c367d16eb25173f28f20e012f1ac42b59454a",
+      "size": 37210
+    },
+    {
+      "path": "packages/commercial-observability/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6ae4436d894f4aec2860eb07e7aa70b3735d8fca",
+      "size": 836
+    },
+    {
+      "path": "packages/commercial-observability/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4275cba2eabc331a54aa656e4c2db8835cef4b1b",
+      "size": 1400
+    },
+    {
+      "path": "packages/commercial-observability/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e68b2f9797a5da30b9f38b6dd0c87c7f59e16aeb",
+      "size": 6186
+    },
+    {
+      "path": "packages/commercial-observability/test/commercial-observability.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a21c59ed5afd29dac0102734e27b741c7ffe41bd",
+      "size": 10989
+    },
+    {
+      "path": "packages/commercial-observability/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/commercial-observability/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/copilot-execution-adapter/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0bb310921fb349b7900531b189000003241698b9",
+      "size": 964
+    },
+    {
+      "path": "packages/copilot-execution-adapter/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f1b485d38c7d2840cc485f582993741930abfaeb",
+      "size": 430
+    },
+    {
+      "path": "packages/copilot-execution-adapter/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9faa13894b9a4dddac367a54ac2d318010d932e0",
+      "size": 1491
+    },
+    {
+      "path": "packages/copilot-execution-adapter/src/task-graph.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "006dd6c995a8f345ba5557b089dc9fe29194ca2e",
+      "size": 19170
+    },
+    {
+      "path": "packages/copilot-execution-adapter/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7ada7befabea87b6f5e43e61f7a081bb5eda56cf",
+      "size": 2941
+    },
+    {
+      "path": "packages/copilot-execution-adapter/test/task-graph.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "19b91f3648e65798382f3a4f30f5ce7021520970",
+      "size": 8876
+    },
+    {
+      "path": "packages/copilot-execution-adapter/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/copilot-execution-adapter/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/core-kernel/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9a7226697dc3478ef4526e01c362cea353480511",
+      "size": 883
+    },
+    {
+      "path": "packages/core-kernel/src/canonical.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0aac7629772df8943cb3503951512f3286f92731",
+      "size": 1710
+    },
+    {
+      "path": "packages/core-kernel/src/config.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c6c0b16ffbdd0fe8998b62ffc98f3e7af1d1e20a",
+      "size": 3036
+    },
+    {
+      "path": "packages/core-kernel/src/container.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c42cc68d77d762707274c9822e371ce7fbab443f",
+      "size": 4332
+    },
+    {
+      "path": "packages/core-kernel/src/errors.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5ee28161f7033cdc9ee532e2f914a2bbc7563b7c",
+      "size": 1115
+    },
+    {
+      "path": "packages/core-kernel/src/event-bus.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cf98ab9bf972411eafe98c26d0cd39c182b2d205",
+      "size": 9319
+    },
+    {
+      "path": "packages/core-kernel/src/event-envelope.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "512c28ae2d006f01f90457c47d2f8aba1cb5d71b",
+      "size": 19428
+    },
+    {
+      "path": "packages/core-kernel/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "94b51f972557a20d709836fd4b6da6230d4aa4a2",
+      "size": 1710
+    },
+    {
+      "path": "packages/core-kernel/src/kernel.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dbff04042cbfd87e81b6db962f7b53feef4580c3",
+      "size": 8984
+    },
+    {
+      "path": "packages/core-kernel/src/logger.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1805966697e274a0ea3827aac1048c204818a87a",
+      "size": 3737
+    },
+    {
+      "path": "packages/core-kernel/src/security-invariants.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7fd062ae6e6b82f337d8ff051e5b62e6fd7cd595",
+      "size": 4157
+    },
+    {
+      "path": "packages/core-kernel/src/testing.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "04db1b1ef246a9cc42e61bb0156b28100605cd47",
+      "size": 985
+    },
+    {
+      "path": "packages/core-kernel/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "efba82532cd62bbd66b73da072c15d326bc7d67b",
+      "size": 2886
+    },
+    {
+      "path": "packages/core-kernel/test/event-bus-enveloped.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cda7aa9ba2fc0562991000b47b8de8a48ce67cfd",
+      "size": 8655
+    },
+    {
+      "path": "packages/core-kernel/test/event-envelope.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f9d2942947580dc5cdf1380198c2e7ba9a42cc85",
+      "size": 6965
+    },
+    {
+      "path": "packages/core-kernel/test/f01-subscription-governance.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fe28307006ec8093dd6ad58f1d6c60b5f6ad2a39",
+      "size": 3030
+    },
+    {
+      "path": "packages/core-kernel/test/kernel.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f35892a183cce6c9790ae9fcc4d11885c91f5165",
+      "size": 10119
+    },
+    {
+      "path": "packages/core-kernel/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ff10f884034e36d5146600ffada32acf849c662f",
+      "size": 582
+    },
+    {
+      "path": "packages/core-kernel/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/external-connectors/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "089fddac086f4a1ef098eb4d9d826eb0b48a2dd5",
+      "size": 936
+    },
+    {
+      "path": "packages/external-connectors/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cd0fd76ffb9c4da095b304fc644afeaddc762ccc",
+      "size": 320
+    },
+    {
+      "path": "packages/external-connectors/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c164cf33ab638b844990d759bb673cc8b5c9769b",
+      "size": 1231
+    },
+    {
+      "path": "packages/external-connectors/src/registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "01a1c0fa574c498b8a024b0dc9cac7fc3daa40c8",
+      "size": 16155
+    },
+    {
+      "path": "packages/external-connectors/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "089acc8bad65fde499d1783626949280e710c042",
+      "size": 2697
+    },
+    {
+      "path": "packages/external-connectors/test/a01-connector-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a71a8c7f26872c1854b8b425e586bdf463f8298c",
+      "size": 14091
+    },
+    {
+      "path": "packages/external-connectors/test/external-connectors.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "89579e5086e2c1636621bae81dcf3edff25880e2",
+      "size": 9361
+    },
+    {
+      "path": "packages/external-connectors/test/r1-connector-fail-closed.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e654409a5858c8342f7befbb99c2e70c9adc682d",
+      "size": 14374
+    },
+    {
+      "path": "packages/external-connectors/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/external-connectors/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/github-execution/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a8c46d0408aa7af7f40c7bbea7da77bc4a2d9411",
+      "size": 1018
+    },
+    {
+      "path": "packages/github-execution/src/github-execution-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cc7bc625a61cd81e4fb7351e0adab2b9e4bd5e16",
+      "size": 15955
+    },
+    {
+      "path": "packages/github-execution/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "eeef030c9d09492e1783decf16bc7abde4b2499a",
+      "size": 462
+    },
+    {
+      "path": "packages/github-execution/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "915c543be332e9fdea2fbc3f19150f2e198496be",
+      "size": 1648
+    },
+    {
+      "path": "packages/github-execution/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d735772ede854408ab9457c26bb28ee26844ac6b",
+      "size": 4589
+    },
+    {
+      "path": "packages/github-execution/test/github-execution.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "854cea857d2787ac06a0c26128e9d51a01274f9e",
+      "size": 9639
+    },
+    {
+      "path": "packages/github-execution/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/github-execution/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/human-approval/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "96c70ed1398d84ea8bc9c068df9a3bbd9656ff48",
+      "size": 1066
+    },
+    {
+      "path": "packages/human-approval/src/human-approval-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4290820fbdaa8c7a8036688c8f454efc133bf834",
+      "size": 36985
+    },
+    {
+      "path": "packages/human-approval/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "43693738db2f204f85aabc6a5cc7969ad5694e88",
+      "size": 657
+    },
+    {
+      "path": "packages/human-approval/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e33d2ede4410f447b9d2aea8e2ab338a2c43c858",
+      "size": 1283
+    },
+    {
+      "path": "packages/human-approval/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e83c191286751f3c291e784a02d92d0afcf91dcf",
+      "size": 4586
+    },
+    {
+      "path": "packages/human-approval/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8314a3cd9e15bed07c307088d3969c616778a077",
+      "size": 808
+    },
+    {
+      "path": "packages/human-approval/test/human-approval.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b536209ab905745fd9a12eea34151e2770d25f21",
+      "size": 12789
+    },
+    {
+      "path": "packages/human-approval/test/r2-pg.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3fec18479741e246a5c824d94d3da1c63d088c36",
+      "size": 5483
+    },
+    {
+      "path": "packages/human-approval/test/t18-vote-seq.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b69ab203795a6f55767a9212025995e2afdd78e1",
+      "size": 7618
+    },
+    {
+      "path": "packages/human-approval/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/human-approval/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/hypothesis-engine/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a6d0b3023779995ec194f0f2b6f2b9faceb55236",
+      "size": 985
+    },
+    {
+      "path": "packages/hypothesis-engine/src/hypothesis-engine-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "60832be16fb13af8c926bff290addb27e26557a1",
+      "size": 8743
+    },
+    {
+      "path": "packages/hypothesis-engine/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1cd893bfc82dea43de60ab14783219367feeb90e",
+      "size": 417
+    },
+    {
+      "path": "packages/hypothesis-engine/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3ef4c97e69c95e0c2cec774ec4df34da6a31c23b",
+      "size": 958
+    },
+    {
+      "path": "packages/hypothesis-engine/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f1e7c7e55bf632320d7ec73d1e65b5a94d44ceab",
+      "size": 1634
+    },
+    {
+      "path": "packages/hypothesis-engine/test/hypothesis-engine.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "90b8a0bdcfa4b01ab4fb063c3d268c1217a32331",
+      "size": 7028
+    },
+    {
+      "path": "packages/hypothesis-engine/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/hypothesis-engine/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/infrastructure-state-registry/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b61a3eb24c7cc2e723fc0ca129640bab5ee1d920",
+      "size": 997
+    },
+    {
+      "path": "packages/infrastructure-state-registry/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "09c37a4046eab3736dc60e4f1907d82e53cd3839",
+      "size": 596
+    },
+    {
+      "path": "packages/infrastructure-state-registry/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "439f00d72662e06c0e15c2a72a1154a1b43f065e",
+      "size": 1495
+    },
+    {
+      "path": "packages/infrastructure-state-registry/src/registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "11d68b0f390b347c57caf74f23bcef4acf849f2a",
+      "size": 16776
+    },
+    {
+      "path": "packages/infrastructure-state-registry/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "188fb7e7cd9f17f834d2e5535e6dfc9576b1df8c",
+      "size": 3938
+    },
+    {
+      "path": "packages/infrastructure-state-registry/test/registry.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "452fc6ed41d57c3911209f99f2ae102a96f29c92",
+      "size": 8068
+    },
+    {
+      "path": "packages/infrastructure-state-registry/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/infrastructure-state-registry/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/knowledge-graph/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7e73d0bc88a90344dd713e02b230d6054c07886d",
+      "size": 1083
+    },
+    {
+      "path": "packages/knowledge-graph/src/extractor.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f28e64980e2ff97961cdcb2b2201591f6abe839f",
+      "size": 5348
+    },
+    {
+      "path": "packages/knowledge-graph/src/factories.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dd0cdc6ad19557b929e0ac0d0050ce3b305681fa",
+      "size": 1508
+    },
+    {
+      "path": "packages/knowledge-graph/src/graph-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2284a7eabe06ffd2c7d0d5a75f87261272732716",
+      "size": 27240
+    },
+    {
+      "path": "packages/knowledge-graph/src/graph-rag.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d23efb2f12f3021a085d124368c553972ed06bfc",
+      "size": 7788
+    },
+    {
+      "path": "packages/knowledge-graph/src/graph-store.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3cc017845a46b0455d7a8384822e3c84d0e9816b",
+      "size": 8401
+    },
+    {
+      "path": "packages/knowledge-graph/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "de00625fbed3661ce13b7adc1583ecc22c8644b5",
+      "size": 906
+    },
+    {
+      "path": "packages/knowledge-graph/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3c983a5bafb4eebba23a337f2dfae46bbb5dbdb9",
+      "size": 2342
+    },
+    {
+      "path": "packages/knowledge-graph/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "732bf2c11d43c3df1420f0094d42a187284310df",
+      "size": 868
+    },
+    {
+      "path": "packages/knowledge-graph/test/extractor.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b5b23a4aa77643e5b1ed6fe1f7dbcf766bd7a4bf",
+      "size": 1589
+    },
+    {
+      "path": "packages/knowledge-graph/test/graph-rag.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7044c2da4cd117477318619f3eccd5eac2a4fe10",
+      "size": 3908
+    },
+    {
+      "path": "packages/knowledge-graph/test/graph.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d295380cf0e98905fc659c5c27e9183498993497",
+      "size": 10723
+    },
+    {
+      "path": "packages/knowledge-graph/test/s1-graph-event-trust.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ad6c99cf4f5c8811143b7a25e07ace9c1858c5f8",
+      "size": 16547
+    },
+    {
+      "path": "packages/knowledge-graph/test/s1-graph-tenant-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "24ac3da81af3939235761d91f46cb1397c360e4f",
+      "size": 22086
+    },
+    {
+      "path": "packages/knowledge-graph/test/t06-knowledge-tenant-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "74755e1ec716f27d1e11b4f247534a0cee119ee5",
+      "size": 38275
+    },
+    {
+      "path": "packages/knowledge-graph/test/t06-knowledge-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "25b2512954294b354149e4d55ab70b3d6c6cb2ad",
+      "size": 7281
+    },
+    {
+      "path": "packages/knowledge-graph/test/t08-1-fallback.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "25529c1127def2d3a2b866c1f491586111b64c69",
+      "size": 2687
+    },
+    {
+      "path": "packages/knowledge-graph/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/knowledge-graph/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/knowledge-service/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2e42bc27232955bd1b26c99d11368786c621abf3",
+      "size": 829
+    },
+    {
+      "path": "packages/knowledge-service/src/chunker.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "306336732272b5c8860ebe5c6279c456c0291d43",
+      "size": 4931
+    },
+    {
+      "path": "packages/knowledge-service/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "766b74d1898e03acc907581c4333886d91086732",
+      "size": 611
+    },
+    {
+      "path": "packages/knowledge-service/src/knowledge-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0528bd30ff4a8a141d7742db14909e16e83b3304",
+      "size": 13626
+    },
+    {
+      "path": "packages/knowledge-service/src/tenant-context.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d6867c36ac8752d6d3d45a609870a266e7780f6a",
+      "size": 5094
+    },
+    {
+      "path": "packages/knowledge-service/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dfb6b6f7910e6a864f20781c441f110f60ea27e3",
+      "size": 4745
+    },
+    {
+      "path": "packages/knowledge-service/test/knowledge.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5f4d3ef341d7b57db273cbe4c7063b834ef569d4",
+      "size": 11077
+    },
+    {
+      "path": "packages/knowledge-service/test/s1-tenant-boundary.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f9bf800fa99086f4bceda768fdbb106f43326626",
+      "size": 15240
+    },
+    {
+      "path": "packages/knowledge-service/test/t08-1-fallback.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5b2752956c4bb585d822e6f1da08e1aa6b341eb4",
+      "size": 5518
+    },
+    {
+      "path": "packages/knowledge-service/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/knowledge-service/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/loop-host/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "767bebc6575b63657fa8b75716b7f96f63c34ee6",
+      "size": 1259
+    },
+    {
+      "path": "packages/loop-host/src/checkpoints.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c7d086826385a5e6f7fe1006b8398048b61358d8",
+      "size": 7462
+    },
+    {
+      "path": "packages/loop-host/src/host-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a10f8bea404f3fc027ad72d32151413216ff4a99",
+      "size": 39324
+    },
+    {
+      "path": "packages/loop-host/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cc93cd7eaa7a83b09c7d2621f3b4b3301b62be88",
+      "size": 2184
+    },
+    {
+      "path": "packages/loop-host/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e366c911a5e1d3a6ebc95124fd66a3f752b17628",
+      "size": 1522
+    },
+    {
+      "path": "packages/loop-host/src/outbox-inbox.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a91625be43199940bb348d0fa1124d5d4df6c317",
+      "size": 9071
+    },
+    {
+      "path": "packages/loop-host/src/principal-snapshot.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "be7112b1b6188aff5a8ab50862c2b5977cf630f0",
+      "size": 13848
+    },
+    {
+      "path": "packages/loop-host/src/runtime.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f39f7e8cbaa3e7aabf4f636a08ac3a0c30942630",
+      "size": 13899
+    },
+    {
+      "path": "packages/loop-host/src/scheduler.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7725860c998bc5d3a1fcf332ff80e4006a85acd9",
+      "size": 1547
+    },
+    {
+      "path": "packages/loop-host/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c96f6454ecf84536287c28b6318d7738958a3558",
+      "size": 15858
+    },
+    {
+      "path": "packages/loop-host/src/work-ingress.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4fcc5867b00588153da6832aea6713ea33a4d47e",
+      "size": 11643
+    },
+    {
+      "path": "packages/loop-host/src/work-queue.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9030b22efdf120dc68b553f1bb2cbff2bc82dc0b",
+      "size": 25641
+    },
+    {
+      "path": "packages/loop-host/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8314a3cd9e15bed07c307088d3969c616778a077",
+      "size": 808
+    },
+    {
+      "path": "packages/loop-host/test/helpers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5da4273d20732247d50037836ba6386d4f32a7b8",
+      "size": 16337
+    },
+    {
+      "path": "packages/loop-host/test/loop-host-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "48fc59b0c10eadb060ba7aaa4c5d1e1d4bc6fb7c",
+      "size": 13905
+    },
+    {
+      "path": "packages/loop-host/test/loop-host.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d4fe0e7cc4f2270295120168776056b17b4a8b77",
+      "size": 22354
+    },
+    {
+      "path": "packages/loop-host/test/p2-s2-session-dispatch.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "eaeadda3149ee23a9c365ce565250c416452e82a",
+      "size": 10449
+    },
+    {
+      "path": "packages/loop-host/test/pg-host-harness.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d9d675f368274278ac8af5b3591c045727431b64",
+      "size": 6951
+    },
+    {
+      "path": "packages/loop-host/test/queue-checkpoint.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2ce39d8355d3218415631bb245b1ee1052db227d",
+      "size": 15563
+    },
+    {
+      "path": "packages/loop-host/test/r2-pg.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3fec18479741e246a5c824d94d3da1c63d088c36",
+      "size": 5483
+    },
+    {
+      "path": "packages/loop-host/test/r2-session-dispatch.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "52936df4eb7edb04fd0f681e228465b57eb01b9d",
+      "size": 6211
+    },
+    {
+      "path": "packages/loop-host/test/runtime-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4765b3749a6171b564ce2b6b25128790e6d29473",
+      "size": 9989
+    },
+    {
+      "path": "packages/loop-host/test/runtime.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8b62f7ac7cdb00a37b80c780ec1a7ff68546c680",
+      "size": 13493
+    },
+    {
+      "path": "packages/loop-host/test/t01-atomic-state-audit-outbox.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3b6ac5e3cb152215c9e77da348f6bb901ad4d303",
+      "size": 8029
+    },
+    {
+      "path": "packages/loop-host/test/t01-concurrent-sequencing.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "09d239498bfe83ece18ae7aa2cd5ca8b69ae1cb6",
+      "size": 7704
+    },
+    {
+      "path": "packages/loop-host/test/t01-outbox-inbox.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2831a0a792ccd5d8690d65aa2ae2c69fffa6b71a",
+      "size": 7047
+    },
+    {
+      "path": "packages/loop-host/test/t01-queue-checkpoint-tx.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0200ac92948b1a5033cc9e6b9071e5ea22ab8339",
+      "size": 9781
+    },
+    {
+      "path": "packages/loop-host/test/t01-timeout-cancellation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d762da1b61b34e48fb4a03ecb98445dc5f2fbf2c",
+      "size": 9955
+    },
+    {
+      "path": "packages/loop-host/test/t02-principal-carry-through-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "470f2f081ec313feac7b14b7bbf01c3408fd5408",
+      "size": 13730
+    },
+    {
+      "path": "packages/loop-host/test/t02-principal-carry-through.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "16381e41064f052797be6a9e24547bba3dcc56de",
+      "size": 38366
+    },
+    {
+      "path": "packages/loop-host/test/t03-work-ingress-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a7155a490e55335a27cc7cb43ba35717565b7b67",
+      "size": 12104
+    },
+    {
+      "path": "packages/loop-host/test/t03-work-ingress.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c49c0e2cf34b630b9f4d4286830f848ed7bd2b2b",
+      "size": 22913
+    },
+    {
+      "path": "packages/loop-host/test/t05-composed-writes-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "07d312b275ff284e0b0d8083fbbf635ad22e45dc",
+      "size": 13554
+    },
+    {
+      "path": "packages/loop-host/test/two-process-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b7e22b3ea0fa0390ec2b250551d811a017c934f5",
+      "size": 3783
+    },
+    {
+      "path": "packages/loop-host/test/two-process.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fa56bb47e334b638d69cf5ac548e24dda49fe5ee",
+      "size": 8370
+    },
+    {
+      "path": "packages/loop-host/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/loop-host/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/meta-reasoning/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9cc20bcfcd6ac572d8c06c3d86d0142b6693acb0",
+      "size": 1027
+    },
+    {
+      "path": "packages/meta-reasoning/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5110551f7c6cb0876498ded09328bfc6291133dd",
+      "size": 754
+    },
+    {
+      "path": "packages/meta-reasoning/src/meta-reasoning-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "42b2c88a5b91cd6ec008846aa22656a0cfdad66c",
+      "size": 38068
+    },
+    {
+      "path": "packages/meta-reasoning/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1a6fbfdd7d673e3fbe89b9d374549417e199404c",
+      "size": 1219
+    },
+    {
+      "path": "packages/meta-reasoning/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "023ec7cb8e44f14e28e695c40c127769d554dab5",
+      "size": 6548
+    },
+    {
+      "path": "packages/meta-reasoning/test/meta-reasoning.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6e9515afb0c1eeca3c2662f798cf8bc7a3b7fca8",
+      "size": 13498
+    },
+    {
+      "path": "packages/meta-reasoning/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/meta-reasoning/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/multi-agent-cognition/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "bc07b61c1bed2eb0891eed5f8cf3b7bf825b3f70",
+      "size": 992
+    },
+    {
+      "path": "packages/multi-agent-cognition/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5f2527c6e187df3296f74837ffe82d7e7487ba6d",
+      "size": 934
+    },
+    {
+      "path": "packages/multi-agent-cognition/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2b2a23dda68646c21feab0ed20c2db61f40817dc",
+      "size": 1249
+    },
+    {
+      "path": "packages/multi-agent-cognition/src/multi-agent-cognition-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "810c00fc4df1304d7cc0777a7c1afa96fcf43e92",
+      "size": 51070
+    },
+    {
+      "path": "packages/multi-agent-cognition/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e91e40b127ac4bc12464f886a0b13bf569adb892",
+      "size": 9004
+    },
+    {
+      "path": "packages/multi-agent-cognition/test/multi-agent-cognition.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "56e9c673d725f81c966d19bd36330fc603e5a31e",
+      "size": 15277
+    },
+    {
+      "path": "packages/multi-agent-cognition/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/multi-agent-cognition/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/orbital-intelligence/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dac4c7bbd138c777df54433e291de8f79b6cbc76",
+      "size": 1139
+    },
+    {
+      "path": "packages/orbital-intelligence/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d8c23b0c569dac1fd4bdb17ee6be8566fccd10a1",
+      "size": 1971
+    },
+    {
+      "path": "packages/orbital-intelligence/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "594cc7441efd97548d9c16bef09c633f745b0b54",
+      "size": 1124
+    },
+    {
+      "path": "packages/orbital-intelligence/src/orbital-intelligence-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dedf56f93c6c24092be25f8e9f47e6b869894ecc",
+      "size": 115165
+    },
+    {
+      "path": "packages/orbital-intelligence/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "924c53f5841330a460d5163e87c4668d68e672f1",
+      "size": 20183
+    },
+    {
+      "path": "packages/orbital-intelligence/test/orbital-intelligence.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e7962d94f855fc06b7b21d6259d5818ca01bf687",
+      "size": 30489
+    },
+    {
+      "path": "packages/orbital-intelligence/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/orbital-intelligence/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/payments/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f9f6fff64b6558e1fdfdd4964175e8838018f29f",
+      "size": 943
+    },
+    {
+      "path": "packages/payments/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ffa40854b140a1bb410ac8d835c0ad06641a71b6",
+      "size": 903
+    },
+    {
+      "path": "packages/payments/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7af4c46495e08ebb616a1d69daa1894414bef718",
+      "size": 1856
+    },
+    {
+      "path": "packages/payments/src/payments-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "17a9a91a8c4b0ddb5f904af8fc9c923dcd519c28",
+      "size": 40384
+    },
+    {
+      "path": "packages/payments/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4e7621214628bcf017dd651f4aba47b9f91634dd",
+      "size": 10082
+    },
+    {
+      "path": "packages/payments/src/wallet-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "23e50d0a705a06881be6a21960c08596a2fed133",
+      "size": 34072
+    },
+    {
+      "path": "packages/payments/test/b1-plan-failure-reservation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "23b0df52560c3212c0e98988a59ba0a06308bfda",
+      "size": 13122
+    },
+    {
+      "path": "packages/payments/test/payments.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ddd7240d291d32871eb2febc6e4c786341a6bf38",
+      "size": 8708
+    },
+    {
+      "path": "packages/payments/test/t08-1-reservation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a6b7d2e908c92f5381333a40713031c0e825bf9e",
+      "size": 11368
+    },
+    {
+      "path": "packages/payments/test/t09-wallet.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6693bdb0bf9ba889e07ea8ff795eab4c52a65895",
+      "size": 34184
+    },
+    {
+      "path": "packages/payments/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/payments/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/permanence-fabric/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b94428c577c330c9b4a357f9309197e2f28688d3",
+      "size": 936
+    },
+    {
+      "path": "packages/permanence-fabric/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "47c8dc64228d4e619259a50038598cfaf70d91e1",
+      "size": 1254
+    },
+    {
+      "path": "packages/permanence-fabric/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "44e031fdd5c8e9477d2b5178c8b4ad73d6ee38de",
+      "size": 1119
+    },
+    {
+      "path": "packages/permanence-fabric/src/permanence-fabric-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4659da0fab3794bde8f7e6b1f92397bb757ef904",
+      "size": 68650
+    },
+    {
+      "path": "packages/permanence-fabric/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "140ba042411a19ed140736453488317c281b1182",
+      "size": 12160
+    },
+    {
+      "path": "packages/permanence-fabric/test/permanence-fabric.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c6d1d8c867ca0396ad6754fe561e53c2ccbb36a1",
+      "size": 14599
+    },
+    {
+      "path": "packages/permanence-fabric/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/permanence-fabric/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/portfolio-governor/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1587c2be6da039e3d251f7f797da34cde9e93a3e",
+      "size": 861
+    },
+    {
+      "path": "packages/portfolio-governor/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cb4e0221fb586d26f28d485a51d05edfd43d2ad9",
+      "size": 455
+    },
+    {
+      "path": "packages/portfolio-governor/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a236dcfd57be6ccc1e11ef241aff748fbb2ace97",
+      "size": 970
+    },
+    {
+      "path": "packages/portfolio-governor/src/portfolio-governor-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e3cf99c471661b68e4ad62b62e2961fba4a7d9ab",
+      "size": 11890
+    },
+    {
+      "path": "packages/portfolio-governor/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5b57d4f6750bd70a6f0bdceb45272e28825dcfb7",
+      "size": 2275
+    },
+    {
+      "path": "packages/portfolio-governor/test/portfolio-governor.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7501ffa923bd1fc74c13c807880416434540a113",
+      "size": 4835
+    },
+    {
+      "path": "packages/portfolio-governor/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/portfolio-governor/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/probabilistic-engine/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6fea45e421bf32e65869c2f0425a4ae1aab06aa8",
+      "size": 804
+    },
+    {
+      "path": "packages/probabilistic-engine/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ef79f8df0ab84d380196da73fdc9d900ec36edc3",
+      "size": 418
+    },
+    {
+      "path": "packages/probabilistic-engine/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d5b326d254b27fb232ea3abb585dd04c3688c14b",
+      "size": 856
+    },
+    {
+      "path": "packages/probabilistic-engine/src/probabilistic-engine.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e2ac80530f095121cce055431835613c13e48f10",
+      "size": 8887
+    },
+    {
+      "path": "packages/probabilistic-engine/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fcd00353b51e3adfe4910a388b96b05a9660b901",
+      "size": 1609
+    },
+    {
+      "path": "packages/probabilistic-engine/test/probabilistic-engine.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "03b4e01b038ca556f84a4009678e802a9d07c6f4",
+      "size": 4078
+    },
+    {
+      "path": "packages/probabilistic-engine/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/probabilistic-engine/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/reconciliation/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6a47ef668c10bf4d19e3bf2dfc2df14975aec106",
+      "size": 1035
+    },
+    {
+      "path": "packages/reconciliation/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b424ac15e6fddd1f5a4dc63568ed4e6edfbaaf43",
+      "size": 422
+    },
+    {
+      "path": "packages/reconciliation/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e3f13b11c9bc21adb8ffb78d26a8b3bf6c2961ce",
+      "size": 952
+    },
+    {
+      "path": "packages/reconciliation/src/reconciliation-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a72484ad4456708dd30f20d3ec812abc67b476e8",
+      "size": 14187
+    },
+    {
+      "path": "packages/reconciliation/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f404ad50faf6e8ad93f48aa3674a88287c7a342f",
+      "size": 1870
+    },
+    {
+      "path": "packages/reconciliation/test/reconciliation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8358e91c9c5091fd6945a47d187a34d462f5b6a9",
+      "size": 7598
+    },
+    {
+      "path": "packages/reconciliation/test/t08-1-money.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c8cf984af654647de3c104503ae1cea4c37dd089",
+      "size": 6930
+    },
+    {
+      "path": "packages/reconciliation/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/reconciliation/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/regulatory-gates/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a425aa51cdc19b3ad2c5a5810d5e81daeb15cb95",
+      "size": 1041
+    },
+    {
+      "path": "packages/regulatory-gates/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "35bde8fe538075fbda3396c4c14afe0890386bab",
+      "size": 553
+    },
+    {
+      "path": "packages/regulatory-gates/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f9833ec87987df6f6310e06ef63c58a4e3b5b909",
+      "size": 1112
+    },
+    {
+      "path": "packages/regulatory-gates/src/regulatory-gate-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ff22e2216b5ed062ca12d8e71a9ee93211fc4000",
+      "size": 30909
+    },
+    {
+      "path": "packages/regulatory-gates/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b55a91e81b12eaec9b2f38e2b9023ae6d9ac54ce",
+      "size": 4339
+    },
+    {
+      "path": "packages/regulatory-gates/test/regulatory-gate.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b0c20e8ad990e4ccde3038dd7798d58299ea900d",
+      "size": 13498
+    },
+    {
+      "path": "packages/regulatory-gates/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/regulatory-gates/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/reproducibility/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "23dd30e85aa8fa8141386e91baa132f06869f7f4",
+      "size": 871
+    },
+    {
+      "path": "packages/reproducibility/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "377e42e5fd87d77af6a5e9a09f392df7e6bb16f7",
+      "size": 410
+    },
+    {
+      "path": "packages/reproducibility/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ee531c51293f31eec1043d51d4fe7bf8225058de",
+      "size": 903
+    },
+    {
+      "path": "packages/reproducibility/src/reproducibility-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "85a413193d85506b4ff7958a8396e7d3ee4ed06a",
+      "size": 7853
+    },
+    {
+      "path": "packages/reproducibility/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "211f2c0c6c6064989470fc9b661ff298dcbc0dda",
+      "size": 2093
+    },
+    {
+      "path": "packages/reproducibility/test/reproducibility.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "09f21aaef75174bbb56fadecaac2cc1cf6d1f5d6",
+      "size": 5308
+    },
+    {
+      "path": "packages/reproducibility/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/reproducibility/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/research-evidence/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "12a5bdd9e1f909440a23a1e46f854e6ff5127613",
+      "size": 1012
+    },
+    {
+      "path": "packages/research-evidence/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e37331f9c05aed1e9c64e7d14924844780c4fe2b",
+      "size": 575
+    },
+    {
+      "path": "packages/research-evidence/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "af424b693b128c8346dc8594e53e48c6076a95a3",
+      "size": 1110
+    },
+    {
+      "path": "packages/research-evidence/src/research-evidence-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ec42c6b67b467bd23aa49d75c43b0f7f232de4de",
+      "size": 26426
+    },
+    {
+      "path": "packages/research-evidence/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3b836ef04d79f8fa98c70067ff0a3174e56a73ee",
+      "size": 4415
+    },
+    {
+      "path": "packages/research-evidence/test/research-evidence.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6ec54cb508c57fc2022bbf31e2b2344694885c83",
+      "size": 10339
+    },
+    {
+      "path": "packages/research-evidence/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/research-evidence/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/revenue-ledger/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "63b36b819d5253c95f37964b389de35719c5db77",
+      "size": 1354
+    },
+    {
+      "path": "packages/revenue-ledger/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b0892f14f82218b459bda2cb08d2c1a574633690",
+      "size": 382
+    },
+    {
+      "path": "packages/revenue-ledger/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ef667ee3192ba1d0875c1679bd8cb779d1405a89",
+      "size": 1157
+    },
+    {
+      "path": "packages/revenue-ledger/src/revenue-ledger-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e3da18b550ffff595083ea449b05ce1673465a04",
+      "size": 21110
+    },
+    {
+      "path": "packages/revenue-ledger/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "802f9e2b0e2ff8abf30c8d3522bd2f91e6e42632",
+      "size": 1565
+    },
+    {
+      "path": "packages/revenue-ledger/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "732bf2c11d43c3df1420f0094d42a187284310df",
+      "size": 868
+    },
+    {
+      "path": "packages/revenue-ledger/test/revenue-ledger.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1756be72f0a3231207c1c9fb834237ea02129d69",
+      "size": 8945
+    },
+    {
+      "path": "packages/revenue-ledger/test/t05-payment-chain-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4a0eb1160276f7af9541d529900698c02c9b4980",
+      "size": 22991
+    },
+    {
+      "path": "packages/revenue-ledger/test/t06-ledger-concurrency-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f1af3418ca8cd403a92a47376c110c5a2a5a48ba",
+      "size": 21993
+    },
+    {
+      "path": "packages/revenue-ledger/test/t06-ledger-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "725ebf404bb9f6a2078ec345c2ee6db8056fb00d",
+      "size": 6596
+    },
+    {
+      "path": "packages/revenue-ledger/test/t07-finalization-concurrency-pg.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e557e1411d881d58d49fd18348fe5048418b5620",
+      "size": 29067
+    },
+    {
+      "path": "packages/revenue-ledger/test/t07-finalize-worker.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "97e5784dc5a7da8bd63e1da19db6209baf4f6b70",
+      "size": 5038
+    },
+    {
+      "path": "packages/revenue-ledger/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/revenue-ledger/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/storage-postgres/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5d866f3e7d8985ffd162cb4b2154c0d7e5dec34e",
+      "size": 1176
+    },
+    {
+      "path": "packages/storage-postgres/src/config.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8401f90405df3d47b9f4eb855f2f2e67f0f578e7",
+      "size": 4275
+    },
+    {
+      "path": "packages/storage-postgres/src/errors.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "08cdb63e854e5f2f0db6b76fe9d7e428a9ad076e",
+      "size": 1565
+    },
+    {
+      "path": "packages/storage-postgres/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2d31e83b17355551798599328e3ea1220bafd9b4",
+      "size": 1630
+    },
+    {
+      "path": "packages/storage-postgres/src/naming.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c273934a51599a78bb4faf1e16372c25def01592",
+      "size": 1288
+    },
+    {
+      "path": "packages/storage-postgres/src/postgres-collection.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "29771a883d0575439f4130313eec93b0c6117c35",
+      "size": 17046
+    },
+    {
+      "path": "packages/storage-postgres/src/postgres-driver.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cedeb57bdbb0885869a16e053946c832a9fee4d0",
+      "size": 33712
+    },
+    {
+      "path": "packages/storage-postgres/src/rls-probe.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e99f9243b297c025f102eac19adba070062ade3b",
+      "size": 13024
+    },
+    {
+      "path": "packages/storage-postgres/src/system-scope-audit.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3986f89088462766d468d352fa52f5a3f7400901",
+      "size": 5831
+    },
+    {
+      "path": "packages/storage-postgres/src/tenant-context.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fbb2615f7cde479281ed24126b4a786555f856d8",
+      "size": 8783
+    },
+    {
+      "path": "packages/storage-postgres/src/tenant-isolation.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "89055554762706263395eaa4f88bbd819ee9de89",
+      "size": 10437
+    },
+    {
+      "path": "packages/storage-postgres/test/embedded-postgres.d.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1519e6ca33f9a73ecdb972bdcb469a678f9f5ada",
+      "size": 1090
+    },
+    {
+      "path": "packages/storage-postgres/test/inv15-system-scope-minimization.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "092814388e4bd5455557ed9776d9e3f3f99f56b8",
+      "size": 24250
+    },
+    {
+      "path": "packages/storage-postgres/test/p1-rls-probe.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "386951f79a11dfc03f9e28ea69602b7af45b7d48",
+      "size": 10359
+    },
+    {
+      "path": "packages/storage-postgres/test/p1c-obs-01-harness-resilience.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8de22238343cc2d2092f0a1ab02fc700a54f6d95",
+      "size": 4766
+    },
+    {
+      "path": "packages/storage-postgres/test/pg-readiness.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "60544c450ba26ad7c26bc868e478478aa3ffe077",
+      "size": 12218
+    },
+    {
+      "path": "packages/storage-postgres/test/pg-readiness.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "192815c62e57141fbce239f178f86a50bd33c586",
+      "size": 8656
+    },
+    {
+      "path": "packages/storage-postgres/test/pg-test-harness.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1a05f2dd2737a129bcd99aa37d442d3de55ba84e",
+      "size": 8622
+    },
+    {
+      "path": "packages/storage-postgres/test/postgres.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7614b994cee10b5345ff55d543b50f164ba77d0e",
+      "size": 9371
+    },
+    {
+      "path": "packages/storage-postgres/test/t01-tenant-isolation.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "672bd67059d87eec976e1ebbc661bed7105c1d46",
+      "size": 17004
+    },
+    {
+      "path": "packages/storage-postgres/test/t04-transaction-cas.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "368feee704355f95fad7ead55f6e1cd5d58ee1d7",
+      "size": 9744
+    },
+    {
+      "path": "packages/storage-postgres/test/t05-atomically-ownership.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f277ae70037a2cd288f4c041ba3f33c850e937ae",
+      "size": 8575
+    },
+    {
+      "path": "packages/storage-postgres/test/t06-rls-production-path.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5d9c35c97783bada69120c69cdcbdfbdbc7552e8",
+      "size": 34177
+    },
+    {
+      "path": "packages/storage-postgres/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/storage-postgres/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e63e7e307514ea08e296a3c94f8e730ed22e43a6",
+      "size": 518
+    },
+    {
+      "path": "packages/storage/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2e1cb50a572da8ce132519d3031a500d9c4a1443",
+      "size": 666
+    },
+    {
+      "path": "packages/storage/src/drivers/filesystem.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "e3a667a944ba01bccc78d62e36a3fc5b2e4c369c",
+      "size": 31618
+    },
+    {
+      "path": "packages/storage/src/drivers/memory.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f73bb70cf3f36b2362afb15ce57b4077e4f37ffd",
+      "size": 9024
+    },
+    {
+      "path": "packages/storage/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5e19cdeb2d2624c4ac8ed397d3a669f8842d94ef",
+      "size": 738
+    },
+    {
+      "path": "packages/storage/src/storage-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c5c631f5e79f27aa2214fb129ddaa5d6015a200b",
+      "size": 10207
+    },
+    {
+      "path": "packages/storage/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "eab43a6983ee00deb7e3e81529fd6ad72e1c2b0e",
+      "size": 10967
+    },
+    {
+      "path": "packages/storage/test/storage.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ec1828d83d37007094c287f4fd53ca102db67ea9",
+      "size": 19917
+    },
+    {
+      "path": "packages/storage/test/t08-1-tenant.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6e46e6f34e960e1f8688be3ece7f25ca50dec9dd",
+      "size": 3325
+    },
+    {
+      "path": "packages/storage/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/storage/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/temporal-engine/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6ea94381ef0a972087e8d441084a9667caf0ca1a",
+      "size": 925
+    },
+    {
+      "path": "packages/temporal-engine/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4574aac62d5026f4b8253b91c2befd29e835772f",
+      "size": 412
+    },
+    {
+      "path": "packages/temporal-engine/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c7745c408100037559a825b5be604eb62984a8c2",
+      "size": 913
+    },
+    {
+      "path": "packages/temporal-engine/src/temporal-engine-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "878eee11537ed7ee522f42fb1f9f760a85fa23a4",
+      "size": 9277
+    },
+    {
+      "path": "packages/temporal-engine/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "a929dc0f63d2a8c316972e15ff2e46d969919f71",
+      "size": 2373
+    },
+    {
+      "path": "packages/temporal-engine/test/temporal-engine.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "1f2a2b6901010cd2808b8b22fefe99820e535871",
+      "size": 5850
+    },
+    {
+      "path": "packages/temporal-engine/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/temporal-engine/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/unified-loop/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d31da82da019ae1aedf1e86fe2a3b1caacd87812",
+      "size": 2000
+    },
+    {
+      "path": "packages/unified-loop/src/capability-adapters.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6af26db92f33321ffce18dc94e6490f0488f2f74",
+      "size": 59660
+    },
+    {
+      "path": "packages/unified-loop/src/capability-registry.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9b254d4abec4958181738b0423c9d0bf8402a931",
+      "size": 4635
+    },
+    {
+      "path": "packages/unified-loop/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "48b1bc108ae222b6df4baeae9d87ce1ae8b859f7",
+      "size": 970
+    },
+    {
+      "path": "packages/unified-loop/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "698085225b54875b32b72484f0b80d223fcce5e4",
+      "size": 2063
+    },
+    {
+      "path": "packages/unified-loop/src/state-machine.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "724639b14f46bad894d7438a000ce62e98300cfe",
+      "size": 9219
+    },
+    {
+      "path": "packages/unified-loop/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "70212c29dc94caac36daf928532ca9d211c9b181",
+      "size": 10411
+    },
+    {
+      "path": "packages/unified-loop/src/unified-loop-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ac0526e5829bb2b3fbf689acb8172d434e213ba9",
+      "size": 17853
+    },
+    {
+      "path": "packages/unified-loop/test/helpers.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d98d186e7e365149f5344eed94b6908a2f6816c0",
+      "size": 12341
+    },
+    {
+      "path": "packages/unified-loop/test/t01-c-persistence-failure.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "43a049a047ba37b71bb67cd19fba624a86495d1a",
+      "size": 3467
+    },
+    {
+      "path": "packages/unified-loop/test/t01-stage-contract.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b01aed350186c32628c743d520eb231baf423497",
+      "size": 9732
+    },
+    {
+      "path": "packages/unified-loop/test/unified-loop.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9b2db28d2be6cde62ca02cb5d6b245a2a083c50a",
+      "size": 26309
+    },
+    {
+      "path": "packages/unified-loop/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/unified-loop/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2c8ed5d8113edad4347fff2f0a6cf3470d005548",
+      "size": 1104
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/src/distribution-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "19c61e9708ad0bd452c944e333a8ad1e74e1c0cc",
+      "size": 13358
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0861fe41b81824cca391fce753f138651b7e7575",
+      "size": 413
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "7d746515e82fb5d23527e9d46fd6c048453b7650",
+      "size": 1348
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4ee9cc67b1c3bcfa97d8f7d5d1c855bea4c25ba0",
+      "size": 2365
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/test/distribution.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d1a12a8ddf85486cd73aad5ed5c4ebe7f7445699",
+      "size": 9799
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/universal-distribution-nervous-system/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/universal-visibility-fabric/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d1ff055c339405b6004c092bc6353f30697c314b",
+      "size": 879
+    },
+    {
+      "path": "packages/universal-visibility-fabric/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f08b724f4dec3aba559ac7bc79a744286efe802b",
+      "size": 472
+    },
+    {
+      "path": "packages/universal-visibility-fabric/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "57ce5854bdc7a405953fedb0eb5a4e7a29963a4a",
+      "size": 1052
+    },
+    {
+      "path": "packages/universal-visibility-fabric/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "334ea4445b0f0f13a21b47d99ed9e1c35b0bd04f",
+      "size": 3398
+    },
+    {
+      "path": "packages/universal-visibility-fabric/src/visibility-fabric-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "40f8be5907ab59e37cfedc58f6f9e6d16b55af50",
+      "size": 13740
+    },
+    {
+      "path": "packages/universal-visibility-fabric/test/visibility-fabric.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "66992537ea8170226c84e9dc7aa87b98631a633e",
+      "size": 5666
+    },
+    {
+      "path": "packages/universal-visibility-fabric/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/universal-visibility-fabric/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/vector-search/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "9dbd5a7b38dfce707dc9caede04dfe5bb3cfec62",
+      "size": 779
+    },
+    {
+      "path": "packages/vector-search/src/distance.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "898bb77656b51b96cc70a607f335a0453d456c89",
+      "size": 3356
+    },
+    {
+      "path": "packages/vector-search/src/embeddings.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "cd554851e04457ab4c4e3c7c398ad0d19d98f238",
+      "size": 4673
+    },
+    {
+      "path": "packages/vector-search/src/flat-index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "157132290e2d14c09f8aa4325f83a581f5aa6e14",
+      "size": 5479
+    },
+    {
+      "path": "packages/vector-search/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "5602447e7560d4ca3361abf0248ef916cec27f2c",
+      "size": 723
+    },
+    {
+      "path": "packages/vector-search/src/tenant-context.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "2e0dd975c4769007135ccf97e364c248a99b339c",
+      "size": 1487
+    },
+    {
+      "path": "packages/vector-search/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "dbee63f7cca0b29f1b5bdf48fc76f672cc6482f7",
+      "size": 2822
+    },
+    {
+      "path": "packages/vector-search/src/vector-module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "f1d669595262d3d75713d21d8530665d34f37277",
+      "size": 8222
+    },
+    {
+      "path": "packages/vector-search/test/s1-vector-tenant.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6392d68ef2a3b450c46c86b38d60a112d2c5a518",
+      "size": 6216
+    },
+    {
+      "path": "packages/vector-search/test/vector.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d28ae383604bfc139f988b27f38ade1c50102c56",
+      "size": 10687
+    },
+    {
+      "path": "packages/vector-search/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/vector-search/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "packages/world-model/package.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "8f34b9f58873825218468ebbbc0fd693761f2251",
+      "size": 869
+    },
+    {
+      "path": "packages/world-model/src/index.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "18b77ba93b5a3138ed6868e984d9c527cb59b0d7",
+      "size": 427
+    },
+    {
+      "path": "packages/world-model/src/module.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "07218a49954f9adcd5033542b914bdddb9c6ef16",
+      "size": 881
+    },
+    {
+      "path": "packages/world-model/src/types.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "344ad2e66dd87e5b216558feaf912676891e8e41",
+      "size": 2829
+    },
+    {
+      "path": "packages/world-model/src/world-model-service.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "c99461ba454e54f5ab1b3d6069c8ca91f6ab3fdd",
+      "size": 11621
+    },
+    {
+      "path": "packages/world-model/test/world-model.test.ts",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "b1ff3de7b581e90654ea01412b7cb1388188415e",
+      "size": 6055
+    },
+    {
+      "path": "packages/world-model/tsconfig.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "d256b96281c090f69946c0ad2999aa0693c56046",
+      "size": 187
+    },
+    {
+      "path": "packages/world-model/tsconfig.test.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "6da5e73fb787ecdbaa32a0e7850988218cd3b8ef",
+      "size": 481
+    },
+    {
+      "path": "scripts/check-workspace-lockfile.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "4125cd1523d323fce45d49b1f78332762d2f74cf",
+      "size": 4242
+    },
+    {
+      "path": "scripts/r2-perf.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "fbb316a0a664d9d34f273be9f94a78010440e5b0",
+      "size": 8604
+    },
+    {
+      "path": "scripts/r2-secret-scan.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "0edac1e529b37e4bacf912955dd47754071a9d84",
+      "size": 10878
+    },
+    {
+      "path": "scripts/run-workspaces.mjs",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "3851323ac1db1e3aa921f2b06f9f23073d11673e",
+      "size": 6021
+    },
+    {
+      "path": "tsconfig.base.json",
+      "mode": "100644",
+      "type": "blob",
+      "gitObjectSha": "ffe3bab195eff3debabf052f7b26cf3e4356e599",
+      "size": 565
+    }
+  ],
+  "warning": "This inventory pins the target object; it is not an independent verification result."
+}
