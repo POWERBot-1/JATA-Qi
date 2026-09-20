@@ -781,6 +781,10 @@ export class DurableDecider {
       envelopeId,
       provenance: outcome.provenance,
       ...(envelopeCredential ? { credential: envelopeCredential } : {}),
+      // OD-5 (S0c): the egress binding derives from the manifest that
+      // resolved the decision (the durable ACTIVE row), never from the
+      // request's declared impact label (F-3).
+      ...(outcome.manifest.egressBound === true ? { egressBound: true } : {}),
       durableCitations: {
         ...(active ? { manifestId: active.manifestId, manifestDigest: active.digest } : {}),
         ...(session.eventId ? { sessionEventId: session.eventId } : {}),
@@ -1439,7 +1443,8 @@ export class DurableDecider {
       }
     }
 
-    // 2. S-4 exactly-once (non-READ).
+    // 2. S-4 exactly-once (every envelope that binds a side effect —
+    // non-READ, or egress-bound regardless of its impact label; OD-5 S0c).
     await consumeEnvelope(collections.consumedEnvelopes, {
       envelopeId: verified.envelopeId,
       decisionId: verified.decision.decisionId,
@@ -1447,6 +1452,7 @@ export class DurableDecider {
       principalId: verified.principal.id,
       runId: verified.run.runId,
       impact: verified.impact,
+      ...(verified.egressBound === true ? { egressBound: true } : {}),
       now,
     });
 

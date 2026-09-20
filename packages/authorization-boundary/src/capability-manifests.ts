@@ -80,6 +80,16 @@ export function validateManifestShape(manifest: A01CapabilityManifest): void {
   if (!isA01ImpactLevel(manifest.maxImpact)) {
     throw new ManifestRejectedError('manifest: maxImpact must be a recognized impact level');
   }
+  // OD-5 (P3-B0 S0c): the egress binding is a deliberate registration fact.
+  // Only the literal `true` is registrable — absent means "not egress-bound",
+  // and an explicit `false` (or any non-`true` value) is an ambiguous
+  // declaration and is refused. Enforcement semantics must never depend on
+  // how a registrar phrases the absence of an egress binding (fail-closed).
+  if (manifest.egressBound !== undefined && manifest.egressBound !== true) {
+    throw new ManifestRejectedError(
+      'manifest: egressBound must be exactly true when present — omit the field for a non-egress capability (an explicit false is ambiguous and refused)',
+    );
+  }
   if (!Array.isArray(manifest.requiredCredentialScopes)) {
     throw new ManifestRejectedError('manifest: requiredCredentialScopes must be a list');
   }

@@ -9,6 +9,7 @@
 import { randomUUID } from 'node:crypto';
 import { StorageModule, type ICollection } from '@jataqi/storage';
 import { sha256Hex } from './canonical.js';
+import { requiresEnvelopeConsumption } from './envelope.js';
 import { SECURITY_CAS_MAX_ATTEMPTS, SecurityStateError, SecurityStateUnavailableError } from './security-state-store.js';
 import {
   AuthorizationDeniedError,
@@ -56,9 +57,22 @@ function assertConsumptionShape(doc: Record<string, unknown>, allowed: ReadonlyS
 }
 
 /**
- * Consume a non-READ envelope exactly once (insert-if-absent in the
- * enforcement tx). Conflict ⇒ REPLAYED_AUTHORIZATION. READ envelopes are
- * never consumed (R1 parity) and return `{ consumed: false }`.
+ * Consume a side-effect-binding envelope exactly once (insert-if-absent in
+ * the enforcement tx). Conflict ⇒ REPLAYED_AUTHORIZATION.
+ *
+ * OD-5 (P3-B0 S0c) — replay-policy change (migration note): previously a
+ * `READ` envelope was NEVER consumed here (documented as intentional R1
+ * parity), which F-3/T-10 proved permits unlimited repeat external
+ * transmission when a READ-labeled capability actually transmits. The
+ * enforcement intensity now derives from whether the decision BINDS A SIDE
+ * EFFECT — the sealed `egressBound` flag — not from the impact label
+ * alone: an egress-bound envelope consumes exactly once even when labeled
+ * `READ`. `READ` remains non-consuming ONLY for genuinely read-only
+ * decisions (no egress binding), preserving the prior replay parity for
+ * true reads. The predicate is the same single implementation
+ * (`requiresEnvelopeConsumption`) enforced at the gate's in-memory sites.
+ * Pre-existing stored rows are unaffected: this changes whether NEW
+ * decisions consume, never the meaning of rows already written.
  */
 export async function consumeEnvelope(
   consumed: ICollection<ConsumedEnvelopeDoc>,
@@ -69,10 +83,14 @@ export async function consumeEnvelope(
     readonly principalId: string;
     readonly runId: string;
     readonly impact: A01ImpactLevel;
+    /** OD-5 (S0c): the sealed egress binding from the envelope, if present. */
+    readonly egressBound?: boolean;
     readonly now: number;
   },
 ): Promise<{ consumed: boolean }> {
-  if (input.impact === 'READ') return { consumed: false };
+  if (!requiresEnvelopeConsumption({ impact: input.impact, egressBound: input.egressBound })) {
+    return { consumed: false };
+  }
   if (typeof input.envelopeId !== 'string' || input.envelopeId.length === 0) {
     throw new SecurityStateError('consumeEnvelope requires an envelopeId (fail-closed).');
   }

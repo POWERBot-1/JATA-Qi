@@ -59,11 +59,52 @@ function ctxTenantId(ctx: ToolContext, tool: string): string {
   return t;
 }
 
-/** A-01 declaration shared by the read-only tenant-scoped built-ins. */
+/**
+ * A-01 declaration shared by the genuinely read-only tenant-scoped
+ * built-ins (knowledge.search, graph.traverse, graph.findEntity,
+ * graph.retrieve).
+ *
+ * OD-5 (P3-B0 S0c): `vector.search` NO LONGER runs under this capability —
+ * see VECTOR_SEARCH_EGRESS_CAPABILITY. The false binding of an
+ * externally-transmitting tool to an internal READ capability was F-3.
+ */
 const KNOWLEDGE_READ_CAPABILITY = {
   capabilityId: 'internal-knowledge.read',
   capabilityVersion: '1',
   impact: 'READ' as const,
+  dataClassification: 'INTERNAL' as const,
+  targetSystem: 'tenant-knowledge',
+};
+
+/**
+ * OD-5 (P3-B0 S0c) — the TRUTHFUL external-side-effect capability for
+ * `vector.search` (F-3 remediation; P3-B0 design record §4.5(i), U-3(α)).
+ *
+ * `vector.search` calls `VectorSearchModule.embedAndSearch`, which embeds
+ * the model-supplied query via the configured embedding model — a
+ * CREDENTIALED EXTERNAL TRANSMISSION whenever a remote provider model is
+ * configured (the N-2 seam). Declaring that effect `impact: 'READ'` under
+ * `internal-knowledge.read` was false (F-3, VERIFIED DEFECT): it told the
+ * audit trail no external transmission occurred AND — because READ
+ * envelopes were never consumed — permitted one authorization to repeat
+ * the transmission without limit (T-10).
+ *
+ * The correction registers under a NEW capabilityId with the truthful
+ * level from the closed impact enum (`EXTERNAL_SIDE_EFFECT`) rather than
+ * raising the old capability's ceiling — `isNarrowing` refuses ceiling
+ * raises (B-1), and the old id must not silently resurrect or broaden the
+ * false semantics. `internal-knowledge.read` is RETIRED as the
+ * authorization for `vector.search`; its registration for this tool must
+ * be removed by the corresponding governance registration event. Manifests
+ * registering this capability MUST declare `egressBound: true` so every
+ * decision under it seals the egress binding and consumes exactly once at
+ * every enforcement site — even if a future misdeclaration labels the
+ * impact READ, the binding still forces consume-once.
+ */
+const VECTOR_SEARCH_EGRESS_CAPABILITY = {
+  capabilityId: 'internal-knowledge.vector-search-egress',
+  capabilityVersion: '1',
+  impact: 'EXTERNAL_SIDE_EFFECT' as const,
   dataClassification: 'INTERNAL' as const,
   targetSystem: 'tenant-knowledge',
 };
@@ -218,7 +259,10 @@ export function vectorSearchTool(getVectors: () => VectorSearchModule): Tool {
       },
       required: ['query'],
     },
-  authorization: { ...KNOWLEDGE_READ_CAPABILITY, operation: 'search' },
+  // OD-5 (S0c): truthful declaration — this tool's effect is credentialed
+  // external transmission (query embedding at the N-2 seam), not an
+  // internal READ (F-3).
+  authorization: { ...VECTOR_SEARCH_EGRESS_CAPABILITY, operation: 'search' },
     async execute(input: any, ctx: ToolContext) {
       const v = getVectors();
       // Resolved before the index name is even read: no data-plane work without a tenant.

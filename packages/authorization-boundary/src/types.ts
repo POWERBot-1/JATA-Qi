@@ -411,6 +411,19 @@ export interface A01CapabilityManifest {
   readonly allowTenantWildcard: boolean;
   readonly maxDataClassification: A01DataClassification;
   readonly maxImpact: A01ImpactLevel;
+  /**
+   * OD-5 (P3-B0 S0c) — the registered egress binding. `true` declares that
+   * this capability's authorized effect includes a governed external side
+   * effect (credentialed transmission beyond the boundary). Every ALLOW
+   * decision under an egress-bound capability seals the binding into its
+   * envelope, and the envelope is consumed exactly once at every
+   * enforcement site — REGARDLESS of the declared impact label, which F-3
+   * proved can misdescribe the side effect. Absent means not egress-bound.
+   * Only the literal `true` is registrable: an explicit `false` (or any
+   * non-`true` value) is an ambiguous declaration and is rejected at
+   * registration (fail-closed).
+   */
+  readonly egressBound?: boolean;
   /** Credential scopes an invocation must carry; empty means no credential required. */
   readonly requiredCredentialScopes: readonly string[];
   /** When set, the invocation target audience and any issued credential audience must equal it. */
@@ -464,6 +477,17 @@ export interface A01AuthorizationEnvelope {
   readonly target: A01TargetBinding;
   readonly dataClassification: A01DataClassification;
   readonly impact: A01ImpactLevel;
+  /**
+   * OD-5 (P3-B0 S0c) — the sealed egress binding. Present (`true`) only
+   * when the manifest that resolved the decision declares `egressBound`.
+   * Sealed EXCLUSIVELY by the policy decision point from the registered
+   * manifest — no request field, caller metadata, model output, or tool
+   * input can set it — and covered by the integrity digest, so it cannot
+   * be added, removed, or altered after sealing without detection.
+   * Enforcement consumes such envelopes exactly once at every site, even
+   * when the declared impact label is `READ` (the F-3/T-10 shape).
+   */
+  readonly egressBound?: boolean;
   readonly approval?: A01ApprovalBinding;
   readonly credential?: A01CredentialBinding;
   /** P2-S4: the delegation grant reference the request presented (mirrored from the sealed request). */

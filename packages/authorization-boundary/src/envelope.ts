@@ -11,6 +11,7 @@ import type {
   A01CredentialBinding,
   A01DecisionRecord,
   A01DenialReason,
+  A01ImpactLevel,
   A01ProvenanceBinding,
 } from './types.js';
 import { EnvelopeIntegrityError } from './types.js';
@@ -26,6 +27,15 @@ export interface BuildEnvelopeInput {
   readonly envelopeId: string;
   readonly provenance: A01ProvenanceBinding;
   readonly credential?: A01CredentialBinding;
+  /**
+   * OD-5 (P3-B0 S0c): the egress binding of the decision, derived by the
+   * PDP from the manifest that resolved it (`egressBound === true`). The
+   * value is sealed into the envelope body and covered by the integrity
+   * digest. There is deliberately NO request-side source for this field:
+   * a caller cannot claim an egress binding, only a registered manifest
+   * can declare one.
+   */
+  readonly egressBound?: boolean;
   /**
    * R2 durable citations (`decideAsync` only; covered by the integrity
    * digest). Absent on R1 sync-path envelopes.
@@ -50,6 +60,7 @@ export interface BuildEnvelopeInput {
  */
 export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelope {
   const { request, decision, envelopeId, provenance, credential, durableCitations } = input;
+  const egressBound = input.egressBound === true;
   const body: Omit<A01AuthorizationEnvelope, 'integrity'> = {
     envelopeId,
     version: 1,
@@ -83,6 +94,11 @@ export function sealEnvelope(input: BuildEnvelopeInput): A01AuthorizationEnvelop
     },
     dataClassification: request.dataClassification,
     impact: request.impact,
+    // OD-5 (P3-B0 S0c): the sealed egress binding. Present ONLY when true
+    // (derived from the resolving manifest) — a non-egress decision keeps
+    // the exact pre-S0c envelope shape, and a post-sealing insertion or
+    // removal of the flag breaks the integrity digest.
+    ...(egressBound ? { egressBound: true } : {}),
     ...(request.approval !== undefined ? { approval: { ...request.approval } } : {}),
     ...(request.delegation !== undefined ? { delegation: { delegationId: request.delegation.delegationId } } : {}),
     ...(credential !== undefined ? { credential: { ...credential, scopes: [...credential.scopes] } } : {}),
@@ -184,6 +200,30 @@ export function envelopeAcceptance(
     reasons.push('TARGET_SUBSTITUTION');
   }
   return [...new Set(reasons)];
+}
+
+/**
+ * OD-5 (P3-B0 S0c) — the SINGLE replay/consumption predicate enforced at
+ * every enforcement site: the R1 in-memory replay check and pre-await
+ * consumption in the gate, and the R2 durable S-4 exactly-once claim.
+ * One implementation, no drift between the sites.
+ *
+ * A decision envelope is consumed exactly once when it is not READ — OR
+ * when it binds a governed external side effect (sealed `egressBound`).
+ * The enforcement intensity therefore derives from WHETHER THE DECISION
+ * BINDS A SIDE EFFECT, not from the declared impact label alone: F-3
+ * proved the label can misdescribe the side effect (a capability that
+ * transmitted externally was declared READ and its envelopes were never
+ * consumed — T-10 unlimited repeat transmission). An egress-bound envelope
+ * labeled READ still consumes exactly once; READ remains non-consuming
+ * ONLY for genuinely read-only decisions (no egress binding), preserving
+ * the prior READ replay parity for true reads.
+ */
+export function requiresEnvelopeConsumption(envelope: {
+  readonly impact: A01ImpactLevel;
+  readonly egressBound?: boolean;
+}): boolean {
+  return envelope.impact !== 'READ' || envelope.egressBound === true;
 }
 
 /**
