@@ -67,6 +67,10 @@ export {
   envelopeAcceptance,
   envelopeDigestValue,
   sanitizeRequestForEnvelope,
+  // OD-5 (P3-B0 S0c): the single consume-once predicate enforced at every
+  // side-effect-binding enforcement site (R1 in-memory gate sites + R2
+  // durable S-4 claim). One implementation, no drift.
+  requiresEnvelopeConsumption,
 } from './envelope.js';
 export type { BuildEnvelopeInput } from './envelope.js';
 

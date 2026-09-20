@@ -9,7 +9,11 @@
 //     decision, freshness, replay) and re-acquires the credential BEFORE
 //     invoking the protected side effect. Every failure throws
 //     `AuthorizationDeniedError` and the side effect is never invoked.
-//   * Replay protection: a non-READ envelope is consumed exactly once; an
+//   * Replay protection: an envelope that binds a side effect is consumed
+//     exactly once — every non-READ envelope, AND every egress-bound
+//     envelope regardless of its declared impact label (OD-5, P3-B0 S0c:
+//     the predicate is `requiresEnvelopeConsumption`, one implementation
+//     shared by the in-memory sites here and the durable S-4 claim); an
 //     idempotency key, once consumed by a successful side effect, returns the
 //     cached result for duplicate delivery instead of re-executing.
 //   * Budget and rate state are consumed here, so the decision and the
@@ -24,7 +28,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { DelegationStateAuthority, IdentityStateAuthority, PrivilegeStateAuthority } from '@jataqi/authentication';
-import { assertEnvelopeIntegrity, envelopeAcceptance, sanitizeRequestForEnvelope, sealEnvelope } from './envelope.js';
+import { assertEnvelopeIntegrity, envelopeAcceptance, requiresEnvelopeConsumption, sanitizeRequestForEnvelope, sealEnvelope } from './envelope.js';
 import { decideA01, type A01DecisionResult, type A01PolicyContext } from './policy-engine.js';
 import { buildConsumedAuditRecord, buildDecisionAuditRecord, InMemoryAuditSink } from './audit.js';
 import type { DurableCredentialBroker } from './credential-store.js';
@@ -285,6 +289,11 @@ export class AuthorizationGate {
       envelopeId,
       provenance,
       ...(envelopeCredential ? { credential: envelopeCredential } : {}),
+      // OD-5 (S0c): the egress binding derives from the manifest that
+      // resolved the decision (a registered governance fact) — never from
+      // the request's declared impact label, which can misdescribe the
+      // side effect (F-3).
+      ...(manifest.egressBound === true ? { egressBound: true } : {}),
     });
 
     // Count this decision in the rate window (denied attempts are load too).
@@ -404,8 +413,14 @@ export class AuthorizationGate {
       }
     }
 
-    // Replay protection: non-READ decisions are consumed exactly once.
-    if (verified.impact !== 'READ') {
+    // Replay protection: decisions that bind a side effect are consumed
+    // exactly once. OD-5 (S0c): the predicate is the sealed egress binding
+    // OR the non-READ label — a READ-labeled envelope that binds an
+    // external side effect still consumes (the label alone cannot exempt
+    // it; F-3/T-10). READ stays replayable only for genuinely read-only
+    // decisions. Same predicate as the consumption add below and as the
+    // durable S-4 claim — one implementation, no drift.
+    if (requiresEnvelopeConsumption(verified)) {
       if (this.consumedEnvelopes.has(verified.envelopeId)) {
         this.auditConsumed(verified, false, 'replayed');
         throw new AuthorizationDeniedError(['REPLAYED_AUTHORIZATION']);
@@ -449,8 +464,10 @@ export class AuthorizationGate {
     }
 
     // Consume NOW (before the await) so concurrent duplicates see the
-    // consumption synchronously.
-    if (verified.impact !== 'READ') {
+    // consumption synchronously. OD-5 (S0c): identical predicate to the
+    // replay check above — egress-bound envelopes consume even when their
+    // declared impact label is READ.
+    if (requiresEnvelopeConsumption(verified)) {
       this.consumedEnvelopes.add(verified.envelopeId);
     }
     this.runBudgets.set(runKey, used + cost);
