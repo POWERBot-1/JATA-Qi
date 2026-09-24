@@ -387,3 +387,58 @@ Christine Kariuki ("christine-kariuki")
 Working tree at final provenance check: clean
 
 The target commit remained unchanged throughout the verification.
+
+
+20. Verifier roles
+
+I acted as the independent technical verifier for this report.
+
+My role was limited to independently reproducing and evaluating the P2-S8/P2-E4 evidence against the exact target artifact.
+
+I did not participate in PR #37 implementation, review, approval, or merge.
+
+I did not control the implementation session that produced the target artifact.
+
+I made my own technical judgment and recorded the observed results, limitations, and conclusion without altering test expectations.
+
+21. Provider / test configuration
+
+The verification was performed against the exact target artifact identified in this report.
+
+The verification used the repository's committed test configuration and the provider/seam configuration exercised by the P2-S8 test suites.
+
+The P2-S8 suites used real PostgreSQL through the repository's embedded-PostgreSQL test infrastructure.
+
+The A-18 cross-process MFA limitation was observed because the committed InMemoryKeyManagementSeam is process-local. Cross-process MFA verification/replay protection was therefore not established. The observed cross-process behavior failed closed, and I recorded this as a limitation rather than treating it as proof of the unestablished property.
+
+No production provider, production KMS/HSM, or production infrastructure qualification is claimed by this verification.
+22. Findings register
+
+| Finding | Observation | Disposition |
+|---|---|---|
+| A-18 cross-process MFA | Cross-process MFA verification/replay protection was not established because the committed InMemoryKeyManagementSeam is process-local. The observed cross-process behavior failed closed. | Open limitation; not remediated by this verification |
+| P1-GAP-12 | Shape-valid direct database mutation is not cryptographically detected by the existing mechanism. | Existing documented limitation; not remediated by this verification |
+| A-23 issuance idempotency | Issuance does not use an idempotency key; duplicate prevention occurs at use time through the documented CAS mechanism. | Existing documented limitation; not remediated by this verification |
+| Production infrastructure | Production HA/DR, production IdP, KMS/HSM, and production qualification are outside this verification scope. | Explicit non-scope; not remediated by this verification |
+23. Remediation record
+
+No implementation remediation was performed by me during this independent verification.
+
+The findings and limitations above were recorded as observed.
+
+This report does not claim that the documented limitations were fixed.
+
+No test expectation, test result, rubric, score, assurance cap, or governance rule was modified to obtain the reported conclusion.
+24. Acceptance criteria — command → result
+
+| Criterion | Command / verification | Independent result |
+|---|---|---|
+| A-17 | node --test dist/test/p2-s8-restart-recovery.test.js | PASS — 4/4 |
+| A-18 | node --test dist/test/p2-s8-fanout-contention.test.js | PASS — 5/5, with documented cross-process MFA limitation |
+| A-19 authentication | node --test dist/test/p2-s8-outage-matrix.test.js | PASS — 3/3 |
+| A-19 authorization | node --test dist/test/p2-s8-decision-outage.test.js | PASS — 3/3 |
+| A-20 | node --test dist/test/p2-s8-failover.test.js | PASS — 3/3 |
+| A-21 | node --test dist/test/p2-s8-skew-matrix.test.js | PASS — 6/6 |
+| A-22/A-23 | node --test dist/test/p2-s8-tamper-duplicates.test.js | PASS — 11/11 |
+| Whole-tree build | npm run build | PASS — exit 0 |
+| Whole-tree tests | npm test | PASS — 50 passed, 0 failed, 0 skipped |
