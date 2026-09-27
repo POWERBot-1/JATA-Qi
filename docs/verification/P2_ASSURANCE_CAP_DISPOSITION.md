@@ -9,8 +9,14 @@
 | Authorization text | *"P2 SHALL BE PERMANENTLY CAPPED WITHOUT E4 … The absence of genuine separate-party verification is now an accepted assurance limitation … Do not attempt to obtain, simulate, relabel, or manufacture separate-party E4 verification."* |
 | Implementer of this record | Arena agent session `arena/01a0b08f-jata-qi` (documentation only) |
 | Scope | Governance record. Implements no capability, remediates no defect, changes no score. |
+| Amendment | **§7 (2026-09-27).** Records that §4.3 is satisfied for commit `08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe` / tree `5f2152ce0cd702b649b93bc23c165d36cb9b9dba` only. Does not replace §§1–6. Does not lift unrelated conditions. Canonical recognition record: `P2_E4_RECOGNITION_DISPOSITION.md`. |
 
 ---
+
+**Amendment notice (2026-09-27).** Section 7 records satisfaction of the §4.3
+condition for one historical artifact. Sections 1–6 remain the 2026-09-17
+disposition and are not rewritten. Unrelated conditions are not removed or
+weakened. Production readiness does not follow.
 
 ## 1. Disposition
 
@@ -27,6 +33,11 @@ milestone closed; the E4 class was never obtained.
 
 **`P2-E4: NOT ACHIEVED` must be read as the standing status in every future
 record. The repository must never state that P2 achieved E4.**
+
+**Pointer (2026-09-27).** The standing-status sentences above, and the
+statement that the E4 class was never obtained, remain the historical
+disposition of 2026-09-17. They are qualified only by §7, and only for the
+artifact named there. They are not deleted.
 
 ## 2. Why the E4 gate was not established (recorded, not repaired)
 
@@ -94,6 +105,13 @@ forbid that. It forbids *manufacturing* the class. Any such future report must
 be produced by that separate party and must state its own identity, environment,
 and independence basis.
 
+**Recorded satisfaction (2026-09-27).** For commit
+`08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe` / tree
+`5f2152ce0cd702b649b93bc23c165d36cb9b9dba` only, this §4.3 condition is
+recorded as satisfied. The paragraph above is not rewritten. The record of
+that satisfaction is §7 and `P2_E4_RECOGNITION_DISPOSITION.md`. No other
+condition in this disposition is satisfied by that record.
+
 ## 5. Known limitations carried forward verbatim (not closed by this record)
 
 - **xproc-MFA race** remains unproven; the `xproc-mfa` probe fails closed by design.
@@ -129,5 +147,68 @@ dormant-stream integration; no deployment.
 **Authorization boundary:** this disposition records an owner decision. It does
 not modify any historical verification report, and it grants no implementation
 authority of any kind.
+
+## 7. Amendment — §4.3 satisfied for one historical artifact (2026-09-27)
+
+| Field | Value |
+|---|---|
+| Authority | Owner authorization of 2026-09-27, recorded in `P2_E4_RECOGNITION_DISPOSITION.md` |
+| Recorded by | Arena agent session `arena/01a0e26a-jata-qi` |
+| Effect | The §4.3 condition is satisfied for one named historical artifact. Sections 1–6 historical text is not rewritten. Pointers mark this section. Unrelated conditions are unchanged in substance. |
+| Canonical statement | `docs/verification/P2_E4_RECOGNITION_DISPOSITION.md` |
+
+The owner explicitly authorized the future change that §1 said the cap holds
+unless authorized. The authorization is narrow. It permits this disposition to
+be updated solely to record that the §4.3 P2-E4 condition has been satisfied
+for the specified historical artifact.
+
+**Satisfied condition.** For commit `08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe`
+/ tree `5f2152ce0cd702b649b93bc23c165d36cb9b9dba` only, the §4.3 condition is
+satisfied. The basis is the committed Christine Kariuki report,
+`docs/verification/P2_S8_INDEPENDENT_VERIFICATION.md`, delivered by PR #45
+(head `aa7f4a6df4e512d43db77d48650d8ae78d51601d`, merge
+`e82897bb14e375fb08b30bf0bfc6346252f18aaf`), together with the owner's
+acceptance of the read-only adjudication disposition **A. FORMALLY
+RECOGNIZABLE.** P2-E4 is formally recognized for that artifact. Recognition
+is retrospective. The report was not in the artifact tree. Spec §19 rule 1's
+pre-merge timing was not met at the PR #37 merge. That historical fact stands.
+This section does not rewrite it. Section 2's statement that no separate-party
+report existed at `08adbd9` remains true of that date. The later report does
+not rewrite §2.
+
+**Qualification of §1, and of nothing else.** The 2026-09-17 statements
+"`P2 E4: NOT ACHIEVED`" and "the repository must never state that P2 achieved
+E4" remain the true description of the 2026-09-17 disposition. They no longer
+forbid recording the artifact-specific recognition in this section and in
+`P2_E4_RECOGNITION_DISPOSITION.md`. They still forbid stating that E4 was
+achieved at the 2026-09-17 cap, that any other commit is E4-recognized, that
+the class was manufactured, or that production readiness follows.
+
+**Unrelated conditions — not removed, not weakened, not rewritten.**
+
+- §3 remains in force. The PRIMARY, CI-class, and PR-attestation rows in
+  that section are not promoted and are not given retroactive E4 credit.
+  This amendment does not infer independence from them.
+- §4.1 remains in force. No E4 uplift is permitted. CI-class and same-agent
+  evidence are not substituted for a scoring assessment. The published figure
+  remains the frozen **9.484375%**. This amendment does not close a rubric
+  gate and does not authorize a score change. The §4.1 sentence that a gate
+  requiring E4 remains unsatisfied is qualified only for the §4.3 condition
+  on the named artifact. Every other gate named in this disposition remains
+  unsatisfied.
+- §4.2 is not amended into a P3 authorization. Recognition does not authorize
+  P3 entry or P3 implementation, and it is not a reason to relax P3's
+  verification standard. The 2026-09-17 text of §4.2 is unchanged.
+- §5 is unchanged. No limitation listed there is closed.
+- §6 is unchanged as a record of what the 2026-09-17 act did and did not do.
+- BD-01 is not adopted. IV-1 through IV-11 are not found to have been
+  independently corroborated. The documented BD-01 evidence gaps remain
+  preserved in the recognition record. They are not erased.
+- Production remains **NOT READY**. This amendment is not production
+  qualification and is not an E5 claim. Production readiness does not follow.
+
+**Not authorized by this amendment:** score recalculation; score publication;
+remediation; P3, S1, S2, or S3 implementation; PR #46 merge; rubric
+modification; ruleset or settings changes; rewriting of historical evidence.
 
 **STOP.**
