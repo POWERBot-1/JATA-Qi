@@ -190,16 +190,33 @@ suite, tracked diff empty.
 
 ## 8. Retained evidence
 
-Machine-readable records: `logs/13-result-record.json` (per-step command, exit
-code, UTC start/end, log sha256, TAP summary) and `logs/13-evidence-manifest.json`
-(23 artifacts with byte counts and sha256).
+Machine-readable records: `logs/13-result-record.json` (19 steps; per-step command,
+exit code, UTC start/end, log sha256, TAP summary; `overallExitCode 0`) and
+`logs/13-evidence-manifest.json` (23 artifacts with byte counts and sha256, all
+re-verified 23/23). The whole-tree step carries a `summaryNote` warning that the
+first `# tests N` line in that log belongs to a single package and must not be
+read as the whole-tree total; the authoritative figures are the runner summary
+line `Total: 50 · Passed: 50 · Failed: 0 · Skipped: 0` and the case-level
+aggregate 1619/1619.
 
-**Retention limitation (material).** The logs live at
-`/home/user/p2-e4-run/logs/` in the sandbox and are **not** committed to Git —
-the repository convention keeps generated artifacts out of the tree. What is
-durable is the hashes recorded in this document and in the manifests. An eligible
-verifier must retain their own copies under their own custody; they must not
-inherit these.
+**Retention limitation (material, and honestly stated).** The 23 raw artifacts
+(≈1.2 MB) exist only at `/home/user/p2-e4-run/logs/` on the **ephemeral sandbox
+filesystem**, outside the repository. They are **not** committed to Git — the
+repository convention keeps generated artifacts out of the tree — and they are
+**not** under verifier custody. They will not survive the sandbox.
+
+What is durable is therefore: the hashes recorded in `13-evidence-manifest.json`
+and transcribed here, and the observed outputs quoted verbatim in §3–§7. That is
+a **weaker** retention position than an eligible verifier must have, and it is one
+of the reasons this record cannot carry E4 weight even setting independence
+aside. An eligible verifier must retain their own raw copies under their own
+custody and must not inherit these.
+
+**Manifest integrity note.** The first generated manifest hashed
+`13-result-record.json` before that file's whole-tree summary field was corrected
+(see §11 note), so one hash did not match the file it named. The manifest was
+regenerated from the final files and re-verified: **23/23 artifacts, 0
+mismatches**. The defect is recorded rather than quietly fixed.
 
 ---
 
