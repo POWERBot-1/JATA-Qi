@@ -1,0 +1,148 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.invalid/jata-rb-v0.1-proposed/manifest-schema.json",
+  "title": "JATA-RB-v0.1-PROPOSED assessment manifest row schema (NOT ADOPTED — PROPOSAL ONLY)",
+  "description": "Machine-readable contract for RB baseline manifest rows. Template rows use UNASSESSED sentinels and blank derived fields. A completed assessment row (only post-adoption, if ever) must satisfy all enums, exact-fraction patterns, and cross-field identities. This schema performs no scoring.",
+  "type": "object",
+  "required": [
+    "proposal",
+    "proposal_status",
+    "unit_id",
+    "dimension_id",
+    "unit_weight_points_exact",
+    "C_level",
+    "I_level",
+    "E_class"
+  ],
+  "properties": {
+    "proposal": { "const": "JATA-RB-v0.1-PROPOSED" },
+    "proposal_status": {
+      "type": "string",
+      "pattern": "^NOT ADOPTED"
+    },
+    "unit_id": {
+      "type": "string",
+      "pattern": "^D(0[1-9]|1[0-5])[abcd]$"
+    },
+    "dimension_id": {
+      "type": "string",
+      "pattern": "^D(0[1-9]|1[0-5])$"
+    },
+    "dimension_name": { "type": "string" },
+    "unit_name": { "type": "string" },
+    "unit_weight_points_exact": {
+      "type": "string",
+      "enum": ["13/8", "9/4"],
+      "description": "Exact unit weight in rubric points: 13/8 for D01-D06/D08-D15 units (NEW/PROPOSED); 9/4 for D07 units (PRESERVED value, NEW/PROPOSED extension to D07a/c/d)."
+    },
+    "unit_weight_points_decimal": {
+      "type": ["string", "number"],
+      "description": "Display only; never used in comparisons."
+    },
+    "C_level": {
+      "type": "string",
+      "enum": ["C0", "C1", "C2", "C3", "C4", "UNASSESSED"]
+    },
+    "C_value_exact": {
+      "type": "string",
+      "enum": ["0/1", "1/4", "1/2", "3/4", "1/1", ""],
+      "description": "Must equal the C_level mapping when assessed; blank when UNASSESSED."
+    },
+    "C_citation": {
+      "type": "string",
+      "description": "File path + line span or test ID at the assessed SHA; required when assessed."
+    },
+    "I_level": {
+      "type": "string",
+      "enum": ["I0", "I1", "I2", "I3", "I4", "UNASSESSED"]
+    },
+    "I_value_exact": {
+      "type": "string",
+      "enum": ["0/1", "1/4", "1/2", "3/4", "1/1", ""],
+      "description": "Must equal the I_level mapping when assessed; blank when UNASSESSED."
+    },
+    "I_citation": {
+      "type": "string",
+      "description": "Composition path + test ID at the assessed SHA; required when assessed."
+    },
+    "E_class": {
+      "type": "string",
+      "enum": ["E0", "E1", "E2", "E3", "E4", "E5", "E6", "UNASSESSED"]
+    },
+    "E_coeff_exact": {
+      "type": "string",
+      "enum": ["0/1", "1/8", "1/4", "1/2", "3/4", "7/8", "1/1", ""],
+      "description": "Must equal the E_class mapping when assessed; blank when UNASSESSED."
+    },
+    "evidence_artifact": {
+      "type": "string",
+      "description": "Committed path(s) of the evidence; required when assessed (except E0 with a recorded rationale)."
+    },
+    "evidence_sha": {
+      "type": "string",
+      "description": "Full 40-hex SHA of the assessed artifact; required when assessed."
+    },
+    "evidence_date_utc": {
+      "type": "string",
+      "description": "YYYY-MM-DD; required when assessed."
+    },
+    "assessment_date_utc": {
+      "type": "string",
+      "description": "YYYY-MM-DD; required when assessed."
+    },
+    "freshness_age_days": {
+      "type": ["string", "number"],
+      "description": "Whole days t_a - t_e; blank when UNASSESSED."
+    },
+    "f_value_exact": {
+      "type": "string",
+      "enum": ["0/1", "1/4", "1/2", "3/4", "1/1", ""],
+      "description": "Must equal the decay-table mapping for freshness_age_days (and SHA match) when assessed."
+    },
+    "Q_value_exact": {
+      "type": "string",
+      "description": "Exact fraction string a/b; must equal E_coeff * f when assessed; blank when UNASSESSED."
+    },
+    "q_value_exact": {
+      "type": "string",
+      "description": "Exact fraction string a/b; must equal C*I*Q when assessed (D07b per-modality rule instead); blank when UNASSESSED."
+    },
+    "points_earned_exact": {
+      "type": "string",
+      "description": "Exact fraction string a/b; must equal unit_weight * q when assessed; blank when UNASSESSED."
+    },
+    "assessor": {
+      "type": "string",
+      "description": "Assessor identity; UNASSESSED in the template."
+    },
+    "notes": { "type": "string" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "C_level": { "const": "UNASSESSED" } }
+      },
+      "then": {
+        "properties": {
+          "C_value_exact": { "enum": [""] },
+          "Q_value_exact": { "enum": [""] },
+          "q_value_exact": { "enum": [""] },
+          "points_earned_exact": { "enum": [""] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "E_class": { "const": "UNASSESSED" } }
+      },
+      "then": {
+        "properties": {
+          "E_coeff_exact": { "enum": [""] },
+          "Q_value_exact": { "enum": [""] },
+          "q_value_exact": { "enum": [""] },
+          "points_earned_exact": { "enum": [""] }
+        }
+      }
+    }
+  ]
+}
