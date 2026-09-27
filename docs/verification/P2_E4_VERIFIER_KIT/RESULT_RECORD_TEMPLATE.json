@@ -1,0 +1,14 @@
+{
+  "schema": "jataqi.p2-e4.result-record.v1",
+  "status": "NOT_EXECUTED",
+  "artifactSha": "08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe",
+  "artifactTreeSha": "5f2152ce0cd702b649b93bc23c165d36cb9b9dba",
+  "verifier": "NOT_RECORDED",
+  "startedAtUtc": "NOT_RECORDED",
+  "completedAtUtc": "NOT_RECORDED",
+  "steps": [],
+  "findings": [],
+  "trackedTreeAfter": "NOT_RECORDED",
+  "finalDetermination": "NOT_RECORDED",
+  "warning": "Template only. Do not prefill PASS. The separate verifier owns the executed record and report."
+}

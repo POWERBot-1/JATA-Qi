@@ -1,0 +1,32 @@
+{
+  "schema": "jataqi.p2-e4.evidence-manifest.v1",
+  "status": "TEMPLATE_NOT_EXECUTED",
+  "evidenceClass": "OWNER_BUILDER_PREPARATION",
+  "artifact": {
+    "commit": "08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe",
+    "tree": "5f2152ce0cd702b649b93bc23c165d36cb9b9dba",
+    "checkoutStatus": "NOT_RECORDED"
+  },
+  "verifier": {
+    "identity": "NOT_RECORDED",
+    "credentialBasis": "NOT_RECORDED",
+    "independenceDeclaration": "NOT_RECORDED",
+    "roles": "NOT_RECORDED",
+    "aiOrToolingDisclosure": "NOT_RECORDED"
+  },
+  "environmentManifest": "ENVIRONMENT_MANIFEST.json",
+  "expectedResults": "EXPECTED_RESULTS.json",
+  "observations": [],
+  "findings": [],
+  "artifacts": [
+    {"path":"raw/checkout.txt", "sha256":"NOT_RECORDED", "provenance":"verifier records"},
+    {"path":"raw/environment.txt", "sha256":"NOT_RECORDED", "provenance":"verifier records"},
+    {"path":"raw/build.log", "sha256":"NOT_RECORDED", "provenance":"verifier records"},
+    {"path":"raw/lint.log", "sha256":"NOT_RECORDED", "provenance":"verifier records"},
+    {"path":"raw/whole-tree-test.log", "sha256":"NOT_RECORDED", "provenance":"verifier records"},
+    {"path":"raw/focused-suite-logs/", "sha256":"NOT_RECORDED", "provenance":"verifier records"},
+    {"path":"artifact-tree-observed.txt", "sha256":"NOT_RECORDED", "provenance":"verifier records"}
+  ],
+  "determination": "NOT_RECORDED",
+  "rule": "The verifier must author and populate this record. An owner-side template or expected result is never independent evidence."
+}

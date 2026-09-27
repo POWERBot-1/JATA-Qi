@@ -1,0 +1,26 @@
+{
+  "schema": "jataqi.p2-e4.environment-manifest.v1",
+  "artifactSha": "08adbd9adf569d0dd18ad1d96289e1fea9f9d6fe",
+  "artifactTreeSha": "5f2152ce0cd702b649b93bc23c165d36cb9b9dba",
+  "status": "NOT_RECORDED",
+  "evidenceClass": "OWNER_BUILDER_PREPARATION",
+  "required": {
+    "node": ">=20.0.0; record exact version",
+    "npm": "record exact version",
+    "os": "record kernel/distribution/architecture",
+    "postgresql": "real embedded-postgres execution for integration suites; record package/runtime details",
+    "network": "record dependency-install source and relevant egress limitations",
+    "repository": "clean detached checkout at exact SHA and exact tree"
+  },
+  "observed": {
+    "node": "NOT_RECORDED",
+    "npm": "NOT_RECORDED",
+    "os": "NOT_RECORDED",
+    "postgresql": "NOT_RECORDED",
+    "network": "NOT_RECORDED",
+    "repository": "NOT_RECORDED",
+    "timestampUtc": "NOT_RECORDED",
+    "verifierIdentity": "NOT_RECORDED"
+  },
+  "rule": "The future verifier fills observed values before or during execution. Owner-side values must not be copied into the verifier's report as if independently observed."
+}
